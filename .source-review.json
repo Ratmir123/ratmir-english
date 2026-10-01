@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "createdAt": "2026-10-01T21:16:50.763Z",
+  "createdAt": "2026-10-01T21:21:33.651Z",
   "reviewRequired": true,
   "published": false,
   "licenseCandidate": "MIT",
@@ -238,8 +238,8 @@
     },
     {
       "path": "ios/Sources/TrainingClient.swift",
-      "bytes": 12721,
-      "sha256": "fcfc5f9daa63bed7d8f4a53a742f7e6e34730850c7a28342ad3f11a753829e13"
+      "bytes": 13472,
+      "sha256": "3ee5162930d4573ebf3b116ec9bdf428b2b6d3263af9684cccee836085fcd53f"
     },
     {
       "path": "ios/project.yml",

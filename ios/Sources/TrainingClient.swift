@@ -8,6 +8,13 @@ enum ClientError: LocalizedError {
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
 
+private final class PlaybackDelegate: NSObject, AVAudioPlayerDelegate {
+    let finished: (Bool) -> Void
+    init(finished: @escaping (Bool) -> Void) { self.finished = finished }
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { finished(flag) }
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { finished(false) }
+}
+
 enum AccessKey {
     private static let service = "app.ratmirenglish.personal"
     static func read() -> String? {
@@ -52,6 +59,7 @@ enum AccessKey {
     @Published var server = UserDefaults.standard.string(forKey: "training-server") ?? ""
     private var recorder: AVAudioRecorder?
     private var player: AVAudioPlayer?
+    private var playbackDelegate: PlaybackDelegate?
     private var recordedAt = Date()
     private var recordedMinutes = 0.01
     private var localRecording: URL?
@@ -186,11 +194,19 @@ enum AccessKey {
             try audio.setCategory(.playback, mode: .spokenAudio)
             try audio.setActive(true)
             player = try AVAudioPlayer(data: data)
+            playbackDelegate = PlaybackDelegate { [weak self] completed in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.playing = false
+                    guard completed else { return }
+                    do {
+                        let _: Confirmation = try await self.request("sessions/\(conversation.id)/played", body: ["turnId": turn.id])
+                    } catch { self.error = error.localizedDescription }
+                }
+            }
+            player?.delegate = playbackDelegate
             guard player?.play() == true else { throw ClientError.message("Не удалось начать озвучку.") }
             playing = true
-            let _: Confirmation = try await request("sessions/\(conversation.id)/played", body: ["turnId": turn.id])
-            let duration = player?.duration ?? 0
-            Task { try? await Task.sleep(for: .seconds(duration)); self.playing = false }
         }
     }
     func beginRecording() async {
