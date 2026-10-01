@@ -65,7 +65,9 @@ export async function transcribe(file: File, minutes: number) {
   if (!audioConfigured()) throw new ApiError('Добавь OpenAI API-ключ в настройках, чтобы включить голос.', 412);
   const releaseBudget = reserveBudget(0.07);
   try {
-  const ext = file.type.includes('mp4') ? 'mp4' : file.type.includes('ogg') ? 'ogg' : file.type.includes('wav') ? 'wav' : 'webm';
+  const type = file.type.toLowerCase();
+  const ext = type.includes('mpeg') || type.includes('mp3') ? 'mp3' :
+    type.includes('mp4') || type.includes('m4a') ? 'mp4' : type.includes('ogg') ? 'ogg' : type.includes('wav') ? 'wav' : 'webm';
   const audioFile = saveAudio(new Uint8Array(await file.arrayBuffer()), ext);
   const form = new FormData();
   form.set('file', file, `speech.${ext}`);

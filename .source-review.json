@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "createdAt": "2026-10-01T21:07:52.295Z",
+  "createdAt": "2026-10-01T21:16:50.763Z",
   "reviewRequired": true,
   "published": false,
   "licenseCandidate": "MIT",
@@ -263,8 +263,8 @@
     },
     {
       "path": "lib/server/audio.ts",
-      "bytes": 6213,
-      "sha256": "67cab6bc38407b8b00c83de8dec6c8e7c76152fed5d64ed845413c78f2934948"
+      "bytes": 6322,
+      "sha256": "8ffa656f584dc8b5a64e3ede6a0ad70c4441f133c555a06a032c5df2e197a662"
     },
     {
       "path": "lib/server/codex.ts",
