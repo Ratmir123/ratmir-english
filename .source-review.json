@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "createdAt": "2026-10-01T21:21:33.651Z",
+  "createdAt": "2026-10-01T21:24:42.989Z",
   "reviewRequired": true,
   "published": false,
   "licenseCandidate": "MIT",
@@ -168,8 +168,8 @@
     },
     {
       "path": "deploy/README.md",
-      "bytes": 18517,
-      "sha256": "1c89ab98f7ee0aa9df1bb0c4d8e652c0f13668ac0a205c7d7f5d50bf1f9806e3"
+      "bytes": 19122,
+      "sha256": "b30ec24ec093a772cdac212947fb30a85923a3af662e06349749a59d440e1026"
     },
     {
       "path": "deploy/compose.yaml",
