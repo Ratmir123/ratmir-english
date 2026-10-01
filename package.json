@@ -1,0 +1,33 @@
+{
+  "name": "ratmir-english",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3000",
+    "dev:https": "next dev --experimental-https --hostname 0.0.0.0 --port 3000",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1 --port 3000",
+    "typecheck": "tsc --noEmit",
+    "probe:brain": "tsx scripts/probe-codex.ts",
+    "desktop:dev": "electron desktop",
+    "desktop:build": "electron-builder --config electron-builder.json --win --x64"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "jose": "6.2.12",
+    "next": "16.3.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tsx": "^4.23.15",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "typescript": "^5.9.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,72 @@
+name: english-training
+
+services:
+  app:
+    image: english-training:local
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: runtime
+    init: true
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      TRAINING_DEPLOYMENT: server
+      TRAINING_BRAIN_AUTH: siwc
+      TRAINING_MANAGED_SERVER: "1"
+      TRAINING_PUBLIC_ORIGIN: ${TRAINING_PUBLIC_ORIGIN:?Set TRAINING_PUBLIC_ORIGIN in deploy/.env}
+      TRAINING_ACCESS_CODE: ${TRAINING_ACCESS_CODE:?Set a personal access code in deploy/.env}
+      TRAINING_SIWC_DIR: /app/.data/siwc
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - training_data:/app/.data
+    expose:
+      - "3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "deploy/healthcheck.mjs"]
+      interval: 30s
+      timeout: 8s
+      start_period: 40s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      TRAINING_DOMAIN: ${TRAINING_DOMAIN:?Set your DNS hostname in deploy/.env}
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  training_data:
+  caddy_data:
+  caddy_config:

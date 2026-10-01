@@ -1,0 +1,47 @@
+# Allow only executable application sources and required build metadata.
+# Personal documents, Git history, credentials and local data are excluded by default.
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!tsconfig.json
+!next.config.ts
+!instrumentation.ts
+
+!app/**
+!components/**
+!lib/**
+!public/icon.svg
+!public/icon-192.png
+!public/icon-512.png
+!public/*.html
+!public/*.js
+!scripts/connect-chatgpt.ts
+!deploy/healthcheck.mjs
+
+# Keep these exclusions last, including inside otherwise allowed directories.
+**/.env*
+**/.data
+**/.data/**
+**/.runtime
+**/.runtime/**
+**/.git
+**/.git/**
+**/node_modules
+**/node_modules/**
+**/.next
+**/.next/**
+**/*.md
+**/*.json
+**/*.sqlite*
+**/*.db
+**/*.pem
+**/*.key
+**/*.log
+**/credentials.json
+**/auth.json
+
+# The only JSON inputs are dependency manifests and TypeScript configuration.
+!package.json
+!package-lock.json
+!tsconfig.json

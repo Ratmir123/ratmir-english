@@ -1,0 +1,20 @@
+{
+  "appId": "com.ratmir.english",
+  "productName": "Ratmir English",
+  "copyright": "Ratmir English",
+  "directories": { "app": "desktop", "output": ".runtime/desktop-dist" },
+  "files": ["*.cjs", "package.json", "!node_modules{,/**/*}"],
+  "beforeBuild": "scripts/desktop-before-build.cjs",
+  "extraFiles": [{ "from": "public/icon.ico", "to": "resources/app-icons/icon.ico" }],
+  "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "public/icon.ico" },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": false,
+    "allowElevation": false,
+    "runAfterFinish": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Ratmir English",
+    "artifactName": "Ratmir English Setup.${ext}"
+  }
+}

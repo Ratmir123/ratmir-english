@@ -1,0 +1,185 @@
+.orb {
+  --orb-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --orb-drift-ease: cubic-bezier(0.37, 0, 0.63, 1);
+  --pose-rotation: -16deg;
+  --ink-x: 0%;
+  --ink-y: 0%;
+  --lime-x: 0%;
+  --lime-y: 0%;
+  --body-opacity: 1;
+  --sheen-opacity: 0.72;
+  pointer-events: none;
+}
+
+.shadow {
+  position: absolute;
+  width: 64%;
+  height: 18px;
+  bottom: 9px;
+  border-radius: 50%;
+  background: #222124;
+  filter: blur(12px);
+  opacity: 0.26;
+  transition: opacity 180ms var(--orb-ease);
+}
+
+.body {
+  position: relative;
+  border-radius: 50%;
+  overflow: hidden;
+  isolation: isolate;
+  background: #BBB2F5;
+  box-shadow: inset -10px -14px 25px #22212424, inset 8px 12px 20px #ffffff20;
+  opacity: var(--body-opacity);
+  transform: scale(var(--voice-scale, 1));
+  transition: transform 160ms var(--orb-ease), opacity 220ms var(--orb-ease);
+}
+
+/* State poses retarget transitions while the nested drift keeps its phase. */
+.pose {
+  position: absolute;
+  inset: -7%;
+  transform: rotate(var(--pose-rotation));
+  transition: transform 240ms var(--orb-ease);
+}
+
+.lavenderPose,
+.inkPose,
+.limePose {
+  position: absolute;
+  transition: transform 220ms var(--orb-ease);
+}
+
+.lavenderPose {
+  width: 115%;
+  height: 115%;
+  top: -22%;
+  left: -17%;
+}
+
+.inkPose {
+  width: 88%;
+  height: 96%;
+  top: 33%;
+  left: 53%;
+  transform: translate(calc(var(--ink-x) + var(--orb-shift, 0px)), var(--ink-y));
+}
+
+.limePose {
+  width: 110%;
+  height: 88%;
+  left: -23%;
+  top: 50%;
+  transform: translate(var(--lime-x), calc(var(--lime-y) - var(--orb-shift, 0px))) rotate(-27deg);
+}
+
+.lavender,
+.ink,
+.lime {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  animation-play-state: paused;
+}
+
+.lavender { background: #BBB2F5; }
+
+.ink {
+  background: #222124;
+  opacity: 0.92;
+  animation: ink-drift 6.4s var(--orb-drift-ease) infinite alternate paused;
+}
+
+.lime {
+  background: #DAF163;
+  animation: lime-drift 5.2s var(--orb-drift-ease) infinite alternate paused;
+}
+
+.sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 31% 20%, #ffffff55, transparent 51%),
+    radial-gradient(ellipse at 74% 92%, #22212435, transparent 50%);
+  opacity: var(--sheen-opacity);
+  transition: opacity 220ms var(--orb-ease);
+}
+
+.orb[data-awake='true'] .ink,
+.orb[data-awake='true'] .lime {
+  animation-play-state: running;
+}
+
+.orb[data-state='listening'] {
+  --pose-rotation: -10deg;
+  --ink-x: -4%;
+  --ink-y: 3%;
+  --lime-x: -2%;
+  --lime-y: -3%;
+}
+
+.orb[data-state='speaking'] {
+  --pose-rotation: 2deg;
+  --ink-x: -3%;
+  --ink-y: -2%;
+  --lime-x: 3%;
+  --lime-y: -4%;
+  --sheen-opacity: 0.86;
+}
+
+.orb[data-state='transcribing'] {
+  --pose-rotation: -4deg;
+  --ink-x: -2%;
+  --ink-y: -1%;
+  --lime-x: 2%;
+  --lime-y: 1%;
+}
+
+.orb[data-state='thinking'] {
+  --pose-rotation: 7deg;
+  --ink-x: -4%;
+  --ink-y: -3%;
+  --lime-x: 4%;
+  --lime-y: 3%;
+  --sheen-opacity: 0.6;
+}
+
+.orb[data-state='paused'] {
+  --body-opacity: 0.5;
+  --sheen-opacity: 0.45;
+}
+
+.orb[data-state='paused'] .shadow { opacity: 0.14; }
+
+.orb[data-page-hidden='true'] *,
+.orb[data-page-hidden='true'] *::before,
+.orb[data-page-hidden='true'] *::after {
+  transition: none;
+}
+
+@keyframes ink-drift {
+  from { transform: translate(0, 0) rotate(0deg); }
+  to { transform: translate(-3%, -2%) rotate(-5deg); }
+}
+
+@keyframes lime-drift {
+  from { transform: translate(0, 0) rotate(0deg); }
+  to { transform: translate(2%, -2%) rotate(4deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .body,
+  .pose,
+  .lavenderPose,
+  .inkPose,
+  .limePose,
+  .ink,
+  .lime {
+    animation: none;
+    transform: none;
+    transition: none;
+  }
+
+  .shadow,
+  .sheen { transition: none; }
+}
