@@ -15,6 +15,7 @@ jobs:
         run: |
           brew install xcodegen
           cd ios
+          swift scripts/create-icon.swift Resources/Assets.xcassets/AppIcon.appiconset/icon.png
           xcodegen generate
       - name: Build unsigned device app
         run: |
@@ -23,9 +24,25 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/RatmirEnglish.app package/Payload/
           cd package
           zip -qr ../RatmirEnglish.ipa Payload
+      - name: Launch iPhone 11 simulator
+        run: |
+          xcodebuild -quiet -project ios/RatmirEnglish.xcodeproj -scheme RatmirEnglish -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath simulator-build CODE_SIGNING_ALLOWED=NO build
+          runtime=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("isAvailable") and "iOS" in x["name"]]; print(r[-1]["identifier"])')
+          device=$(xcrun simctl create 'Training iPhone 11' com.apple.CoreSimulator.SimDeviceType.iPhone-11 "$runtime")
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl install "$device" simulator-build/Build/Products/Debug-iphonesimulator/RatmirEnglish.app
+          xcrun simctl launch "$device" app.ratmirenglish.personal
+          sleep 3
+          xcrun simctl io "$device" screenshot iPhone11-login.png
       - uses: actions/upload-artifact@v4
         with:
           name: RatmirEnglish-unsigned-IPA
           path: RatmirEnglish.ipa
           retention-days: 7
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iPhone11-preview
+          path: iPhone11-login.png
+          retention-days: 7

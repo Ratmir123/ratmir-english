@@ -1,10 +1,10 @@
 import SwiftUI
 
 private enum Theme {
-    static let charcoal = Color(red: 0.13, green: 0.13, blue: 0.13)
-    static let surface = Color(red: 0.89, green: 0.89, blue: 0.89)
-    static let lavender = Color(red: 0.72, green: 0.67, blue: 0.94)
-    static let lime = Color(red: 0.83, green: 0.95, blue: 0.34)
+    static let charcoal = Color(red: 34.0 / 255, green: 33.0 / 255, blue: 36.0 / 255)
+    static let surface = Color(red: 225.0 / 255, green: 225.0 / 255, blue: 225.0 / 255)
+    static let lavender = Color(red: 187.0 / 255, green: 178.0 / 255, blue: 245.0 / 255)
+    static let lime = Color(red: 218.0 / 255, green: 241.0 / 255, blue: 99.0 / 255)
 }
 
 @main struct RatmirEnglishApp: App {
@@ -12,6 +12,7 @@ private enum Theme {
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(client).tint(Theme.charcoal)
+                .preferredColorScheme(.light)
                 .task { await client.restore() }
         }
     }
@@ -34,7 +35,7 @@ struct RootView: View {
             ConversationView(id: conversation.id).environmentObject(client)
                 .interactiveDismissDisabled(client.busy || client.recording)
         }
-        .alert("Не получилось", isPresented: Binding(get: { client.error != nil },
+        .alert("Не получилось", isPresented: Binding(get: { client.error != nil && client.conversation == nil },
             set: { if !$0 { client.error = nil } })) {
             Button("Понятно", role: .cancel) { client.error = nil }
         } message: { Text(client.error ?? "") }
@@ -96,7 +97,7 @@ struct HomeView: View {
                         }.buttonStyle(PrimaryButton()).disabled(client.busy)
                     }.padding(22).background(.white, in: RoundedRectangle(cornerRadius: 28))
                     if let saved = client.state?.sessions.first(where: { $0.status != "completed" }) {
-                        Button { client.conversation = saved; client.assistantTextShown = saved.mode == "learning" } label: {
+                        Button { client.resume(saved) } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Продолжить").font(.caption.bold())
                                 Text(saved.lesson.title).font(.headline)
@@ -193,6 +194,10 @@ struct ConversationView: View {
                 }
             }
             .task(id: conversation?.status) { await client.pollReview() }
+            .alert("Не получилось", isPresented: Binding(get: { client.error != nil },
+                set: { if !$0 { client.error = nil } })) {
+                Button("Понятно", role: .cancel) { client.error = nil }
+            } message: { Text(client.error ?? "") }
         }
     }
     private func composer(retry: Bool) -> some View {
@@ -242,7 +247,7 @@ struct HistoryView: View {
     var body: some View {
         NavigationStack {
             List(client.state?.sessions ?? []) { conversation in
-                Button { client.conversation = conversation; client.assistantTextShown = conversation.mode == "learning" } label: {
+                Button { client.resume(conversation) } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(conversation.lesson.title).font(.headline)
                         Text(conversation.status == "completed" ? "Завершено" : conversation.status == "review" ? "Разбор готов" : "Можно продолжить")

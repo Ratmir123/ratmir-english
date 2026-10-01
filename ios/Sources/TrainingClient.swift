@@ -53,6 +53,7 @@ enum AccessKey {
     private var recorder: AVAudioRecorder?
     private var player: AVAudioPlayer?
     private var recordedAt = Date()
+    private var recordedMinutes = 0.01
     private var localRecording: URL?
     private var pendingSpeechTurn: String?
     private let session: URLSession = {
@@ -113,12 +114,19 @@ enum AccessKey {
         status = try await request("status")
         if let id = conversation?.id { conversation = state?.sessions.first { $0.id == id } }
     }
+    func resume(_ value: Conversation) {
+        conversation = value
+        assistantTextShown = value.mode == "learning"
+        hint = nil; draft = ""; pendingMessageID = nil; recordedFile = nil
+        if value.status == "active" || value.status == "error", let last = value.turns.last, last.role == "user" {
+            draft = last.text; pendingMessageID = last.id; recordedFile = last.audioFile
+        }
+    }
     func start(mode: String, context: String) async {
         await perform {
-            conversation = try await request("sessions", body: ["mode": mode, "context": context,
+            let value: Conversation = try await request("sessions", body: ["mode": mode, "context": context,
                 "minutes": state?.profile.dailyMinutes ?? 15])
-            draft = ""; hint = nil; recordedFile = nil; pendingMessageID = nil
-            assistantTextShown = mode == "learning"
+            resume(value)
             try await refresh()
         }
     }
@@ -203,6 +211,7 @@ enum AccessKey {
     }
     func stopRecording() async {
         recorder?.stop(); recording = false
+        recordedMinutes = max(0.01, min(9.9, Date().timeIntervalSince(recordedAt) / 60))
         await transcribeRecording()
     }
     func transcribeRecording() async {
@@ -211,7 +220,7 @@ enum AccessKey {
             let boundary = "English-" + UUID().uuidString
             var data = Data()
             func append(_ value: String) { data.append(Data(value.utf8)) }
-            append("--\(boundary)\r\nContent-Disposition: form-data; name=\"minutes\"\r\n\r\n\(max(0.01, min(9.9, Date().timeIntervalSince(recordedAt) / 60)))\r\n")
+            append("--\(boundary)\r\nContent-Disposition: form-data; name=\"minutes\"\r\n\r\n\(recordedMinutes)\r\n")
             append("--\(boundary)\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"speech.mp4\"\r\nContent-Type: audio/mp4\r\n\r\n")
             data.append(try Data(contentsOf: url))
             append("\r\n--\(boundary)--\r\n")

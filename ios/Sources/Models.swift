@@ -25,6 +25,7 @@ struct Turn: Decodable, Identifiable {
     let id: String
     let role: String
     let text: String
+    let audioFile: String?
 }
 struct Priority: Decodable, Identifiable {
     var id: String { turnId + title }

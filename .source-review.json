@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "createdAt": "2026-10-01T20:45:00.160Z",
+  "createdAt": "2026-10-01T21:07:52.295Z",
   "reviewRequired": true,
   "published": false,
   "licenseCandidate": "MIT",
@@ -18,8 +18,8 @@
     },
     {
       "path": ".github/workflows/ios.yml",
-      "bytes": 1014,
-      "sha256": "656535201f9d8d3b10ec17357c1d35b093305d6fad721a35c4314e13bab7e151"
+      "bytes": 2229,
+      "sha256": "1dd2fe3fe7c174e1a846eb939d50114f8150d62ba2e90ad41fac2b08be001576"
     },
     {
       "path": "Disable Autostart.cmd",
@@ -217,24 +217,39 @@
       "sha256": "68acc78fd96637dc0f040227d8043477ef50fd46497afe94e28c75225347d6e9"
     },
     {
+      "path": "ios/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json",
+      "bytes": 131,
+      "sha256": "52006062e723208b465f22bc8e898b4a93fbaa3c3560868b565d67146b875796"
+    },
+    {
+      "path": "ios/Resources/Assets.xcassets/Contents.json",
+      "bytes": 40,
+      "sha256": "10e3b5dc202f1cd9fad1f688c8fc9fe9e9669bf3f8295e67d216b10fd99b6f49"
+    },
+    {
       "path": "ios/Sources/Models.swift",
-      "bytes": 1755,
-      "sha256": "2a72468101a29ff19f55a86b1df3a4129163aaf78f32ce301495b4ff61f69482"
+      "bytes": 1782,
+      "sha256": "5a7db902b67b7f80c025fa1fa2f09a5a7a21359f4a9956bce552e08be08fa151"
     },
     {
       "path": "ios/Sources/RatmirEnglishApp.swift",
-      "bytes": 20959,
-      "sha256": "996ece65ad812355f597566afc08f315f4d94a91894baa832613e481cc026575"
+      "bytes": 21275,
+      "sha256": "a29fc2e0631242983a15136d56e3fc4429439e670f311e985c3e4451040d446f"
     },
     {
       "path": "ios/Sources/TrainingClient.swift",
-      "bytes": 12315,
-      "sha256": "1387af1c89d9a5bff32779a4d149f0d8ce2ded71f9ebb41a7a578388ac1d8221"
+      "bytes": 12721,
+      "sha256": "fcfc5f9daa63bed7d8f4a53a742f7e6e34730850c7a28342ad3f11a753829e13"
     },
     {
       "path": "ios/project.yml",
-      "bytes": 1032,
-      "sha256": "055c1467417e3185dadd1da16f4847c7eb61884b8eed936daddbb6a2df5ae7a1"
+      "bytes": 1145,
+      "sha256": "ee015dec354150b6bb1533f391a2742bad8d5db429d9f7cc6819cedae2818e41"
+    },
+    {
+      "path": "ios/scripts/create-icon.swift",
+      "bytes": 877,
+      "sha256": "5cd5212c9df0ca87067e4aa3afc97fd47efc41aea18bb0a9ffe34d40ddd1c6da"
     },
     {
       "path": "lib/lesson-budget.ts",
@@ -418,8 +433,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 3945,
-      "sha256": "6bcb683b4ab0dc2263395ea31663a9648d2355181bfddffed8929a149cd77e47"
+      "bytes": 4528,
+      "sha256": "b97eea6666c00e02d1463ac309afca5d9da828afed05dd29d704d5dfa539f77e"
     },
     {
       "path": ".gitignore",
