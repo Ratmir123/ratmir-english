@@ -1,5 +1,7 @@
 name: RatmirEnglish
 options:
+  projectFormat: xcode15_3
+  xcodeVersion: '15.4'
   bundleIdPrefix: app.ratmirenglish
   deploymentTarget:
     iOS: '17.0'
