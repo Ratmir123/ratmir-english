@@ -25,7 +25,7 @@ struct OnboardingView: View {
                     }
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
                     .animation(reduceMotion ? nil : NativeMotion.reveal, value: onboarding.status)
-            }.background(Theme.surface).navigationBarHidden(true)
+            }.modifier(ReadingCanvas()).navigationBarHidden(true)
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable { await client.perform { try await client.refresh() } }
         }

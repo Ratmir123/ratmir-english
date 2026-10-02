@@ -26,11 +26,29 @@ struct PreviewAccessibility: ViewModifier {
             conversation["status"] = "analysing"
             conversation["processing"] = ["stage": "evaluating", "startedAt": now, "attempt": 1]
         }
-        if ["review", "celebrate", "completed", "saved-deferred"].contains(screen) {
+        if ["review", "celebrate", "completed", "saved-deferred", "preview-timing"].contains(screen) {
             conversation["status"] = "review"
             conversation["turns"] = [["id": "a1", "role": "assistant", "text": "There's a new climbing gym near my place."], ["id": "u1", "role": "user", "text": "Yeah, um, I like sport too. I play games on weekends."]]
             conversation["analysis"] = ["version": 1, "summary": "Ты поддержал тему, но сразу перевёл разговор на себя. Зацепись за новую деталь: собеседник только начал заниматься скалолазанием.", "strengths": ["Ответ понятный. Ты связал тему спорта со своим опытом."], "priorities": [["title": "Подхвати деталь собеседника", "turnId": "u1", "quote": "I play games on weekends.", "explanation": "Собеседник рассказал о новом увлечении. Вопрос поможет узнать его лучше и продолжить тему.", "example": "Oh, nice. What got you into climbing?", "retryInstruction": "Ответь заново: коротко отреагируй и спроси о скалолазании."]], "limitations": ["По одному ответу пока рано оценивать устойчивость навыка."]]
             conversation["completion"] = ["canComplete": false, "needsRetry": true, "reason": "Сделай улучшенную попытку или сохрани задание на потом."]
+        }
+        if screen == "preview-timing" {
+            let timing: [String: Any] = ["version": 1, "method": "webrtc-vad", "source": "server-audio", "audioFile": "00000000-0000-4000-8000-000000000099.wav",
+                "durationSeconds": 20.0, "detectedSpeechSeconds": 14.6, "speechSpanSeconds": 18.0, "leadingSilenceSeconds": 1.0, "trailingSilenceSeconds": 1.0,
+                "internalPauseSeconds": 3.0, "longestPauseSeconds": 3.0, "internalPauseCount": 1, "pauseThresholdSeconds": 0.6, "quality": "usable",
+                "recognizedWords": 24, "approximateWordsPerMinute": 80.0, "transcriptEdited": false,
+                "segments": [["startSeconds": 0.0, "endSeconds": 1.0, "kind": "leading-silence"], ["startSeconds": 1.0, "endSeconds": 5.0, "kind": "speech"], ["startSeconds": 5.0, "endSeconds": 8.0, "kind": "pause"], ["startSeconds": 8.0, "endSeconds": 15.0, "kind": "speech"], ["startSeconds": 15.0, "endSeconds": 15.4, "kind": "gap"], ["startSeconds": 15.4, "endSeconds": 19.0, "kind": "speech"], ["startSeconds": 19.0, "endSeconds": 20.0, "kind": "trailing-silence"]],
+                "limitations": ["Синтетическая запись для проверки интерфейса. Она не попадает в профиль пользователя.", "Шум и тихая речь могут изменить автоматическую разметку."]]
+            var turns = conversation["turns"] as! [[String: Any]]
+            turns[1]["source"] = "audio"
+            turns[1]["audioFile"] = timing["audioFile"]
+            turns[1]["speechTiming"] = timing
+            conversation["turns"] = turns
+            var review = conversation["analysis"] as! [String: Any]
+            review["timingFeedback"] = [["turnId": "u1", "startSeconds": 5.0, "endSeconds": 8.0, "durationSeconds": 3.0,
+                "observation": "С 5,0 до 8,0 с детектор не обнаружил речь. Причина паузы неизвестна.",
+                "practice": "Выдели три мысли и запиши ответ снова. Сравни паузы и полноту ответа; смысл важнее скорости."]]
+            conversation["analysis"] = review
         }
         if screen == "celebrate" || screen == "completed" {
             conversation["retries"] = [
@@ -76,7 +94,7 @@ struct PreviewAccessibility: ViewModifier {
         client.signedIn = true
         client.notificationState = "authorized"
         client.reminderEnabled = true
-        if ["practice", "listening", "analysing", "review", "celebrate", "completed", "saved-deferred", "ielts-reading", "ielts-writing"].contains(screen) {
+        if ["practice", "listening", "analysing", "review", "celebrate", "completed", "saved-deferred", "ielts-reading", "ielts-writing", "preview-timing"].contains(screen) {
             client.conversation = decode(conversation, as: Conversation.self)
             client.conversationPresented = true
             client.reviewStartedAt = Date().addingTimeInterval(-24)

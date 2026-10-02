@@ -4,10 +4,9 @@ import SwiftUI
     @StateObject private var client = TrainingClient()
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(client).tint(Theme.charcoal)
+            RootView().environmentObject(client).tint(.primary)
                 .disclosureGroupStyle(SoftDisclosureStyle())
                 .buttonStyle(PressButton())
-                .preferredColorScheme(.light)
 #if DEBUG
                 .modifier(PreviewAccessibility())
 #endif
@@ -37,7 +36,7 @@ struct RootView: View {
                     ProgressViewScreen().tabItem { Label("Прогресс", systemImage: "chart.xyaxis.line") }.tag(1)
                     HistoryView().tabItem { Label("История", systemImage: "clock.arrow.circlepath") }.tag(2)
                     SettingsView().tabItem { Label("Настройки", systemImage: "slider.horizontal.3") }.tag(3)
-                }.toolbarBackground(Theme.surface, for: .tabBar).toolbarBackground(.visible, for: .tabBar)
+                }
             } else { LoginView() }
         }
         .task {
@@ -54,16 +53,17 @@ struct RootView: View {
                     .modifier(PreviewAccessibility())
 #endif
                     .presentationDetents([.large]).presentationDragIndicator(.visible)
-                    .interactiveDismissDisabled(client.recording)
+                    .interactiveDismissDisabled(client.recording || client.microphoneStarting)
             }
         }
         .onChange(of: client.conversationPresented) { _, presented in
             if !presented { client.minimizeConversation() }
         }
+        .onChange(of: client.homeRequest) { _, _ in selectedTab = 0 }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await client.refreshReminderStatus() } }
         }
-        .alert("Не получилось", isPresented: Binding(get: { client.error != nil && !client.conversationPresented },
+        .alert(client.error?.hasPrefix("Занятие сохранено.") == true ? "Занятие сохранено" : "Не получилось", isPresented: Binding(get: { client.error != nil && !client.conversationPresented },
             set: { if !$0 { client.error = nil } })) {
             Button("Понятно", role: .cancel) { client.error = nil }
         } message: { Text(client.error ?? "") }
@@ -103,7 +103,7 @@ struct LoginView: View {
                     Text("Доступ сохраняется на этом iPhone. Личная история хранится на твоём сервере.")
                         .font(.footnote).foregroundStyle(Theme.secondary)
                 }.padding(24).padding(.top, 30).frame(maxWidth: 600, alignment: .leading).frame(maxWidth: .infinity)
-            }.background(Theme.surface).scrollDismissesKeyboard(.interactively).navigationBarHidden(true)
+            }.modifier(ReadingCanvas()).scrollDismissesKeyboard(.interactively).navigationBarHidden(true)
         }
     }
 }
@@ -202,7 +202,7 @@ struct HomeView: View {
                         .font(.footnote).foregroundStyle(Theme.secondary)
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
                     .animation(reduceMotion ? nil : NativeMotion.reveal, value: client.busy)
-            }.background(Theme.surface).navigationBarHidden(true)
+            }.modifier(ReadingCanvas()).navigationBarHidden(true)
                 .refreshable { await client.perform { try await client.refresh() } }
         }
     }
@@ -221,6 +221,8 @@ struct ConversationView: View {
     @State private var showConversation = false
     @State private var showListeningCheck = false
     @State private var analysisStartedAt = Date()
+    private enum EndingAction: Equatable { case review, complete, deferRetry }
+    @State private var pendingEnding: EndingAction?
     @FocusState private var draftFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var conversation: Conversation? { client.conversation }
@@ -233,6 +235,16 @@ struct ConversationView: View {
         conversation?.turns.filter { $0.role == "user" && $0.source == "audio" && $0.audioFile != nil && ($0.support ?? 0) == 0 && $0.transcriptEdited != true && $0.disputed != true }.count ?? 0
     }
     private var baselineHasEnoughReplies: Bool { conversation?.baseline == nil || baselineReplies >= 2 }
+    private var hasPendingAnswer: Bool {
+        !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || client.recordedFile != nil || client.pendingMessageID != nil || client.hasUnuploadedRecording
+    }
+    private var canSaveCompletion: Bool {
+        conversation?.id == id && !client.busy && !client.recording && !client.microphoneStarting && !hasPendingAnswer && conversation?.analysis != nil
+    }
+    private var canRequestReview: Bool {
+        conversation?.id == id && !client.busy && !client.recording && !client.microphoneStarting && !hasPendingAnswer && active && conversation?.processing == nil
+            && baselineHasEnoughReplies && conversation?.turns.contains(where: { $0.role == "user" }) == true
+    }
     private var mayComplete: Bool {
         guard let value = conversation, let analysis = value.analysis else { return false }
         return value.completion?.canComplete ?? (analysis.priorities.isEmpty || hasConfirmedImprovement(value))
@@ -271,6 +283,43 @@ struct ConversationView: View {
                 .alert("Не получилось", isPresented: errorPresented) {
                     Button("Понятно", role: .cancel) { client.error = nil }
                 } message: { Text(client.error ?? "") }
+                .confirmationDialog(endingTitle, isPresented: endingPresented, titleVisibility: .visible) {
+                    if let ending = pendingEnding {
+                        Button(ending == .review ? "Получить разбор" : ending == .complete ? "Завершить и вернуться на главную" : "Сохранить и вернуться на главную") {
+                            confirmEnding(ending)
+                        }
+                        Button("Остаться в занятии", role: .cancel) { }
+                    }
+                } message: { Text(endingMessage) }
+        }
+    }
+    private var endingPresented: Binding<Bool> {
+        Binding(get: { pendingEnding != nil }, set: { if !$0 { pendingEnding = nil } })
+    }
+    private var endingTitle: String {
+        switch pendingEnding {
+        case .review: return textActivity ? "Передать задание на разбор?" : "Закончить разговор?"
+        case .complete: return "Завершить занятие?"
+        case .deferRetry: return "На сегодня всё?"
+        case nil: return ""
+        }
+    }
+    private var endingMessage: String {
+        switch pendingEnding {
+        case .review: return "Отправленные ответы сохранены. После разбора можно сделать улучшенную попытку."
+        case .complete: return "Результат и разбор останутся в истории."
+        case .deferRetry: return "Разбор сохранится. Улучшенная попытка останется на потом и не будет засчитана как выполненная."
+        case nil: return ""
+        }
+    }
+    private func confirmEnding(_ ending: EndingAction) {
+        if ending == .review {
+            guard canRequestReview else { return }
+            draftFocused = false
+            Task { await client.action("finish") }
+        } else {
+            guard canSaveCompletion else { return }
+            Task { await client.action("complete", deferRetry: ending == .deferRetry, returnHome: true) }
         }
     }
     private var pollingKey: String { (conversation?.status ?? "") + "|" + (conversation?.processing?.stage ?? "") }
@@ -280,26 +329,28 @@ struct ConversationView: View {
     private var decoratedConversation: some View {
         conversationScroll
             .safeAreaInset(edge: .bottom, spacing: 0) { bottomDock }
-            .safeAreaInset(edge: .top, spacing: 0) { completionBanner }
             .navigationTitle(hasReview ? "Твой разбор" : textActivity ? (readingActivity ? "Чтение" : "Письмо") : "Разговор")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.surface, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-    }
-    @ViewBuilder private var completionBanner: some View {
-        if let moment = client.completionMoment, moment.sessionId == id, conversation?.status == "completed" {
-            CompletionMomentBanner(moment: moment)
-        }
+            .toolbarColorScheme(.light, for: .navigationBar)
     }
     private var conversationScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 conversationContent.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
-            }.background(Theme.surface).scrollDismissesKeyboard(.interactively)
+            }.background(Theme.surface).foregroundStyle(Theme.charcoal)
+                .environment(\.colorScheme, .light).scrollDismissesKeyboard(.interactively)
                 .onChange(of: conversation?.turns.count) { _, _ in
                     draftFocused = false
                     if showConversation { proxy.scrollTo("end", anchor: .bottom) }
                 }
+#if DEBUG
+                .task {
+                    if PreviewFixtures.screen == "preview-timing" {
+                        try? await Task.sleep(for: .milliseconds(150))
+                        proxy.scrollTo("speech-timing", anchor: .top)
+                    }
+                }
+#endif
         }
     }
     private var conversationContent: some View {
@@ -327,6 +378,11 @@ struct ConversationView: View {
         if let value = conversation {
             if active { composer }
             else if hasReview && (value.status != "completed" || value.retryDeferred == true) { reviewDock }
+            else if value.status == "completed" {
+                Button { client.returnToHome() } label: { Label("На главную", systemImage: "house") }
+                    .buttonStyle(PrimaryButton()).padding(.horizontal, 20).padding(.vertical, 14)
+                    .modifier(ComposerBackdrop())
+            }
         }
     }
     @ToolbarContentBuilder private var conversationToolbar: some ToolbarContent {
@@ -337,8 +393,8 @@ struct ConversationView: View {
         ToolbarItem(placement: .topBarTrailing) {
             Button { draftFocused = false; client.minimizeConversation() } label: {
                 Image(systemName: "chevron.down").font(.subheadline.weight(.semibold))
-                    .frame(width: 44, height: 44).background(Color.white.opacity(0.7), in: Circle())
-            }.buttonStyle(PressButton()).accessibilityLabel("Свернуть занятие").disabled(client.recording)
+                    .frame(width: 44, height: 44)
+            }.buttonStyle(PressButton()).accessibilityLabel("Свернуть занятие").disabled(client.recording || client.microphoneStarting)
         }
     }
     private var processingStart: Date? {
@@ -383,6 +439,8 @@ struct ConversationView: View {
                         .buttonStyle(QuietButton()).disabled(client.busy || client.recording)
                 }
             }.frame(maxWidth: .infinity)
+            if client.playing { Text(client.audioOutput).font(.caption).foregroundStyle(Theme.secondary).frame(maxWidth: .infinity) }
+            if let routeMessage = client.audioRouteMessage { Text(routeMessage).font(.footnote).foregroundStyle(Theme.secondary) }
             if let hint = client.hint {
                 SurfaceCard(color: Theme.lime.opacity(0.4)) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -481,6 +539,7 @@ struct ConversationView: View {
     private func reviewContent(_ analysis: Review, conversation value: Conversation) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             SurfaceCard { Text(analysis.summary).font(.subheadline).fixedSize(horizontal: false, vertical: true) }
+            SpeechTimingView(conversation: value).id("speech-timing")
             if !analysis.strengths.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     InputLabel(title: "Что получилось")
@@ -522,37 +581,36 @@ struct ConversationView: View {
         }
     }
     private var reviewDock: some View {
-        VStack(spacing: 10) {
+        NativeGlassGroup { VStack(spacing: 12) {
             if mayComplete && conversation?.retryDeferred != true {
                 Label("Всё сохранено. Можно завершать.", systemImage: "checkmark.circle.fill").font(.footnote).foregroundStyle(Theme.secondary)
-                Button { Task { await client.action("complete") } } label: {
+                Button { pendingEnding = .complete } label: {
                     HStack { Text(client.busy ? "Сохраняем" : "Завершить занятие"); Spacer(); if client.busy { ProgressView().tint(Theme.lime) } else { Image(systemName: "checkmark") } }
-                }.buttonStyle(PrimaryButton()).disabled(client.busy || client.recording)
+                }.buttonStyle(PrimaryButton()).disabled(!canSaveCompletion)
             } else {
                 Text("Ответь ещё раз своими словами. Проверим, что стало лучше.")
                     .font(.footnote).foregroundStyle(Theme.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 composerContent(retry: true)
-                Button { Task { await client.action("complete", deferRetry: true) } } label: {
-                    Text("На сегодня всё. Вернёмся к попытке позже.").frame(minHeight: 44).contentShape(Rectangle())
-                }.font(.caption.weight(.medium)).foregroundStyle(Theme.secondary).buttonStyle(PressButton()).disabled(client.busy || client.recording || !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || client.hasUnuploadedRecording)
+                Button { pendingEnding = .deferRetry } label: {
+                    HStack { Text("На сегодня всё"); Spacer(); Image(systemName: "house") }.frame(maxWidth: .infinity)
+                }.buttonStyle(QuietButton()).disabled(!canSaveCompletion)
             }
-        }.padding(16).modifier(LiquidChrome()).padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
+        }}.padding(.horizontal, 20).padding(.vertical, 14).modifier(ComposerBackdrop())
             .animation(reduceMotion ? nil : NativeMotion.reveal, value: mayComplete)
     }
     private var composer: some View {
-        VStack(spacing: 12) {
+        NativeGlassGroup { VStack(spacing: 12) {
             composerContent(retry: false)
-            Button { draftFocused = false; Task { await client.action("finish") } } label: {
-                HStack { Text(textActivity ? "Завершить задание и получить разбор" : "Закончить разговор и получить разбор"); Image(systemName: "arrow.right") }.frame(minHeight: 44).contentShape(Rectangle())
-            }.font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary).buttonStyle(PressButton())
-                .disabled(client.busy || client.recording || client.hasUnuploadedRecording || !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !baselineHasEnoughReplies || conversation?.turns.contains(where: { $0.role == "user" }) != true)
+            Button { pendingEnding = .review } label: {
+                HStack { Text("Завершить и получить разбор"); Spacer(); Image(systemName: "checkmark.circle") }
+            }.buttonStyle(SecondaryButton()).disabled(!canRequestReview)
             if !client.recording && !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text("Перед разбором отправь черновик или очисти текст.").font(.caption).foregroundStyle(Theme.secondary)
             }
             if conversation?.baseline != nil {
                 Text("Своих ответов голосом без опоры: \(baselineReplies)/2. Хорошая оценка не обязательна.").font(.caption).foregroundStyle(Theme.secondary)
             }
-        }.padding(16).modifier(LiquidChrome()).padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
+        }}.padding(.horizontal, 20).padding(.vertical, 14).modifier(ComposerBackdrop())
     }
     private func composerContent(retry: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -708,7 +766,7 @@ struct ProgressViewScreen: View {
                     Text("Число справа показывает самостоятельные успехи. Уровень закрепляется, когда навык срабатывает в новой ситуации и после паузы.")
                         .font(.footnote).foregroundStyle(Theme.secondary)
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
-            }.background(Theme.surface).navigationBarHidden(true).refreshable { await client.perform { try await client.refresh() } }
+            }.modifier(ReadingCanvas()).navigationBarHidden(true).refreshable { await client.perform { try await client.refresh() } }
     }
     private func successLabel(_ count: Int) -> String {
         if count % 100 >= 11 && count % 100 <= 14 { return "самостоятельных\nуспехов" }
@@ -752,7 +810,7 @@ struct HistoryView: View {
                         }.buttonStyle(PressButton()).disabled(client.busy || client.recording)
                     }
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
-            }.background(Theme.surface).navigationBarHidden(true).refreshable { await client.perform { try await client.refresh() } }
+            }.modifier(ReadingCanvas()).navigationBarHidden(true).refreshable { await client.perform { try await client.refresh() } }
         }
     }
     private func historyLabel(_ status: String) -> String {
@@ -791,6 +849,8 @@ struct SettingsView: View {
                             }
                             Text(client.status?.audio.configured == true ? "Включён. Реплики звучат автоматически. Пока ты говоришь, собеседник ждёт." : "Голос ещё не подключён. Добавь API-ключ в настройках приложения на компьютере.")
                                 .font(.footnote).foregroundStyle(Theme.secondary)
+                            Text("Выход звука: " + client.audioOutput).font(.caption).foregroundStyle(Theme.secondary)
+                            if let routeMessage = client.audioRouteMessage { Text(routeMessage).font(.footnote).foregroundStyle(Theme.secondary) }
                             if let usage = client.state?.audioUsage {
                                 Divider().opacity(0.5)
                                 HStack {
@@ -811,7 +871,7 @@ struct SettingsView: View {
                             .font(.footnote).foregroundStyle(Theme.secondary)
                     }.padding(.horizontal, 4)
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
-            }.background(Theme.surface).navigationBarHidden(true)
+            }.modifier(ReadingCanvas()).navigationBarHidden(true)
                 .task {
                     await client.refreshReminderStatus()
                     reminderDate = Calendar.current.date(from: DateComponents(hour: client.reminderHour, minute: client.reminderMinute)) ?? Date()

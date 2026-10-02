@@ -53,6 +53,21 @@ export function practiceEvidence(session: Session): PracticeResult['evidence'] {
   });
 }
 
+/** Shared eligibility for reward navigation and XP; a changed label never loosens source/date/retry checks. */
+export function qualifyingRetryImprovement(session: Session, now = Date.now()): Session['retries'][number] | undefined {
+  if (!session.analysis || !Number.isSafeInteger(session.analysis.version) || session.analysis.version < 1
+    || !session.analysis.priorities.length) return undefined;
+  const created = validTime(session.createdAt); const analysed = validTime(session.analysis.createdAt); const saved = validTime(session.updatedAt);
+  if (!Number.isFinite(created) || !Number.isFinite(saved)) return undefined;
+  return session.retries.filter(retry => retry.improved === true
+    && (retry.analysisVersion === undefined || retry.analysisVersion === session.analysis!.version)
+    && !!retry.text.trim() && !retry.transcriptEdited
+    && Number.isFinite(validTime(retry.createdAt)) && validTime(retry.createdAt) >= created
+    && (!Number.isFinite(analysed) || validTime(retry.createdAt) >= analysed)
+    && validTime(retry.createdAt) <= saved && validTime(retry.createdAt) <= now + 1000)
+    .sort((a, b) => validTime(a.createdAt) - validTime(b.createdAt))[0];
+}
+
 export function practiceResult(session: Session, now = Date.now()): PracticeResult | null {
   if (session.status !== 'completed' || session.baseline || session.lesson.kind === 'calibration' || !session.analysis
     || !Number.isSafeInteger(session.analysis.version) || session.analysis.version < 1) return null;
@@ -61,15 +76,7 @@ export function practiceResult(session: Session, now = Date.now()): PracticeResu
   const created = validTime(session.createdAt);
   // Store CAS timestamps may lead the wall clock by a few milliseconds.
   if (!evidence.length || !Number.isFinite(completed) || completed > now + 1000 || !Number.isFinite(created) || completed < created) return null;
-  const analysed = validTime(session.analysis.createdAt);
-  const saved = validTime(session.updatedAt);
-  const improvement = session.analysis.priorities.length > 0 ? session.retries.filter(retry => retry.improved === true
-    && (retry.analysisVersion === undefined || retry.analysisVersion === session.analysis!.version)
-    && !!retry.text.trim() && !retry.transcriptEdited
-    && Number.isFinite(validTime(retry.createdAt)) && validTime(retry.createdAt) >= created
-    && (!Number.isFinite(analysed) || validTime(retry.createdAt) >= analysed)
-    && Number.isFinite(saved) && validTime(retry.createdAt) <= saved && validTime(retry.createdAt) <= now + 1000)
-    .sort((a, b) => validTime(a.createdAt) - validTime(b.createdAt))[0] : undefined;
+  const improvement = qualifyingRetryImprovement(session, now);
   // A deferred retry can be improved later without changing the original practice day.
   const improvedRetry = !!improvement;
   const targets = new Set(session.lesson.targetSkills.filter(skill => observable.has(skill)));

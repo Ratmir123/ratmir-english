@@ -94,6 +94,7 @@ function sourceSignature(session: Session): string {
   return JSON.stringify({ lesson: session.lesson, mode: session.mode, baseline: session.baseline, support: session.support, turns: session.turns.map((turn) => ({
     id: turn.id, role: turn.role, text: turn.text, source: turn.source, support: turn.support,
     disputed: !!turn.disputed, audioFile: turn.audioFile, originalTranscript: turn.originalTranscript, transcriptEdited: !!turn.transcriptEdited,
+    speechTiming: turn.speechTiming,
   })) });
 }
 

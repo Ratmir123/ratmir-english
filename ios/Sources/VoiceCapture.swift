@@ -15,10 +15,9 @@ final class VoiceCapture {
     var onFailure: ((String) -> Void)?
 
     func start(at url: URL) throws {
-        let audio = AVAudioSession.sharedInstance()
-        try audio.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
-        try audio.setPreferredSampleRate(48000)
-        try audio.setActive(true)
+        var didStart = false
+        defer { if !didStart { NativeAudioRoute.deactivate() } }
+        try NativeAudioRoute.prepareCapture()
         let input = engine.inputNode
         let source = input.outputFormat(forBus: 0)
         guard source.sampleRate > 0, source.channelCount > 0,
@@ -45,7 +44,7 @@ final class VoiceCapture {
             self.queue.async { self.consume(copy, target: target) }
         }
         engine.prepare()
-        do { try engine.start() }
+        do { try engine.start(); didStart = true }
         catch { input.removeTap(onBus: 0); active = false; file = nil; throw error }
     }
 
@@ -84,12 +83,14 @@ final class VoiceCapture {
     func stop() -> (duration: Double, chunks: Int) {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        return queue.sync {
+        let result = queue.sync {
             active = false
             let duration = Double(samples) / 24000
             file = nil; converter = nil
             return (duration, sequence)
         }
+        NativeAudioRoute.deactivate()
+        return result
     }
 }
 

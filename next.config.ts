@@ -4,7 +4,7 @@ const config: NextConfig = {
   poweredByHeader: false,
   devIndicators: false,
   agentRules: false,
-  serverExternalPackages: [],
+  serverExternalPackages: ['@echogarden/fvad-wasm'],
   outputFileTracingExcludes: { '*': ['./.data/**', './.runtime/**', './.env*'] },
   async headers() {
     return [{ source: '/:path*', headers: [

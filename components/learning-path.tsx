@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ArrowRightIcon, ArrowUpRightIcon, CheckIcon, FlagIcon, LockSimpleIcon, MedalIcon, TargetIcon, XIcon } from '@phosphor-icons/react';
-import { SKILLS, type LearningTrackId, type PracticeResult, type ProgressionState, type Session } from '@/lib/types';
+import { SKILLS, type AppState, type LearningTrackId, type PracticeResult, type ProgressionState, type Session } from '@/lib/types';
+import { achievementArt, achievementTarget, experienceBand, type AchievementTarget } from '@/lib/achievement-targets';
 import styles from './learning-path.module.css';
 import { VoiceOrb } from './voice-orb';
 
@@ -17,8 +18,9 @@ function ProgressLine({ current, target, label }: { current: number; target: num
 }
 
 export function PracticeLevel({ value, compact = false }: { value: ProgressionState; compact?: boolean }) {
+  const band = experienceBand(value.level);
   return <section className={`${styles.level} ${compact ? styles.compact : ''}`} aria-label="Уровень практики" data-testid="practice-level">
-    <div className={styles.levelHeading}><span className={styles.levelMark}>{value.level}</span><div><span className={styles.kicker}>УРОВЕНЬ ПРАКТИКИ</span><h3>{value.levelTitle}</h3></div><span className={styles.xp}>{value.xp} <small>XP</small></span></div>
+    <div className={styles.levelHeading}><img className={styles.rankArt} src={`/rewards-v041/${band.art}.png`} width={76} height={76} alt="" /><div><span className={styles.kicker}>{band.title.toUpperCase()} · ОПЫТ ПРАКТИКИ</span><h3>{value.levelTitle}</h3></div><span className={styles.xp}>{value.xp} <small>XP</small></span></div>
     <ProgressLine current={value.xpInLevel} target={value.nextLevelXP - value.levelFloorXP} label="Практика до следующего уровня" />
     <div className={styles.lineLabels}><span>{value.xpToNextLevel} XP до следующего уровня</span><span>Завершено: {value.completedPractice}</span></div>
     <p className={styles.note}>XP отмечает практику. Языковой уровень подтверждают твои ответы.</p>
@@ -46,7 +48,7 @@ export function EvidenceCoverage({ value }: { value: ProgressionState }) {
   </section>;
 }
 
-export function Achievements({ value }: { value: ProgressionState }) {
+export function Achievements({ value, state, onTarget }: { value: ProgressionState; state: AppState; onTarget: (target: AchievementTarget) => void }) {
   const [all, setAll] = useState(false);
   const unlocked = value.achievements.filter(item => item.unlocked)
     .sort((a, b) => (b.unlockedAt || '').localeCompare(a.unlockedAt || ''));
@@ -59,8 +61,8 @@ export function Achievements({ value }: { value: ProgressionState }) {
     <div className={styles.sectionHeading}><div><span className={styles.kicker}>РУБЕЖИ ПРАКТИКИ</span><h2 id="achievement-title">Есть к чему вернуться</h2></div><MedalIcon size={25} aria-hidden="true" /></div>
     <p className={styles.note}>Каждая отметка объясняет, что именно ты сделал. Можно раскрыть её условие. Дневные рубежи считаются по UTC.</p>
     <div className={styles.achievementList}>{visible.map(item => <details key={item.id} className={styles.achievement} data-unlocked={item.unlocked}>
-      <summary><span className={styles.achievementIcon}>{item.unlocked ? <MedalIcon size={20} weight="fill" /> : <TargetIcon size={20} />}</span><span><strong>{item.title}</strong><small>{item.unlocked ? 'Получено' : `${item.current} из ${item.target}`}</small></span><span className={styles.achievementState}>{item.unlocked ? <CheckIcon size={18} /> : <LockSimpleIcon size={17} />}</span></summary>
-      <div className={styles.achievementDetail}><p>{item.description}</p><ProgressLine current={item.current} target={item.target} label={item.title} /><span className={styles.note}>{item.current} / {item.target}{item.unlockedAt ? ` · ${shortDate(item.unlockedAt)}` : ''}</span></div>
+      <summary><img className={styles.achievementArt} src={achievementArt(item.id)} width={64} height={64} alt="" /><span><strong>{item.title}</strong><small>{item.unlocked ? 'Получено' : `${item.current} из ${item.target}`}</small></span><span className={styles.achievementState}>{item.unlocked ? <CheckIcon size={18} /> : <LockSimpleIcon size={17} />}</span></summary>
+      <div className={styles.achievementDetail}><p>{item.description}</p><ProgressLine current={item.current} target={item.target} label={item.title} /><span className={styles.note}>{item.current} / {item.target}{item.unlockedAt ? ` · ${shortDate(item.unlockedAt)}` : ''}</span>{!item.unlocked && <><p className={styles.targetReason}>{achievementTarget(item.id, state).reason}</p><button className="button secondary" onClick={() => onTarget(achievementTarget(item.id, state))}><TargetIcon size={18} />{achievementTarget(item.id, state).label}<ArrowUpRightIcon size={16} /></button></>}</div>
     </details>)}</div>
     {ordered.length > 4 && <button type="button" className="text-button" onClick={() => setAll(previous => !previous)} aria-expanded={all}>{all ? 'Свернуть рубежи' : `Все рубежи (${ordered.length})`}<ArrowRightIcon size={16} /></button>}
   </section>;

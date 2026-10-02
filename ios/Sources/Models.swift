@@ -74,6 +74,7 @@ struct Lesson: Decodable {
     let context: String?
     let track: String?
     let activity: String?
+    let kind: String?
     let material: Material?
 }
 struct Turn: Decodable, Identifiable {
@@ -85,6 +86,7 @@ struct Turn: Decodable, Identifiable {
     let support: Int?
     let transcriptEdited: Bool?
     let disputed: Bool?
+    let speechTiming: SpeechTiming?
 }
 struct Priority: Decodable, Identifiable {
     var id: String { turnId + title }
@@ -97,12 +99,23 @@ struct Priority: Decodable, Identifiable {
 }
 struct Review: Decodable {
     let version: Int?
+    let createdAt: String?
     let summary: String
     let strengths: [String]
     let priorities: [Priority]
     let limitations: [String]
+    let timingFeedback: [TimingFeedback]?
 }
-struct Retry: Decodable { let text: String; let feedback: String; let improved: Bool?; let analysisVersion: Int? }
+struct Retry: Decodable {
+    let text: String
+    let feedback: String
+    let improved: Bool?
+    let analysisVersion: Int?
+    let audioFile: String?
+    let transcriptEdited: Bool?
+    let speechTiming: SpeechTiming?
+    let createdAt: String?
+}
 struct Conversation: Decodable, Identifiable {
     struct Baseline: Decodable { let version: Int; let stepId: String }
     let id: String

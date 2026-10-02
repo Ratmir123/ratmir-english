@@ -38,11 +38,10 @@ struct JourneySummary: View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .top, spacing: 14) {
-                    Image(systemName: "sparkle").font(.title2).frame(width: 46, height: 46)
-                        .background(Theme.lime, in: RoundedRectangle(cornerRadius: 16))
+                    RewardImage(name: "reward-" + RewardArt.rank(progression.level).art + "-v041", size: 76)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(progression.levelTitle).font(.title3.weight(.semibold))
-                        Text("Уровень практики \(progression.level)").font(.caption).foregroundStyle(Theme.secondary)
+                        Text(RewardArt.rank(progression.level).title + " · опыт практики").font(.caption).foregroundStyle(Theme.secondary)
                     }
                     Spacer(minLength: 0)
                 }
@@ -112,7 +111,7 @@ struct CurriculumView: View {
                 Text("IELTS здесь пока практика основ четырёх навыков. Полный экзамен, прогноз band и гарантии для визы не входят в эти счётчики.")
                     .font(.caption).foregroundStyle(Theme.secondary)
             }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
-        }.background(Theme.surface).navigationTitle("Путь").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+        }.modifier(ReadingCanvas()).navigationTitle("Путь").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
     }
 }
 
@@ -143,6 +142,7 @@ private struct TrackRow: View {
 
 struct PracticeTrackView: View {
     let trackID: String
+    var preferredActivity: String? = nil
     @EnvironmentObject private var client: TrainingClient
     @State private var mode = "learning"
     private var track: PracticeTrack? { client.state?.progression?.tracks.first { $0.id == trackID } }
@@ -160,7 +160,7 @@ struct PracticeTrackView: View {
                     }
                 }
             }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
-        }.background(Theme.surface).navigationTitle("Практика").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+        }.modifier(ReadingCanvas()).navigationTitle("Практика").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
     }
     private func conversationPractice(_ track: PracticeTrack) -> some View {
         SurfaceCard {
@@ -182,10 +182,11 @@ struct PracticeTrackView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Начнём с коротких заданий. Можно выбрать любой навык и смешивать их с разговорами о жизни и работе.")
                 .font(.subheadline).foregroundStyle(Theme.secondary)
-            ForEach(track.activities) { activity in
+            ForEach(track.activities.sorted { ($0.id == preferredActivity ? 0 : 1) < ($1.id == preferredActivity ? 0 : 1) }) { activity in
                 SurfaceCard {
                     VStack(alignment: .leading, spacing: 14) {
                         Label(activity.title, systemImage: JourneyCopy.activityIcon(activity.id)).font(.headline)
+                        if activity.id == preferredActivity { Text("Для выбранной награды").font(.caption.weight(.semibold)).foregroundStyle(Theme.charcoal) }
                         Text(JourneyCopy.focus(activity.id)).font(.subheadline).fixedSize(horizontal: false, vertical: true)
                         Text("\(activity.completedSessions)/\(activity.targetSessions) завершённых заданий").font(.caption).foregroundStyle(Theme.secondary).monospacedDigit()
                         JourneyProgressBar(current: activity.completedSessions, target: activity.targetSessions)
@@ -214,7 +215,7 @@ struct AchievementsView: View {
                 Text("Дни практики считаются по UTC. Это не обязательная серия посещений.").font(.caption).foregroundStyle(Theme.secondary)
                 ForEach(achievements) { achievement in AchievementRow(achievement: achievement) }
             }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
-        }.background(Theme.surface).navigationTitle("Награды").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+        }.modifier(ReadingCanvas()).navigationTitle("Награды").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
     }
 }
 
@@ -224,9 +225,7 @@ private struct AchievementRow: View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 14) {
-                    Image(systemName: achievement.unlocked ? "checkmark.seal.fill" : "seal")
-                        .font(.title).foregroundStyle(Theme.charcoal).frame(width: 54, height: 54)
-                        .background(achievement.unlocked ? Theme.lime : Theme.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 18))
+                    RewardImage(name: RewardArt.achievement(achievement.id), size: 72)
                     VStack(alignment: .leading, spacing: 6) {
                         Text(achievement.title).font(.headline)
                         Text(achievement.unlocked ? "Открыто" : "Пока впереди").font(.caption).foregroundStyle(Theme.secondary)
@@ -242,6 +241,11 @@ private struct AchievementRow: View {
                     }
                 }
                 JourneyProgressBar(current: achievement.current, target: achievement.target, color: achievement.unlocked ? Theme.lime : Theme.lavender)
+                if !achievement.unlocked {
+                    NavigationLink { AchievementPracticeView(achievement: achievement) } label: {
+                        HStack { Label("Взять на прицел", systemImage: "scope"); Spacer(); Image(systemName: "arrow.up.right") }
+                    }.buttonStyle(SecondaryButton())
+                }
             }
         }
     }

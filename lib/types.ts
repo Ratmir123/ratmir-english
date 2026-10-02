@@ -34,6 +34,23 @@ export interface Turn {
   source: 'text' | 'audio'; support: Support; audioFile?: string;
   disputed?: boolean; originalText?: string;
   originalTranscript?: string; transcriptEdited?: boolean;
+  speechTiming?: SpeechTiming;
+}
+/** Instrumental estimates from the original audio, never inferred from fluent ASR text. */
+export interface SpeechTiming {
+  version: 1; method: 'webrtc-vad'; source: 'server-audio'; audioFile: string;
+  durationSeconds: number; detectedSpeechSeconds: number; speechSpanSeconds: number;
+  leadingSilenceSeconds: number; trailingSilenceSeconds: number;
+  internalPauseSeconds: number; longestPauseSeconds: number; internalPauseCount: number;
+  pauseThresholdSeconds: number;
+  segments: { startSeconds: number; endSeconds: number; kind: 'speech' | 'pause' | 'leading-silence' | 'trailing-silence' | 'gap' }[];
+  quality: 'usable' | 'limited' | 'no-speech'; limitations: string[];
+  recognizedWords: number | null; approximateWordsPerMinute: number | null;
+  transcriptEdited: boolean;
+}
+export interface TimingFeedback {
+  turnId: string; startSeconds: number; endSeconds: number; durationSeconds: number;
+  observation: string; practice: string;
 }
 export interface Priority {
   type: 'language' | 'dialogue'; title: string; turnId: string; quote: string;
@@ -47,12 +64,13 @@ export interface Analysis {
   summary: string; strengths: string[]; priorities: Priority[];
   evidence: Evidence[]; nextFocus: string; limitations: string[];
   model: string; createdAt: string; version: number;
+  timingFeedback?: TimingFeedback[];
 }
 export interface Session {
   id: string; lesson: LessonPlan; mode: Mode;
   status: 'active' | 'analysing' | 'review' | 'completed' | 'error';
   createdAt: string; updatedAt: string; turns: Turn[]; analysis: Analysis | null;
-  retries: { id?: string; text: string; feedback: string; createdAt: string; audioFile?: string; improved?: boolean; analysisVersion?: number; originalTranscript?: string; transcriptEdited?: boolean }[];
+  retries: { id?: string; text: string; feedback: string; createdAt: string; audioFile?: string; improved?: boolean; analysisVersion?: number; originalTranscript?: string; transcriptEdited?: boolean; speechTiming?: SpeechTiming }[];
   support: Support; error?: string; comfort?: number;
   clientRequestId?: string; retryDeferred?: boolean;
   baseline?: { version: 1; stepId: BaselineStepId };

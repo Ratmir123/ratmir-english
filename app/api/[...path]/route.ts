@@ -6,6 +6,7 @@ import { getAppState, getSession, getSessionByRequestId, createSession, saveSess
   completeOnboardingIntro, getOnboardingRecord, saveBaselineReport, getLearningGeneration } from '@/lib/server/store';
 import { completionRequirement } from '@/lib/server/session-lifecycle';
 import { messageInputSchema, retryInputSchema, transcriptIntegrity } from '@/lib/server/transcript-integrity';
+import { correctedRecordingTiming, recordedSubmission } from '@/lib/server/speech-timing';
 import { planLesson, respond, hint, reviewRetryAssessment } from '@/lib/server/teacher';
 import { audioConfigured, setAudioKey, getAudio, transcribe, synthesize, cleanAudio, createLiveTranscriptionSession, closeLiveTranscriptionSession } from '@/lib/server/audio';
 import { checkAccess, checkOrigin, validAccessCode, accessCookie, requestIsSecure, ApiError } from '@/lib/server/security';
@@ -103,7 +104,7 @@ async function handle(req: NextRequest, route: Route) {
   ensureWorker();
   if (req.method === 'GET') {
     if (path[0] === 'state') { cleanAudio(getAppState().profile.audioRetentionDays); return json(safeState(getAppState())); }
-    if (path[0] === 'status') return json({ app: { version: '0.4.0', channel: 'alpha' }, brain: await getBrainStatus(), hosting: process.env.TRAINING_DEPLOYMENT === 'server' ? 'server' : 'local', audio: { configured: audioConfigured(), model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts' } });
+    if (path[0] === 'status') return json({ app: { version: '0.4.1', channel: 'alpha' }, brain: await getBrainStatus(), hosting: process.env.TRAINING_DEPLOYMENT === 'server' ? 'server' : 'local', audio: { configured: audioConfigured(), model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts' } });
     if (path[0] === 'families') return json({ families: FAMILIES, calibration: CALIBRATION_OPTIONS });
     if (path[0] === 'sessions' && path[1]) return json(safeSession(session(path[1])));
     if (path[0] === 'audio' && path[1]) {
@@ -195,7 +196,8 @@ async function handle(req: NextRequest, route: Route) {
         }
         if (data.source === 'audio') { if (!data.audioFile) throw new ApiError('Нет исходной записи.'); getAudio(data.audioFile); }
         if (previous < 0) value.turns.push({ id: data.id, text: data.text, source: data.source, audioFile: data.audioFile,
-          ...transcriptIntegrity(data.text, data.originalTranscript, data.source, value.support), role: 'user', createdAt: new Date().toISOString() });
+          ...(data.source === 'audio' && data.audioFile ? recordedSubmission(data.audioFile, data.text, data.originalTranscript, value.support)
+            : transcriptIntegrity(data.text, data.originalTranscript, data.source, value.support)), role: 'user', createdAt: new Date().toISOString() });
         value.status = 'active'; value.error = undefined;
         value.processing = { stage: 'responding', startedAt: new Date().toISOString() }; saveSession(value);
         try {
@@ -256,7 +258,8 @@ async function handle(req: NextRequest, route: Route) {
         const data = retryInputSchema.parse(await body(req));
         if (data.id && value.retries.some(retry => retry.id === data.id)) return json(safeSession(value));
         if (data.audioFile) getAudio(data.audioFile);
-        const { support: ignoredSupport, ...integrity } = transcriptIntegrity(data.text, data.originalTranscript, data.audioFile ? 'audio' : 'text');
+        const { support: ignoredSupport, ...integrity } = data.audioFile ? recordedSubmission(data.audioFile, data.text, data.originalTranscript)
+          : transcriptIntegrity(data.text, data.originalTranscript, 'text');
         void ignoredSupport;
         const result = await reviewRetryAssessment(value, getAppState().profile, data.text, integrity);
         value.retries.push({ id: data.id, text: data.text, ...result, ...integrity, audioFile: data.audioFile, analysisVersion: value.analysis.version, createdAt: new Date().toISOString() });
@@ -278,6 +281,7 @@ async function handle(req: NextRequest, route: Route) {
         if (turn.source === 'audio') {
           turn.originalTranscript ??= turn.originalText;
           turn.transcriptEdited = turn.originalTranscript.trim() !== turn.text.trim();
+          turn.speechTiming = turn.audioFile ? correctedRecordingTiming(turn.audioFile, turn.text) : undefined;
         }
         // A correction after feedback stays useful, but is no longer a fresh unaided probe.
         turn.support = Math.max(turn.support, 1) as 1 | 2 | 3;
@@ -299,4 +303,3 @@ async function run(req: NextRequest, route: Route) {
     return json({ error: message }, error instanceof ApiError ? error.status : 503);
   }
 }
-

@@ -24,6 +24,8 @@ import { PracticeModeSwitch as ModeSwitch } from './practice-mode-switch';
 import { useContentEntrance, useInputModality, useNavigationHighlight } from './use-interface-motion';
 import motionStyles from './training-app.module.css';
 import { Achievements, CurriculumOverview, EvidenceCoverage, PracticeLevel, SessionOutcome } from './learning-path';
+import { SpeechTimingPanel } from './speech-timing';
+import type { AchievementTarget } from '@/lib/achievement-targets';
 
 type Tab = 'today' | 'practice' | 'progress' | 'history' | 'settings' | 'session';
 type Status = { brain: BrainStatus; hosting?: 'local' | 'server'; audio: { configured: boolean; model: string } };
@@ -160,6 +162,7 @@ export function TrainingApp() {
   const lastSent = useRef<{ sessionId: string; id: string; text: string; source: 'text' | 'audio'; audioFile?: string; originalTranscript?: string } | null>(null);
   const lessonStart = useRef<{ optionsKey: string; requestId: string; pending: boolean } | null>(null);
   const lastAutoplay = useRef<string | null>(null);
+  const sessionActionLock = useRef(false);
   const tabRef = useRef(tab); tabRef.current = tab;
   const screenRef = useContentEntrance<HTMLDivElement>(startupVisible ? 'startup' : tab);
   const desktopNavigation = useNavigationHighlight(tab);
@@ -375,7 +378,9 @@ export function TrainingApp() {
     setTranscript(value.mode === 'learning' || !status?.audio.configured); setTextMode(value.mode === 'learning' || !status?.audio.configured); setError(''); voice.setState('idle');
   }
   async function sessionAction(name: string, data: unknown = {}) {
-    if (!session || busy) return;
+    if (!session || busy || sessionActionLock.current) return;
+    sessionActionLock.current = true;
+    try {
     const sessionId = session.id;
     if (voice.state === 'listening' || voice.state === 'transcribing' || voice.hasUnuploadedRecording) {
       setError('Сначала закончи запись. Можно распознать её повторно или удалить явно.'); return;
@@ -389,14 +394,17 @@ export function TrainingApp() {
       audioFile: draft?.intent === 'retry' ? draft.audioFile : undefined, originalTranscript: draft?.intent === 'retry' ? draft.originalTranscript : undefined } : data;
     const next = await action(name === 'finish' ? 'Готовлю разбор' : name === 'retry' ? 'Сравниваем твою попытку' : 'Сохраняю результат', () => request<Session>(`sessions/${sessionId}/${name}`, payload));
     if (next) {
+      const deferHome = name === 'complete' && (data as { deferRetry?: boolean }).deferRetry === true && next.status === 'completed';
       if (name === 'complete' && next.status === 'completed' && session.status !== 'completed') {
-        setCompletionMoment({ sessionId: next.id, previousUnlocks: state?.progression?.achievements.filter(item => item.unlocked).map(item => item.id) || [] });
-        if (sessionRef.current?.id === sessionId && tabRef.current === 'session') window.scrollTo({ top: 0, behavior: 'auto' });
+        setCompletionMoment(deferHome ? null : { sessionId: next.id, previousUnlocks: state?.progression?.achievements.filter(item => item.unlocked).map(item => item.id) || [] });
+        if (!deferHome && sessionRef.current?.id === sessionId && tabRef.current === 'session') window.scrollTo({ top: 0, behavior: 'auto' });
       }
       if (name === 'retry') { saveDraft(sessionId, null); if (voice.recordingDraft?.contextKey === sessionId + ':retry') voice.markSubmitted(); }
       if (sessionRef.current?.id === sessionId) { setSession(next); if (name === 'retry') setInput(''); }
+      if (deferHome && sessionRef.current?.id === sessionId && tabRef.current === 'session') navigation('today');
       void refresh();
     }
+    } finally { sessionActionLock.current = false; }
   }
   async function showTranscript() {
     if (!session) return;
@@ -415,6 +423,16 @@ export function TrainingApp() {
   const navigation = (next: Tab) => { voice.stop(); dismissStartup(); setTab(next); setError(''); };
   const chosenFamily = FAMILIES.find(family => family.id === selectedFamily);
   const chooseTrack = (track: LearningTrackId) => { setSelectedTrack(track); setSelectedFamily(''); navigation('practice'); };
+  const targetAchievement = (target: AchievementTarget) => {
+    if (!target.available || busy) return;
+    if (target.sessionId) {
+      const saved = state?.sessions.find(value => value.id === target.sessionId);
+      if (saved) open(saved); else { setError('Это занятие пока не загружено. Обнови историю и попробуй снова.'); }
+      return;
+    }
+    chooseTrack(target.track);
+    if (target.activity) setSelectedFamily('ielts-' + target.activity);
+  };
   const visibleSessions = state?.sessions.filter(value => (value.lesson.title + ' ' + value.lesson.goal).toLowerCase().includes(search.toLowerCase())) || [];
   const calibration = Math.min(3, state?.onboarding?.completedStages ?? state?.calibrationCompleted ?? 0);
   const independent = state?.skills.filter(skill => skill.state === 'independent').length || 0;
@@ -606,7 +624,7 @@ export function TrainingApp() {
             <Activity state={state} />
           </div>
           <aside className="progress-side">
-            {state.progression && <Achievements value={state.progression} />}
+            {state.progression && <Achievements value={state.progression} state={state} onTarget={targetAchievement} />}
             <section className="review-list">
               <div className="section-title"><h3>Вернуться к навыку</h3><RefreshCw size={18} /></div>
               <p className="caption">Повторения появляются из твоих разборов.</p>
@@ -816,7 +834,7 @@ function DraftComposer({ p, intent, pending }: { p: SessionProps; intent: 'messa
     <label className="draft-label" htmlFor={'draft-' + p.session.id}>{intent === 'retry' ? 'Твоя улучшенная попытка' : p.draft?.audioFile ? 'Проверь расшифровку' : p.session.lesson.activity === 'writing' ? 'Твой текст на английском' : 'Твой ответ'}</label>
     <textarea id={'draft-' + p.session.id} aria-label={intent === 'retry' ? 'Улучшенная попытка' : 'Твой ответ по-английски'} lang="en" placeholder={intent === 'retry' ? 'My improved reply…' : p.session.lesson.activity === 'writing' ? 'Write your first version here…' : 'Your reply…'} rows={p.session.lesson.activity === 'writing' ? 7 : 3} value={p.input} onChange={e => p.setInput(e.target.value)} disabled={pending || listening || (intent === 'message' && last?.role === 'user')}
       onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } }} />
-    <div><small>Черновик сохраняется.<br />Ctrl + Enter, чтобы отправить</small>
+    <div className={motionStyles.composerActions}><small>Черновик сохраняется.<span className={motionStyles.desktopShortcut}>Ctrl + Enter, чтобы отправить</span></small>
       <button className="button primary" data-testid="send-draft" disabled={!canSend}>{intent === 'retry' ? 'Проверить попытку' : 'Отправить'}<Send size={17} /></button>
     </div>
   </form>;
@@ -826,9 +844,32 @@ function LessonMaterial({ material }: { material: NonNullable<Session['lesson'][
   return <section className={motionStyles.lessonMaterial} aria-label={material.type === 'reading-passage' ? 'Текст для чтения' : 'Задание для письма'}><span className="eyebrow">{material.type === 'reading-passage' ? 'ТЕКСТ ДЛЯ ЧТЕНИЯ' : 'ЗАДАНИЕ ДЛЯ ПИСЬМА'}</span><p lang="en">{material.text}</p><p lang="en" className={motionStyles.materialInstruction}>{material.instruction}</p><small>Учебный материал создан для этой практики. Это не официальный экзаменационный вариант.</small></section>;
 }
 
+type FinishIntent = 'finish' | 'complete' | 'defer';
+function FinishConfirmation({ intent, textActivity, onCancel, onConfirm }: { intent: FinishIntent; textActivity: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const accepted = useRef(false);
+  useEffect(() => {
+    const element = dialog.current;
+    if (element?.isConnected && !element.open) element.showModal();
+    return () => { if (element?.open) element.close(); };
+  }, []);
+  const title = intent === 'finish' ? textActivity ? 'Перейти к разбору задания?' : 'Закончить разговор?' : intent === 'defer' ? 'На сегодня всё?' : 'Сохранить результат занятия?';
+  const detail = intent === 'finish' ? `Твои ответы останутся в истории. После этого подготовим разбор; ${textActivity ? 'добавить ответы в эту попытку' : 'продолжить этот разговор'} уже не получится.` : intent === 'defer' ? 'Сохраним занятие и вернёмся на главную. Улучшенная попытка останется доступна на потом; её успех пока не подтверждён.' : 'Сохраним разбор и твои попытки. Данные об улучшении учитываются только там, где оно подтверждено.';
+  const submit = () => { if (accepted.current) return; accepted.current = true; onConfirm(); };
+  return <dialog ref={dialog} className={motionStyles.confirmationSheet} aria-labelledby="finish-confirm-title" aria-describedby="finish-confirm-detail" onCancel={onCancel} onClick={event => { if (event.target === event.currentTarget) onCancel(); }}>
+    <div className={motionStyles.confirmationContent}>
+      <span className="eyebrow">ЗАВЕРШЕНИЕ ЗАНЯТИЯ</span>
+      <h2 id="finish-confirm-title">{title}</h2><p id="finish-confirm-detail">{detail}</p>
+      <div className={motionStyles.confirmationActions}><button type="button" className="button primary" data-testid="confirm-finish" onClick={submit}>{intent === 'finish' ? 'Получить разбор' : intent === 'defer' ? 'Сохранить и на главную' : 'Сохранить результат'}<Check size={18} /></button><button type="button" className="button secondary" autoFocus onClick={onCancel}>Продолжить занятие</button></div>
+    </div>
+  </dialog>;
+}
+
 function SessionView(p: SessionProps) {
   const { session: s, voice, busy } = p;
   const [showListeningCheck, setShowListeningCheck] = useState(false);
+  const [finishIntent, setFinishIntent] = useState<FinishIntent | null>(null);
+  useEffect(() => { setFinishIntent(null); }, [s.id, s.status]);
   const active = s.status === 'active' || (s.status === 'error' && !s.analysis);
   const baseline = !!s.baseline;
   const textActivity = s.lesson.activity === 'reading' || s.lesson.activity === 'writing';
@@ -840,7 +881,7 @@ function SessionView(p: SessionProps) {
   const pending = !!busy || !!s.processing || voice.state === 'thinking' || voice.state === 'transcribing';
   const unresolvedRecording = voice.hasUnuploadedRecording || !!p.draft?.text.trim();
   const hasImprovedRetry = !!s.analysis && s.retries.some(retry => retry.improved === true
-    && (retry.analysisVersion === undefined || retry.analysisVersion === s.analysis?.version))
+    && !!retry.text.trim() && (retry.analysisVersion === undefined || retry.analysisVersion === s.analysis?.version))
     && (!s.completion || (s.completion.canComplete && !s.completion.needsRetry));
   const completion = s.completion ?? {
     canComplete: !!s.analysis && (!s.analysis.priorities.length || hasImprovedRetry),
@@ -860,7 +901,8 @@ function SessionView(p: SessionProps) {
   const emotion = s.error ? 'supportive' : voice.playingLearnerRecording ? 'attentive' : hasImprovedRetry ? 'pleased' : undefined;
   const recordDisabled = !listening && (pending || !p.audioReady || voice.hasUnuploadedRecording || !!p.draft?.audioFile || last?.role === 'user');
 
-  return <div className="session-page">
+  return <div className={`session-page ${motionStyles.sessionPage}`}>
+    {finishIntent && <FinishConfirmation intent={finishIntent} textActivity={textActivity} onCancel={() => setFinishIntent(null)} onConfirm={() => { setFinishIntent(null); void p.onAction(finishIntent === 'finish' ? 'finish' : 'complete', finishIntent === 'finish' ? {} : { comfort: p.comfort, ...(finishIntent === 'defer' ? { deferRetry: true } : {}) }); }} />}
     <div className="session-heading"><button className="text-button" onClick={p.onBack}><ChevronRight className="back-icon" size={17} />{baseline ? 'Стартовая проверка' : 'Сегодня'}</button><span className="quiet-tag">{baseline ? 'Без подсказок' : s.mode === 'call' ? 'Созвон без опор' : 'Учебный режим'}</span></div>
     <div className="page-heading"><div><h1>{s.lesson.title}</h1><p>{baseline ? 'Сначала твои ответы голосом. Оценка будет после разговора.' : s.lesson.track === 'ielts-foundation' ? 'Основа для IELTS · ' + LEARNING_ACTIVITIES.find(activity => activity.id === s.lesson.activity)?.title : contextNames[s.lesson.context]}</p></div></div>
     {s.status === 'completed' && <SessionOutcome key={s.id} session={s} result={p.result} progression={p.progression} confirmed={p.confirmedCompletion} previousUnlocks={p.previousUnlocks} onNext={p.onNext} onDone={p.onDone} />}
@@ -880,9 +922,8 @@ function SessionView(p: SessionProps) {
           <button className={`voice-control main ${listening ? 'recording' : ''}`} data-testid="record-toggle" disabled={recordDisabled} onClick={() => void voice.record(s.id + ':message')} aria-label={listening ? 'Закончить запись' : 'Говорить'}>
             {listening ? <Square size={23} /> : <Mic size={27} />}<span>{listening ? 'Стоп' : 'Говорить'}</span>
           </button>
-          <button className="voice-control" disabled={pending || listening || unresolvedRecording || !s.turns.some(t => t.role === 'user') || (baseline && baselineReplies < 2)} onClick={() => void p.onAction('finish')} aria-label="Завершить разговор и получить разбор"><Check size={23} /><span>Разбор</span></button>
         </div>}
-        {textActivity && <div className={motionStyles.textActivityAction}><p>Ответ можно написать. Голос для этого задания не обязателен.</p><button className="button secondary" disabled={pending || unresolvedRecording || !s.turns.some(turn => turn.role === 'user')} onClick={() => void p.onAction('finish')}>Завершить и получить разбор<Check size={18} /></button></div>}
+
         {!p.audioReady && <button className="text-button audio-setup" onClick={p.onSettings}>Подключить голос <ArrowUpRight size={15} /></button>}
         {voice.autoplayBlocked && last?.role === 'assistant' && <div className="autoplay-notice"><p>Браузер ждёт твоего нажатия, чтобы включить звук.</p><button className="button secondary" disabled={pending || listening} onClick={() => void voice.speak(s, last)}><Play size={16} />Включить голос</button></div>}
         {voice.canRetry && !voice.hasUnuploadedRecording && <button className="button secondary voice-retry" disabled={pending || listening} onClick={() => void voice.retry()}><RefreshCw size={16} />{voice.retryLabel || 'Повторить'}</button>}
@@ -892,6 +933,7 @@ function SessionView(p: SessionProps) {
           {last?.role === 'assistant' && p.audioReady && <button disabled={pending || listening} onClick={() => voice.state === 'speaking' ? voice.stop() : void voice.speak(s, last)}>{voice.state === 'speaking' ? <Square size={14} /> : <Play size={14} />}{voice.state === 'speaking' ? 'Стоп' : 'Ещё раз'}</button>}
         </div>
         {(textActivity || (p.textMode && !baseline) || p.input.trim() || p.draft?.audioFile) && <DraftComposer p={p} intent="message" pending={pending} />}
+        <div className={motionStyles.sessionFinishAction}>{textActivity && <p>Ответ можно написать. Голос для этого задания не обязателен.</p>}<button type="button" className="button secondary" data-testid="request-finish" disabled={pending || listening || unresolvedRecording || !s.turns.some(turn => turn.role === 'user') || (baseline && baselineReplies < 2)} onClick={() => setFinishIntent('finish')}>Закончить {textActivity ? 'задание' : 'разговор'} и получить разбор<Check size={18} /></button>{baseline && baselineReplies < 2 && <small>Сначала хотя бы два своих ответа голосом.</small>}</div>
       </section>
       <aside className="conversation-inspector">
         <div className="goal-block"><span className="eyebrow">ТВОЯ ЗАДАЧА</span><h3>{s.lesson.goal}</h3><p>{s.lesson.why}</p></div>
@@ -909,17 +951,18 @@ function SessionView(p: SessionProps) {
     </section>}
     {s.status === 'error' && s.error && <div className="message-banner error"><p>{s.error}</p>{s.analysis && <button className="button secondary" disabled={pending} onClick={() => void p.onAction('reanalyse')}>Повторить разбор</button>}</div>}
     {s.analysis && <div className="analysis-layout"><div>
-      <section className="analysis-intro"><div className="review-orb-heading"><VoiceOrb state="idle" emotion={hasImprovedRetry ? 'pleased' : 'calm'} statusDescription={hasImprovedRetry ? 'Твоя улучшенная попытка подтверждена' : 'Разбор готов'} /><div><span className="eyebrow">{s.retryDeferred ? 'ПОПЫТКА НА ПОТОМ' : hasImprovedRetry ? 'ЕСТЬ УЛУЧШЕНИЕ' : 'ТВОЙ РАЗБОР'}</span><h2>{hasImprovedRetry ? 'Вот, уже сильнее.' : s.retryDeferred ? 'Осталась одна попытка.' : textActivity ? 'Сделаем твой ответ сильнее.' : 'Сделаем одну реплику сильнее.'}</h2></div></div><p className="analysis-summary">{s.analysis.summary}</p>{s.analysis.strengths.length > 0 && <div className="strengths">{s.analysis.strengths.map((value, i) => <p key={i}><Check size={17} />{value}</p>)}</div>}</section>
+      <section className="analysis-intro"><div className="review-orb-heading"><VoiceOrb state="idle" emotion={hasImprovedRetry ? 'pleased' : 'calm'} statusDescription={hasImprovedRetry ? 'Твоя улучшенная попытка подтверждена' : 'Разбор готов'} /><div><span className="eyebrow">{s.retryDeferred ? 'ПОПЫТКА НА ПОТОМ' : hasImprovedRetry ? 'ЕСТЬ УЛУЧШЕНИЕ' : 'ТВОЙ РАЗБОР'}</span><h2>{hasImprovedRetry ? 'Вот, уже сильнее.' : s.retryDeferred ? 'Осталась одна попытка.' : !s.analysis.priorities.length ? 'Разбор готов.' : textActivity ? 'Сделаем твой ответ сильнее.' : 'Сделаем одну реплику сильнее.'}</h2></div></div><p className="analysis-summary">{s.analysis.summary}</p>{s.analysis.strengths.length > 0 && <div className="strengths">{s.analysis.strengths.map((value, i) => <p key={i}><Check size={17} />{value}</p>)}</div>}</section>
       {s.analysis.priorities.map((priority, i) => <section className="priority" key={i}><div className="priority-heading"><span className="priority-number">0{i + 1}</span><span className="quiet-tag">{priority.type === 'language' ? 'Английский' : 'Диалог'}</span></div><h3>{priority.title}</h3><blockquote lang="en">{priority.quote}</blockquote><p>{priority.explanation}</p><details><summary>Возможная формулировка</summary><p className="example" lang="en">{priority.example}</p><small>Один из вариантов. Свою попытку формулируй своими словами.</small></details><div className="retry-prompt"><Target size={17} /><span>{priority.retryInstruction}</span></div></section>)}
-      {retryAllowed && <section className="retry-section"><h2>Теперь твоя версия</h2><p>{textActivity ? 'Вырази свою мысль заново. Сравним её с исходной попыткой.' : 'Повтори важный эпизод своими словами. Сравним его с исходной попыткой.'}</p>
-        {p.audioReady && <><VoiceOrb state={orbState} meterStore={voice.meterStore} emotion={emotion} statusDescription={voiceLabel} /><div className="retry-voice"><button className="button secondary" data-testid="record-toggle" disabled={!listening && (pending || voice.hasUnuploadedRecording || !!p.draft?.audioFile)} onClick={() => void voice.record(s.id + ':retry')}>{listening ? <Square size={17} /> : <Mic size={17} />}{listening ? 'Стоп' : 'Сказать голосом'}</button><span aria-live="polite">{voiceLabel}</span></div></>}
+      {retryAllowed && <section className={`retry-section ${motionStyles.retrySurface}`}><span className="eyebrow">СЛЕДУЮЩИЙ ШАГ</span><h2>Теперь твоя версия</h2><p>{textActivity ? 'Вырази свою мысль заново. Сравним её с исходной попыткой.' : 'Повтори важный эпизод своими словами. Сравним его с исходной попыткой.'}</p>
+        {p.audioReady && s.lesson.activity !== 'writing' && <><VoiceOrb state={orbState} meterStore={voice.meterStore} emotion={emotion} statusDescription={voiceLabel} /><div className="retry-voice"><button className="button secondary" data-testid="record-toggle" disabled={!listening && (pending || voice.hasUnuploadedRecording || !!p.draft?.audioFile)} onClick={() => void voice.record(s.id + ':retry')}>{listening ? <Square size={17} /> : <Mic size={17} />}{listening ? 'Стоп' : 'Сказать голосом'}</button><span aria-live="polite">{voiceLabel}</span></div></>}
         <LiveCaptions voice={voice} /><UnuploadedRecording p={p} />
         {voice.canRetry && !voice.hasUnuploadedRecording && <button className="text-button" disabled={pending || listening} onClick={() => void voice.retry()}>{voice.retryLabel || 'Повторить'}</button>}
         {busy && <div className="retry-progress" role="status"><strong>{busy}</strong><ElapsedTime startedAt={p.busySince} /></div>}
         <DraftComposer p={p} intent="retry" pending={pending} />
       </section>}
       {s.retries.map((retry, i) => <section className="retry-result" key={retry.id || i}><span className="eyebrow">СОБСТВЕННАЯ ПОПЫТКА {i + 1} · {retry.improved === true ? 'Есть улучшение' : 'Продолжаем работу'}</span><blockquote lang="en">{retry.text}</blockquote>{retry.audioFile && <audio controls preload="none" src={'/api/audio/' + encodeURIComponent(retry.audioFile)} />}<p>{retry.feedback}</p></section>)}
-      {s.status !== 'completed' && <section className="finish-section"><h3>Как ощущалась {textActivity ? 'задача' : 'беседа'}?</h3><div className="comfort-choice" aria-label="Комфорт от 1 до 5">{[1, 2, 3, 4, 5].map(n => <button key={n} aria-pressed={p.comfort === n} className={p.comfort === n ? 'selected' : ''} onClick={() => p.setComfort(n)}>{n}</button>)}<span>Сложно → комфортно</span></div><button className="button primary" disabled={pending || listening || unresolvedRecording || s.status !== 'review' || !completion.canComplete} onClick={() => void p.onAction('complete', { comfort: p.comfort })}>Завершить занятие<Check size={18} /></button>{s.status === 'review' && completion.needsRetry && <><p>{completion.reason}</p><button className="button secondary" disabled={pending || listening || unresolvedRecording} onClick={() => void p.onAction('complete', { comfort: p.comfort, deferRetry: true })}>На сегодня всё. К попытке вернусь позже</button></>}</section>}
+      {s.status !== 'completed' && <section className={`finish-section ${motionStyles.finishSurface}`}><h3>Как ощущалась {textActivity ? 'задача' : 'беседа'}?</h3><div className="comfort-choice" aria-label="Комфорт от 1 до 5">{[1, 2, 3, 4, 5].map(n => <button key={n} aria-pressed={p.comfort === n} className={p.comfort === n ? 'selected' : ''} onClick={() => p.setComfort(n)}>{n}</button>)}<span>Сложно → комфортно</span></div>{completion.canComplete && <button type="button" className="button primary" data-testid="request-complete" disabled={pending || listening || unresolvedRecording || s.status !== 'review'} onClick={() => setFinishIntent('complete')}>Завершить занятие<Check size={18} /></button>}{s.status === 'review' && completion.needsRetry && <><p className={motionStyles.nextAttemptReason}>{completion.reason}</p><button type="button" className="button secondary" data-testid="request-defer" disabled={pending || listening || unresolvedRecording} onClick={() => setFinishIntent('defer')}>На сегодня всё<ArrowRight size={18} /></button><small>Сохраним занятие. К своей новой попытке можно вернуться позже.</small></>}</section>}
+      <SpeechTimingPanel session={s} />
     </div><aside className="analysis-aside">
       <section><h3>Следующий шаг</h3><p>{s.analysis.nextFocus}</p><span className="caption">{date(s.analysis.createdAt)}</span></section>
       <details><summary>Наблюдения по навыкам</summary>{s.analysis.evidence.map((evidence, i) => <div className="observation" key={i}><strong>{SKILLS.find(skill => skill.id === evidence.skill)?.label}</strong><span>{evidence.result === 'success' ? 'Получилось' : evidence.result === 'partial' ? 'Частично' : evidence.result === 'difficulty' ? 'Есть трудность' : evidence.result === 'disputed' ? 'Спорно' : 'Не проверено'}</span><p>{evidence.reason}</p></div>)}</details>

@@ -50,6 +50,9 @@ enum AccessKey {
 @MainActor final class TrainingClient: ObservableObject {
 #if DEBUG
     var previewMode = false
+    var previewResponses: [String: Data] = [:]
+    private(set) var previewRequests: [String] = []
+    private(set) var previewRequestBodies: [String: [String: Any]] = [:]
 #endif
     @Published var state: TrainingState?
     @Published var conversation: Conversation?
@@ -63,11 +66,14 @@ enum AccessKey {
     @Published var microphoneStarting = false
     @Published var playing = false
     @Published var playingLearnerRecording = false
+    @Published private(set) var audioOutput = "Звук пока не запущен"
+    @Published private(set) var audioRouteMessage: String?
     @Published var draft = ""
     @Published var recordedFile: String?
     @Published var pendingMessageID: String?
     @Published var assistantTextShown = true
     @Published var conversationPresented = false
+    @Published private(set) var homeRequest = 0
     @Published var completionMoment: CompletionMoment?
     let voiceMeter = VoiceMeter()
     var audioLevel: Double {
@@ -106,7 +112,9 @@ enum AccessKey {
     private var voiceGeneration = UUID()
     private var speechTask: Task<Void, Never>?
     private var meterTask: Task<Void, Never>?
+    private var playbackEndTime: Double?
     private var interrupted: NSObjectProtocol?
+    private var routeChanged: NSObjectProtocol?
     private var liveFinalText: String?
     private var liveSessionID: String?
     private var liveMinutes = 0.0
@@ -141,6 +149,41 @@ enum AccessKey {
                     if client.recording { await client.stopRecording() }
                 }
             }
+        routeChanged = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification,
+            object: nil, queue: .main) { [weak self] notification in
+                let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
+                let previous = notification.userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
+                let removedExternal = NativeAudioRoute.hasExternalOutput(previous ?? AVAudioSession.sharedInstance().currentRoute)
+                Task { @MainActor [weak self] in
+                    await self?.handleAudioRouteChange(reason: raw, previousWasExternal: removedExternal)
+                }
+            }
+    }
+
+    private func handleAudioRouteChange(reason raw: UInt, previousWasExternal: Bool) async {
+        guard let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+        if playing || recording { audioOutput = NativeAudioRoute.outputLabel() }
+        if reason == .oldDeviceUnavailable && previousWasExternal {
+            if playing || voiceLoading {
+                stopSpeaking()
+                audioRouteMessage = "Наушники отключены. Озвучка остановлена, чтобы не включиться вслух без тебя."
+            }
+            if recording {
+                audioRouteMessage = "Источник звука отключён. Сохраняем уже записанный ответ."
+                await stopRecording()
+            }
+            return
+        }
+        if recording, reason == .newDeviceAvailable, NativeAudioRoute.hasExternalOutput(AVAudioSession.sharedInstance().currentRoute) {
+            audioRouteMessage = "Подключён новый источник звука. Сохраняем ответ перед переключением."
+            await stopRecording()
+            return
+        }
+        if playing {
+            do { try NativeAudioRoute.repairReceiverIfNeeded() }
+            catch { audioRouteMessage = "Не удалось переключить звук. Останови озвучку и включи её снова." }
+            audioOutput = NativeAudioRoute.outputLabel()
+        }
     }
 
     private func endpoint(_ path: String) throws -> URL {
@@ -161,6 +204,16 @@ enum AccessKey {
         return data
     }
     private func request<T: Decodable>(_ path: String, body: [String: Any]? = nil) async throws -> T {
+#if DEBUG
+        if previewMode {
+            previewRequests.append(path)
+            if let body { previewRequestBodies[path] = body }
+            guard let data = previewResponses[path] else {
+                throw ClientError.message("Предпросмотр не отправляет запросы к серверу.")
+            }
+            return try JSONDecoder().decode(T.self, from: data)
+        }
+#endif
         var request = URLRequest(url: try endpoint(path))
         if let body {
             request.httpMethod = "POST"
@@ -264,6 +317,11 @@ enum AccessKey {
         stopSpeaking()
         conversationPresented = false
         completionMoment = nil
+    }
+    func returnToHome() {
+        guard !recording, !microphoneStarting else { return }
+        minimizeConversation()
+        homeRequest += 1
     }
     func start(mode: String, context: String, forceNew: Bool = false, familyId: String? = nil) async {
         guard !hasUnuploadedRecording else {
@@ -373,13 +431,14 @@ enum AccessKey {
             try await refresh()
         }
     }
-    func action(_ name: String, deferRetry: Bool = false) async {
+    func action(_ name: String, deferRetry: Bool = false, returnHome: Bool = false) async {
         guard let conversation else { return }
         if name == "finish" || name == "complete" {
+            guard !recording, !microphoneStarting else { return }
             if hasUnuploadedRecording {
                 error = "Сначала сохрани последнюю запись: повтори распознавание или явно удали её, если она не нужна."; return
             }
-            if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || recordedFile != nil {
+            if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || recordedFile != nil || pendingMessageID != nil {
                 error = "Последний ответ ещё не отправлен. Отправь его или явно удали черновик перед завершением."; return
             }
         }
@@ -388,7 +447,17 @@ enum AccessKey {
             let value: Conversation = try await request("sessions/\(conversation.id)/\(name)", body: deferRetry ? ["deferRetry": true] : [:])
             if self.conversation?.id == conversation.id { self.conversation = value }
             if name == "complete" { acknowledgeCompletion(value) }
-            try await refresh()
+            // The accepted receipt is enough to leave the review. Profile/quota reads
+            // happen afterwards and never hold the user's navigation hostage.
+            if name == "complete", returnHome, value.status == "completed" { returnToHome() }
+            do { try await refresh() }
+            catch {
+                if name == "complete", returnHome, value.status == "completed" {
+                    self.error = "Занятие сохранено. Главная пока не обновилась из-за связи с сервером. Потяни её вниз, чтобы обновить."
+                    return
+                }
+                throw error
+            }
             if self.conversation?.status == "analysing" { reviewStartedAt = Date() }
         }
     }
@@ -451,9 +520,8 @@ enum AccessKey {
             let speech: Speech = try await request("sessions/\(conversation.id)/speech", body: ["turnId": turn.id])
             let data = try await checked(URLRequest(url: endpoint("audio/\(speech.file)")))
             guard generation == voiceGeneration, !recording, self.conversation?.id == conversation.id, !Task.isCancelled else { return }
-            let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.playback, mode: .spokenAudio)
-            try audio.setActive(true)
+            try NativeAudioRoute.preparePlayback()
+            audioOutput = NativeAudioRoute.outputLabel(); audioRouteMessage = nil
             player = try AVAudioPlayer(data: data)
             player?.isMeteringEnabled = true
             playbackDelegate = PlaybackDelegate { [weak self] completed in
@@ -462,6 +530,7 @@ enum AccessKey {
                     guard generation == client.voiceGeneration else { return }
                     client.playing = false; client.playingLearnerRecording = false; client.audioLevel = 0; client.pendingSpeechTurn = nil
                     client.meterTask?.cancel(); client.meterTask = nil
+                    NativeAudioRoute.deactivate()
                     guard completed else { client.error = "Озвучка прервалась. Нажми «Слушать» ещё раз."; return }
                     client.heardTurns.insert(turn.id)
                     await client.savePlaybackAcknowledgement(sessionID: conversation.id, turnID: turn.id)
@@ -515,39 +584,60 @@ enum AccessKey {
         if cancelLoading { speechTask?.cancel(); speechTask = nil }
         meterTask?.cancel(); meterTask = nil
         player?.stop(); player = nil; playbackDelegate = nil
+        playbackEndTime = nil
         playing = false; playingLearnerRecording = false; voiceLoading = false; audioLevel = 0; pendingSpeechTurn = nil
+        if !recording && !microphoneStarting { NativeAudioRoute.deactivate() }
     }
     private func startPlaybackMeter() {
         meterTask?.cancel()
         meterTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, self.playing, let player = self.player else { return }
+                if let end = self.playbackEndTime, player.currentTime >= end {
+                    self.stopSpeaking()
+                    return
+                }
                 player.updateMeters()
                 self.audioLevel = min(1, max(0, Double((player.averagePower(forChannel: 0) + 55) / 55)))
                 do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
             }
         }
     }
-    func playRecording() async {
-        guard !recording else { return }
+    func playRecording(audioFile: String? = nil, startSeconds: Double? = nil, endSeconds: Double? = nil) async {
+        guard !recording, !microphoneStarting else { return }
+        if let audioFile {
+            let knownRecording = conversation?.turns.contains { $0.role == "user" && $0.audioFile == audioFile }
+                ?? false
+            let knownRetry = conversation?.retries.contains { $0.audioFile == audioFile } ?? false
+            guard knownRecording || knownRetry,
+                  audioFile.range(of: "^[a-f0-9-]+\\.(webm|mp4|ogg|wav|mp3)$", options: .regularExpression) != nil else { return }
+        }
         stopSpeaking()
         let generation = voiceGeneration
         voiceLoading = true
         defer { if generation == voiceGeneration { voiceLoading = false } }
         do {
             let data: Data
-            if let url = localRecording { data = try Data(contentsOf: url) }
+            if let audioFile { data = try await checked(URLRequest(url: endpoint("audio/\(audioFile)"))) }
+            else if let url = localRecording { data = try Data(contentsOf: url) }
             else if let recordedFile { data = try await checked(URLRequest(url: endpoint("audio/\(recordedFile)"))) }
             else { return }
             guard generation == voiceGeneration, !recording else { return }
-            let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.playback, mode: .spokenAudio); try audio.setActive(true)
+            try NativeAudioRoute.preparePlayback()
+            audioOutput = NativeAudioRoute.outputLabel(); audioRouteMessage = nil
             player = try AVAudioPlayer(data: data); player?.isMeteringEnabled = true
+            if let startSeconds, startSeconds.isFinite {
+                player?.currentTime = max(0, min(player?.duration ?? 0, startSeconds))
+            }
+            if let endSeconds, endSeconds.isFinite, let player, endSeconds > player.currentTime {
+                playbackEndTime = min(player.duration, endSeconds)
+            }
             playbackDelegate = PlaybackDelegate { [weak self] _ in
                 guard let client = self else { return }
                 Task { @MainActor [client] in
                     guard generation == client.voiceGeneration else { return }
                     client.playing = false; client.playingLearnerRecording = false; client.audioLevel = 0; client.meterTask?.cancel()
+                    NativeAudioRoute.deactivate()
                 }
             }
             player?.delegate = playbackDelegate
@@ -738,6 +828,8 @@ enum AccessKey {
             content.title = "Есть 15 минут?"
             content.body = "Давай одну ситуацию на английском. Начнём с короткого ответа."
             content.sound = .default
+            content.threadIdentifier = "ratmir-practice"
+            content.userInfo = ["appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"]
             let hour = min(23, max(0, hour)); let minute = min(59, max(0, minute))
             try await center.add(UNNotificationRequest(identifier: "daily-practice", content: content,
                 trigger: UNCalendarNotificationTrigger(dateMatching: DateComponents(hour: hour, minute: minute), repeats: true)))
@@ -785,7 +877,10 @@ enum AccessKey {
             content.title = "Проверка напоминания"
             content.body = "Если видишь это сообщение, уведомления Ratmir English доходят до iPhone."
             content.sound = .default
+            content.threadIdentifier = "ratmir-practice"
+            content.userInfo = ["appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"]
             let identifier = "practice-reminder-test"
+            center.removeDeliveredNotifications(withIdentifiers: [identifier])
             try await center.add(UNNotificationRequest(identifier: identifier, content: content,
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: 10, repeats: false)))
             let pending = await center.pendingNotificationRequests()
@@ -838,6 +933,10 @@ enum AccessKey {
             "Pending count: \(pending.count); requested identifier present: \(request != nil)",
             "Delivered and still in Notification Center: \(delivered.count); requested identifier present: \(delivered.contains { $0.request.identifier == identifier })"
         ]
+        if let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: Any],
+           let primary = icons["CFBundlePrimaryIcon"] as? [String: Any] {
+            lines.append("Primary app icon: \(primary["CFBundleIconName"] as? String ?? "unknown")")
+        }
         let next: Date?
         if let trigger = request?.trigger as? UNCalendarNotificationTrigger { next = trigger.nextTriggerDate() }
         else if let trigger = request?.trigger as? UNTimeIntervalNotificationTrigger { next = trigger.nextTriggerDate() }

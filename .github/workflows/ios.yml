@@ -7,10 +7,15 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: macos-14
-    timeout-minutes: 20
+    runs-on: xcode-27
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Verify modern Apple SDK
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+          xcodebuild -version | head -1 | grep 'Xcode 27'
       - name: Generate Xcode project
         run: |
           brew install xcodegen
@@ -42,19 +47,38 @@ jobs:
           xcodebuild -quiet -project ios/RatmirEnglish.xcodeproj -scheme RatmirEnglish -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath simulator-build CODE_SIGNING_ALLOWED=NO build
           runtime=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("isAvailable") and "iOS" in x["name"]]; print(r[-1]["identifier"])')
           device=$(xcrun simctl create 'Training iPhone 11' com.apple.CoreSimulator.SimDeviceType.iPhone-11 "$runtime")
+          echo "TRAINING_SIMULATOR=$device" >> "$GITHUB_ENV"
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b
           xcrun simctl install "$device" simulator-build/Build/Products/Debug-iphonesimulator/RatmirEnglish.app
           xcrun simctl launch "$device" app.ratmirenglish.personal
           sleep 3
           xcrun simctl io "$device" screenshot iPhone11-login.png
-          for screen in intro baseline baseline-report home practice listening analysing review celebrate completed saved-deferred progress curriculum achievements ielts-track ielts-reading ielts-writing settings; do
+          for screen in intro baseline baseline-report home practice listening analysing review preview-timing celebrate completed saved-deferred progress curriculum achievements ielts-track ielts-reading ielts-writing settings; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3
             xcrun simctl io "$device" screenshot "iPhone11-$screen.png"
           done
-          for screen in achievements completed; do
+          xcrun simctl ui "$device" appearance dark
+          for screen in home practice review achievements settings; do
+            xcrun simctl terminate "$device" app.ratmirenglish.personal || true
+            xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
+            sleep 3
+            xcrun simctl io "$device" screenshot "iPhone11-$screen-dark.png"
+          done
+          xcrun simctl ui "$device" appearance light
+          xcrun simctl terminate "$device" app.ratmirenglish.personal || true
+          xcrun simctl launch "$device" app.ratmirenglish.personal --preview=practice
+          xcrun simctl io "$device" recordVideo --codec=h264 iPhone11-companion-motion.mp4 &
+          recorder=$!
+          sleep 8
+          kill -INT "$recorder"
+          wait "$recorder" || true
+      - name: Test native completion and audio policy
+        run: |
+          xcodebuild -quiet -project ios/RatmirEnglish.xcodeproj -scheme RatmirEnglish -configuration Debug -destination "platform=iOS Simulator,id=$TRAINING_SIMULATOR" -derivedDataPath simulator-build -resultBundlePath native-tests.xcresult CODE_SIGNING_ALLOWED=NO test
+          for screen in achievements completed preview-timing; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen" --large-type
             sleep 3
@@ -69,5 +93,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: iPhone11-preview
-          path: iPhone11-*.png
+          path: |
+            iPhone11-*.png
+            iPhone11-companion-motion.mp4
           retention-days: 7

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { ApiError } from './security';
 import { addAudioUsage, getAppState } from './store';
 import { FILE_TRANSCRIPTION_MODEL, LIVE_TRANSCRIPTION_MODEL, MAX_RECORDING_MINUTES, TRANSCRIPTION_MINUTE_USD, LIVE_TRANSCRIPTION_MINUTE_USD, VERBATIM_TRANSCRIPTION_PROMPT, liveTranscriptionConfiguration } from './audio-transcription';
+import { bindRecordingTranscript, deleteRecordingTiming, measureSavedRecording } from './speech-timing';
 
 const dataDir = resolve(process.cwd(), '.data');
 const audioDir = join(dataDir, 'audio');
@@ -71,7 +72,7 @@ export function cleanAudio(days: number, only?: string[]) {
   for (const file of readdirSync(audioDir)) {
     if (!/^[a-f0-9-]+\.(webm|mp4|ogg|wav|mp3)$/.test(file)) continue;
     const path = join(audioDir, file);
-    if (only ? only.includes(file) : Date.now() - statSync(path).mtimeMs > days * 86400000) unlinkSync(path);
+    if (only ? only.includes(file) : Date.now() - statSync(path).mtimeMs > days * 86400000) { unlinkSync(path); deleteRecordingTiming(file); }
   }
 }
 export async function createLiveTranscriptionSession() {
@@ -126,9 +127,16 @@ export async function transcribe(file: File, minutes: number, live?: { text: str
   const ext = type.includes('mpeg') || type.includes('mp3') ? 'mp3' :
     type.includes('mp4') || type.includes('m4a') ? 'mp4' : type.includes('ogg') ? 'ogg' : type.includes('wav') ? 'wav' : 'webm';
   const audioFile = saveAudio(new Uint8Array(await file.arrayBuffer()), ext);
+  // Offline VAD runs while ASR is in flight. Its failures never invalidate the transcript.
+  const measured = measureSavedRecording(audioFile, '', useLiveFinal ? 'live' : 'file');
+  async function timing(text: string, source: 'live' | 'file') {
+    await measured;
+    return bindRecordingTranscript(audioFile, text, source);
+  }
   // The completed live transcript is kept verbatim alongside its original WAV;
   // a second recognizer must not silently polish it or drop disfluencies.
-  if (useLiveFinal) return { text: live!.text.trim(), audioFile, model: LIVE_TRANSCRIPTION_MODEL, transcriptSource: 'live' };
+  if (useLiveFinal) return { text: live!.text.trim(), audioFile, model: LIVE_TRANSCRIPTION_MODEL, transcriptSource: 'live',
+    speechTiming: await timing(live!.text.trim(), 'live') };
   const form = new FormData();
   form.set('file', file, `speech.${ext}`);
   const model = process.env.OPENAI_TRANSCRIBE_MODEL || FILE_TRANSCRIPTION_MODEL;
@@ -141,7 +149,7 @@ export async function transcribe(file: File, minutes: number, live?: { text: str
   const result = await response.json();
   if (typeof result.text !== 'string' || !result.text.trim()) throw new ApiError('Речь не распознана. Попробуй ещё раз.');
   addAudioUsage('transcription', minutes, minutes * (model === FILE_TRANSCRIPTION_MODEL ? TRANSCRIPTION_MINUTE_USD : 0.006));
-  return { text: result.text.trim(), audioFile, model, transcriptSource: 'file' };
+  return { text: result.text.trim(), audioFile, model, transcriptSource: 'file', speechTiming: await timing(result.text.trim(), 'file') };
   } finally { releaseBudget(); }
 }
 export async function synthesize(text: string) {
