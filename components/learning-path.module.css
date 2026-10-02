@@ -79,7 +79,7 @@
 .resultEvidence q { display: block; font-size: 15px; margin-top: 8px; }
 .outcomeActions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin: 20px 0 24px; }
 .unlock { display: flex; align-items: center; gap: 12px; padding-top: 19px; margin-top: 16px; border-top: 1px solid #22212414; }
-.unlock > svg { flex-shrink: 0; }
+.unlock > img { flex-shrink: 0; }
 .unlock strong, .unlock small { display: block; }
 .unlock strong { font-size: 14px; font-weight: 550; }
 .unlock small { color: var(--muted); font-size: 12px; margin-top: 4px; }

@@ -615,12 +615,7 @@ struct ConversationView: View {
     private func composerContent(retry: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if client.recording {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Сейчас говоришь ты", systemImage: "waveform").font(.caption.weight(.medium)).foregroundStyle(Theme.secondary)
-                    Text(client.liveTranscript.isEmpty ? "Текст появится, когда начнёшь говорить…" : client.liveTranscript)
-                        .font(.subheadline).frame(maxWidth: .infinity, alignment: .leading).lineLimit(5)
-                    if !client.liveTranscriptStatus.isEmpty { Text(client.liveTranscriptStatus).font(.caption2).foregroundStyle(Theme.secondary) }
-                }.padding(14).background(.white, in: RoundedRectangle(cornerRadius: 18))
+                LiveTranscriptView(text: client.liveTranscript, status: client.liveTranscriptStatus)
                     .transition(reduceMotion ? .identity : .opacity)
             } else {
                 TextField(retry ? "Новая попытка на английском" : writingActivity ? "Напиши ответ на английском" : "Ответ на английском", text: $client.draft, axis: .vertical)

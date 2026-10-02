@@ -56,14 +56,14 @@ jobs:
           xcrun simctl launch "$device" app.ratmirenglish.personal
           sleep 3
           xcrun simctl io "$device" screenshot iPhone11-login.png
-          for screen in intro baseline baseline-report home practice listening analysing review preview-timing celebrate completed saved-deferred progress curriculum achievements ielts-track ielts-reading ielts-writing settings; do
+          for screen in intro baseline baseline-report home practice dictation-preview listening analysing review preview-timing celebrate completed saved-deferred progress curriculum achievements ielts-track ielts-reading ielts-writing settings; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3
             xcrun simctl io "$device" screenshot "iPhone11-$screen.png"
           done
           xcrun simctl ui "$device" appearance dark
-          for screen in home practice review achievements settings; do
+          for screen in home practice dictation-preview review achievements settings; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3
@@ -77,6 +77,13 @@ jobs:
           sleep 8
           kill -INT "$recorder"
           wait "$recorder" || true
+          xcrun simctl terminate "$device" app.ratmirenglish.personal || true
+          xcrun simctl launch "$device" app.ratmirenglish.personal --preview=dictation-preview
+          xcrun simctl io "$device" recordVideo --codec=h264 iPhone11-dictation-motion.mp4 &
+          recorder=$!
+          sleep 8
+          kill -INT "$recorder"
+          wait "$recorder" || true
       - name: Test native completion and audio policy
         run: |
           device="$TRAINING_SIMULATOR"
@@ -86,13 +93,13 @@ jobs:
           python3 - <<'PY'
           import json
           summary = json.load(open('native-tests-summary.json'))
-          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 18, summary
-          assert type(summary['passedTests']) is int and summary['passedTests'] == 18, summary
+          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 23, summary
+          assert type(summary['passedTests']) is int and summary['passedTests'] == 23, summary
           assert summary['failedTests'] == 0 and summary['skippedTests'] == 0, summary
           assert not summary['testFailures'] and summary.get('expectedFailures', 0) == 0, summary
-          print('Verified native tests: 18 passed, none failed or skipped')
+          print('Verified native tests: 23 passed, none failed or skipped')
           PY
-          for screen in achievements completed preview-timing; do
+          for screen in achievements completed preview-timing dictation-preview; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen" --large-type
             sleep 3
@@ -119,5 +126,5 @@ jobs:
           name: iPhone11-preview
           path: |
             iPhone11-*.png
-            iPhone11-companion-motion.mp4
+            iPhone11-*-motion.mp4
           retention-days: 7

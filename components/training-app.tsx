@@ -25,6 +25,7 @@ import { useContentEntrance, useInputModality, useNavigationHighlight } from './
 import motionStyles from './training-app.module.css';
 import { Achievements, CurriculumOverview, EvidenceCoverage, PracticeLevel, SessionOutcome } from './learning-path';
 import { SpeechTimingPanel } from './speech-timing';
+import { LiveCaptions } from './live-captions';
 import type { AchievementTarget } from '@/lib/achievement-targets';
 
 type Tab = 'today' | 'practice' | 'progress' | 'history' | 'settings' | 'session';
@@ -740,7 +741,7 @@ export function TrainingApp() {
       </>}
       {tab === 'session' && session && <SessionView session={session} result={state.progression?.recentResults.find(result => result.sessionId === session.id)} progression={state.progression} confirmedCompletion={completionMoment?.sessionId === session.id} previousUnlocks={completionMoment?.sessionId === session.id ? completionMoment.previousUnlocks : []} onNext={() => navigation("practice")} onDone={() => navigation("today")} setSession={setSession} busy={busy} busySince={busySince} input={input} setInput={changeInput} draft={drafts[session.id]} onDiscardDraft={() => { saveDraft(session.id, null); setInput(''); if (voice.recordingDraft?.contextKey?.startsWith(session.id + ':')) voice.discardRecording(); }} textMode={textMode} setTextMode={setTextMode} transcript={transcript} showTranscript={showTranscript} hintText={hintText} comfort={comfort} setComfort={setComfort} voice={voice} audioReady={!!status?.audio.configured} onSend={() => void send(input)} onResend={resend} onAction={sessionAction} onHint={level => void action('Подбираю опору', async () => { const result = await request<{ text: string }>(`sessions/${session.id}/hint`, { level }); setHintText(result.text); })} onBack={() => navigation('today')} onSettings={() => navigation('settings')} editing={editing} setEditing={setEditing} editText={editText} setEditText={setEditText} />}
       </>}
-      </div><footer className="page-footer"><span>Своя попытка → разбор → новая практика</span><span>Личный тренинг · 0.4 alpha</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
+      </div><footer className="page-footer"><span>Своя попытка → разбор → новая практика</span><span>Личный тренинг · 0.4.1 alpha</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
   </div>;
 }
 
@@ -782,15 +783,6 @@ type SessionProps = {
   onSend: () => void; onResend: () => void; onAction: (name: string, data?: unknown) => Promise<void>; onHint: (level: 1 | 2 | 3) => void;
   onBack: () => void; onSettings: () => void; editing: string; setEditing: (s: string) => void; editText: string; setEditText: (s: string) => void;
 };
-
-function LiveCaptions({ voice }: { voice: ReturnType<typeof useVoice> }) {
-  if (voice.state !== 'listening' && voice.state !== 'transcribing') return null;
-  return <section className="live-caption" data-testid="live-caption" aria-label="Живая расшифровка">
-    <span className="eyebrow">{voice.liveTranscriptStatus || 'Живые субтитры'}</span>
-    <p lang="en">{voice.liveTranscript || (voice.state === 'listening' ? 'Начни говорить. Твои слова появятся здесь.' : 'Проверяем запись целиком…')}</p>
-    <small>Это предварительная расшифровка. После записи можно проверить текст и послушать оригинал.</small>
-  </section>;
-}
 
 function RecordingEvidence({ p, intent }: { p: SessionProps; intent: 'message' | 'retry' }) {
   const draft = p.draft;
@@ -914,7 +906,7 @@ function SessionView(p: SessionProps) {
         {(busy || s.processing) && <div className="conversation-progress"><ElapsedTime startedAt={startedAt} /><p>Твоя реплика сохранена. Ответ появится здесь.</p></div>}
         {(textActivity || p.textMode) && !baseline && last?.role === 'assistant' && <div className="current-prompt"><span>Собеседник</span><p lang="en">{last.text}</p></div>}
         {s.lesson.material && <LessonMaterial material={s.lesson.material} />}
-        <LiveCaptions voice={voice} />
+        <LiveCaptions text={voice.liveTranscript} status={voice.liveTranscriptStatus} state={voice.state} />
         <UnuploadedRecording p={p} />
         {last?.role === 'user' && !busy && !s.processing && <div className="pending-reply"><p>Твоя реплика сохранена. Можно повторить получение ответа.</p><button className="button secondary" disabled={pending} onClick={p.onResend}><RefreshCw size={17} />Повторить ответ собеседника</button></div>}
         {!textActivity && <div className="voice-controls">
@@ -955,7 +947,7 @@ function SessionView(p: SessionProps) {
       {s.analysis.priorities.map((priority, i) => <section className="priority" key={i}><div className="priority-heading"><span className="priority-number">0{i + 1}</span><span className="quiet-tag">{priority.type === 'language' ? 'Английский' : 'Диалог'}</span></div><h3>{priority.title}</h3><blockquote lang="en">{priority.quote}</blockquote><p>{priority.explanation}</p><details><summary>Возможная формулировка</summary><p className="example" lang="en">{priority.example}</p><small>Один из вариантов. Свою попытку формулируй своими словами.</small></details><div className="retry-prompt"><Target size={17} /><span>{priority.retryInstruction}</span></div></section>)}
       {retryAllowed && <section className={`retry-section ${motionStyles.retrySurface}`}><span className="eyebrow">СЛЕДУЮЩИЙ ШАГ</span><h2>Теперь твоя версия</h2><p>{textActivity ? 'Вырази свою мысль заново. Сравним её с исходной попыткой.' : 'Повтори важный эпизод своими словами. Сравним его с исходной попыткой.'}</p>
         {p.audioReady && s.lesson.activity !== 'writing' && <><VoiceOrb state={orbState} meterStore={voice.meterStore} emotion={emotion} statusDescription={voiceLabel} /><div className="retry-voice"><button className="button secondary" data-testid="record-toggle" disabled={!listening && (pending || voice.hasUnuploadedRecording || !!p.draft?.audioFile)} onClick={() => void voice.record(s.id + ':retry')}>{listening ? <Square size={17} /> : <Mic size={17} />}{listening ? 'Стоп' : 'Сказать голосом'}</button><span aria-live="polite">{voiceLabel}</span></div></>}
-        <LiveCaptions voice={voice} /><UnuploadedRecording p={p} />
+        <LiveCaptions text={voice.liveTranscript} status={voice.liveTranscriptStatus} state={voice.state} /><UnuploadedRecording p={p} />
         {voice.canRetry && !voice.hasUnuploadedRecording && <button className="text-button" disabled={pending || listening} onClick={() => void voice.retry()}>{voice.retryLabel || 'Повторить'}</button>}
         {busy && <div className="retry-progress" role="status"><strong>{busy}</strong><ElapsedTime startedAt={p.busySince} /></div>}
         <DraftComposer p={p} intent="retry" pending={pending} />

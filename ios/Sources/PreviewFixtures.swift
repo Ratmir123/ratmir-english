@@ -94,7 +94,7 @@ struct PreviewAccessibility: ViewModifier {
         client.signedIn = true
         client.notificationState = "authorized"
         client.reminderEnabled = true
-        if ["practice", "listening", "analysing", "review", "celebrate", "completed", "saved-deferred", "ielts-reading", "ielts-writing", "preview-timing"].contains(screen) {
+        if ["practice", "listening", "dictation-preview", "analysing", "review", "celebrate", "completed", "saved-deferred", "ielts-reading", "ielts-writing", "preview-timing"].contains(screen) {
             client.conversation = decode(conversation, as: Conversation.self)
             client.conversationPresented = true
             client.reviewStartedAt = Date().addingTimeInterval(-24)
@@ -106,6 +106,28 @@ struct PreviewAccessibility: ViewModifier {
             client.recording = true; client.audioLevel = 0.48
             client.liveTranscript = "Yeah, um, I like sport too. I, I think climbing sounds"
             client.liveTranscriptStatus = "Живые субтитры"
+        }
+        if screen == "dictation-preview" {
+            client.recording = true; client.audioLevel = 0.48
+            let prefix = Array(repeating: "I, um, enjoy meeting people and asking about the things they care about. Sometimes I stop, think, and try again because I want to explain my idea clearly.", count: 5).joined(separator: " ")
+            client.liveTranscript = prefix
+            client.liveTranscriptStatus = "Синтетический предпросмотр. Микрофон и API выключены."
+            Task { @MainActor [weak client] in
+                let words = ["And", "right", "now", "I", "am", "watching", "the", "newest", "words", "stay", "visible", "while", "the", "older", "lines", "move", "up.", "Um,", "I", "I", "can", "pause", "and", "continue", "at", "my", "own", "pace."]
+                var hypothesis = prefix
+                for (index, word) in words.enumerated() {
+                    do { try await Task.sleep(for: .milliseconds(240)) } catch { return }
+                    guard let client, client.previewMode, client.recording else { return }
+                    hypothesis += " " + word
+                    client.liveTranscript = hypothesis
+                    if index == 12 {
+                        // A final recognition can revise an earlier word while
+                        // preserving the tail. It must not replay the whole text.
+                        hypothesis = hypothesis.replacingOccurrences(of: "Sometimes I stop,", with: "Sometimes I pause,")
+                        client.liveTranscript = hypothesis
+                    }
+                }
+            }
         }
         return true
     }

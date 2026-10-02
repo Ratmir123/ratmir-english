@@ -118,3 +118,72 @@ final class NativeFlowTests: XCTestCase {
         }
     }
 }
+
+final class LiveTranscriptTokenTests: XCTestCase {
+    func testOnlyAppendedWordsReceiveEntranceAndPrefixIdentityStaysStable() {
+        var stream = LiveTranscriptTokens(text: "One old thought")
+        let prefix = stream.words.map(\.id)
+        XCTAssertTrue(stream.words.allSatisfy { !$0.animateEntrance }, "Mounting an existing hypothesis does not replay it")
+        stream.update("One old thought and another")
+        XCTAssertEqual(Array(stream.words.prefix(3)).map(\.id), prefix)
+        XCTAssertEqual(stream.words.filter(\.animateEntrance).map(\.text), ["and", "another"])
+    }
+
+    func testPartialWordAndPunctuationCorrectionNeverReplayPreviousWords() {
+        var stream = LiveTranscriptTokens(text: "Let's go clim")
+        let identities = stream.words.map(\.id)
+        stream.update("Let's go climbing,")
+        XCTAssertEqual(stream.words.map(\.id), identities)
+        XCTAssertTrue(stream.words.allSatisfy { !$0.animateEntrance })
+        stream.update("Let's go climbing, tomorrow")
+        XCTAssertEqual(Array(stream.words.prefix(3)).map(\.id), identities)
+        XCTAssertEqual(stream.words.filter(\.animateEntrance).map(\.text), ["tomorrow"])
+    }
+
+    func testFinalRecognitionMayRewritePrefixWithoutAnimatingTheUnchangedSuffix() {
+        var stream = LiveTranscriptTokens(text: "I love climbing")
+        let suffix = stream.words.map(\.id)
+        stream.update("Actually I love climbing")
+        XCTAssertEqual(Array(stream.words.suffix(3)).map(\.id), suffix)
+        XCTAssertTrue(stream.words.allSatisfy { !$0.animateEntrance }, "A changed prefix is recognition correction, not new spoken words")
+        let revised = stream.words.map(\.id)
+        stream.update("Honestly I love climbing")
+        XCTAssertEqual(stream.words.map(\.id), revised)
+        XCTAssertTrue(stream.words.allSatisfy { !$0.animateEntrance })
+    }
+
+    func testRepeatedWordsTruncationAndEmptyHypothesisPreserveContentWithoutReusingRetiredIdentities() {
+        var stream = LiveTranscriptTokens(text: "um um I I think")
+        let original = stream.words.map(\.id)
+        stream.update("um um I")
+        XCTAssertEqual(stream.words.map(\.text), ["um", "um", "I"])
+        XCTAssertEqual(stream.words.map(\.id), Array(original.prefix(3)))
+        stream.update("um um I I think so")
+        XCTAssertEqual(stream.words.map(\.text), ["um", "um", "I", "I", "think", "so"])
+        XCTAssertEqual(Set(stream.words.map(\.id)).count, stream.words.count)
+        XCTAssertTrue(Set(stream.words.suffix(3).map(\.id)).isDisjoint(with: original.suffix(2)))
+        let retired = Set(stream.words.map(\.id))
+        stream.update("")
+        XCTAssertTrue(stream.words.isEmpty)
+        stream.update(" Fresh\n words   ")
+        XCTAssertEqual(stream.words.map(\.text), ["Fresh", "words"])
+        XCTAssertTrue(retired.isDisjoint(with: stream.words.map(\.id)))
+    }
+
+    func testRapidStreamUpdatesDoNotRestartOldWordEntrancesOrDuplicateIdentity() {
+        var stream = LiveTranscriptTokens(text: "I think")
+        let initial = stream.words.map(\.id)
+        var phrase = "I think"
+        for index in 0..<150 {
+            phrase += index.isMultiple(of: 3) ? " um" : " word"
+            stream.update(phrase)
+            XCTAssertEqual(Array(stream.words.prefix(2)).map(\.id), initial)
+            XCTAssertEqual(stream.words.filter(\.animateEntrance).count, 1)
+            XCTAssertEqual(stream.words.last?.animateEntrance, true)
+            XCTAssertEqual(Set(stream.words.map(\.id)).count, stream.words.count)
+        }
+        let revision = stream.revision
+        stream.update(phrase)
+        XCTAssertEqual(stream.revision, revision, "Duplicate deltas do not trigger another scroll/layout update")
+    }
+}
