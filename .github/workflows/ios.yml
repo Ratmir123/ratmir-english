@@ -16,6 +16,8 @@ jobs:
           xcodebuild -version
           xcodebuild -showsdks
           xcodebuild -version | head -1 | grep 'Xcode 27'
+      - name: Install shader compiler
+        run: xcodebuild -downloadComponent MetalToolchain
       - name: Generate Xcode project
         run: |
           brew install xcodegen

@@ -33,23 +33,57 @@ struct SpeechTiming: Decodable {
               audioFile.range(of: "^[a-f0-9-]+\\.(webm|mp4|ogg|wav|mp3)$", options: .regularExpression) != nil,
               ["usable", "limited", "no-speech"].contains(quality),
               durationSeconds.isFinite, durationSeconds > 0, durationSeconds <= 600,
-              pauseThresholdSeconds.isFinite, abs(pauseThresholdSeconds - 0.6) < 0.004,
+              pauseThresholdSeconds.isFinite, near(pauseThresholdSeconds, 0.6),
+              limitations.count <= 8, limitations.allSatisfy({ $0.utf16.count <= 500 }),
               internalPauseCount >= 0, !segments.isEmpty, segments.count <= 2048 else { return false }
         let values = [detectedSpeechSeconds, speechSpanSeconds, leadingSilenceSeconds, trailingSilenceSeconds, internalPauseSeconds, longestPauseSeconds]
         guard values.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= durationSeconds + 0.005 }) else { return false }
         var cursor = 0.0
+        var speech: [Segment] = []
+        var pauses: [Segment] = []
         for segment in segments {
             guard ["speech", "pause", "gap", "leading-silence", "trailing-silence"].contains(segment.kind),
                   segment.startSeconds.isFinite, segment.endSeconds.isFinite,
-                  abs(segment.startSeconds - cursor) < 0.005, segment.endSeconds > segment.startSeconds,
-                  segment.startSeconds >= 0, segment.endSeconds <= durationSeconds + 0.005 else { return false }
+                  near(segment.startSeconds, cursor), segment.endSeconds > segment.startSeconds,
+                  segment.startSeconds >= 0, segment.endSeconds <= durationSeconds + 0.001 else { return false }
+            if segment.kind == "speech" { speech.append(segment) }
+            if segment.kind == "pause" {
+                guard segment.duration >= 0.6 - 0.002 else { return false }
+                pauses.append(segment)
+            }
+            if segment.kind == "gap" && (segment.duration >= 0.6 + 0.002 || speech.isEmpty) { return false }
+            if segment.kind == "leading-silence" && cursor != 0 { return false }
+            if segment.kind == "trailing-silence" && !near(segment.endSeconds, durationSeconds) { return false }
             cursor = segment.endSeconds
         }
-        return abs(cursor - durationSeconds) < 0.005
+        guard near(cursor, durationSeconds) else { return false }
+        let first = speech.first
+        let last = speech.last
+        let speechTotal = speech.reduce(0) { $0 + $1.duration }
+        let pauseTotal = pauses.reduce(0) { $0 + $1.duration }
+        guard pauses.allSatisfy({ segment in
+            guard let first, let last else { return false }
+            return segment.startSeconds > first.startSeconds && segment.endSeconds < last.endSeconds
+        }), near(detectedSpeechSeconds, speechTotal),
+            near(speechSpanSeconds, first != nil ? last!.endSeconds - first!.startSeconds : 0),
+            near(leadingSilenceSeconds, first?.startSeconds ?? durationSeconds),
+            near(trailingSilenceSeconds, last.map { durationSeconds - $0.endSeconds } ?? 0),
+            near(internalPauseSeconds, pauseTotal), internalPauseCount == pauses.count,
+            near(longestPauseSeconds, pauses.map(\.duration).max() ?? 0),
+            (quality == "no-speech") == speech.isEmpty else { return false }
+        if let words = recognizedWords, words < 1 || words > 7000 { return false }
+        if let pace = approximateWordsPerMinute {
+            guard pace.isFinite, pace >= 0, let words = recognizedWords,
+                  quality == "usable", !transcriptEdited, speechSpanSeconds > 0,
+                  near(pace, (Double(words) * 60 / speechSpanSeconds * 1000).rounded() / 1000) else { return false }
+        }
+        if transcriptEdited && (recognizedWords != nil || approximateWordsPerMinute != nil) { return false }
+        return true
     }
+    private func near(_ left: Double, _ right: Double) -> Bool { abs(left - right) <= 0.004 }
     var longestPause: Segment? { segments.filter { $0.kind == "pause" }.max { $0.duration < $1.duration } }
     var displayedPace: Double? {
-        guard quality == "usable", !transcriptEdited, let words = recognizedWords, words > 0,
+        guard canDisplay(for: audioFile), quality == "usable", !transcriptEdited, let words = recognizedWords, words > 0,
               let pace = approximateWordsPerMinute, pace.isFinite, pace >= 0, speechSpanSeconds >= 5 else { return nil }
         return pace
     }
@@ -63,7 +97,7 @@ struct TimingFeedback: Decodable {
     let observation: String
     let practice: String
     func matches(_ timing: SpeechTiming) -> Bool {
-        guard timing.quality == "usable", startSeconds.isFinite, endSeconds.isFinite, durationSeconds.isFinite else { return false }
+        guard timing.canDisplay(for: timing.audioFile), timing.quality == "usable", startSeconds.isFinite, endSeconds.isFinite, durationSeconds.isFinite else { return false }
         return timing.segments.contains {
             $0.kind == "pause" && abs($0.startSeconds - startSeconds) < 0.005 && abs($0.endSeconds - endSeconds) < 0.005
                 && abs($0.duration - durationSeconds) < 0.005

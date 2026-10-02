@@ -72,4 +72,88 @@ final class SpeechTimingTests: XCTestCase {
         XCTAssertFalse(try feedback(start: 1, end: 4).matches(timing), "Speech cannot be relabeled a pause")
         XCTAssertFalse(try feedback(start: 5, end: 7).matches(timing), "A fabricated interval cannot be displayed as evidence")
     }
+
+    func testAggregatesMustMatchMeasuredSegments() throws {
+        for (field, falseValue) in [("detectedSpeechSeconds", 5.0), ("speechSpanSeconds", 7.0),
+                                    ("leadingSilenceSeconds", 0.0), ("trailingSilenceSeconds", 2.0),
+                                    ("internalPauseSeconds", 1.0), ("longestPauseSeconds", 1.0),
+                                    ("internalPauseCount", 2.0)] {
+            var value = fixture()
+            value[field] = falseValue
+            let timing = try decode(value)
+            XCTAssertFalse(timing.canDisplay(for: recording), field)
+            XCTAssertNil(timing.displayedPace, "Corrupt aggregates cannot show word-based pace")
+        }
+    }
+
+    func testInternalGapsAndMarginsCannotBeRelabeled() throws {
+        for (index, kind) in [(0, "pause"), (2, "gap"), (2, "leading-silence"), (2, "trailing-silence"), (4, "pause")] {
+            var value = fixture()
+            var segments = value["segments"] as! [[String: Any]]
+            segments[index]["kind"] = kind
+            value["segments"] = segments
+            XCTAssertFalse(try decode(value).canDisplay(for: recording), "Invalid \(kind) at segment \(index)")
+        }
+    }
+
+    func testPaceAndEditedMetadataMustMatchSourceCounts() throws {
+        var value = fixture()
+        value["approximateWordsPerMinute"] = 400.0
+        XCTAssertFalse(try decode(value).canDisplay(for: recording))
+        XCTAssertNil(try decode(value).displayedPace)
+        for invalidWords in [0, 7001] {
+            value = fixture()
+            value["recognizedWords"] = invalidWords
+            XCTAssertFalse(try decode(value).canDisplay(for: recording))
+        }
+        value = fixture()
+        value["transcriptEdited"] = true
+        XCTAssertFalse(try decode(value).canDisplay(for: recording))
+        value["recognizedWords"] = NSNull()
+        value["approximateWordsPerMinute"] = NSNull()
+        XCTAssertTrue(try decode(value).canDisplay(for: recording), "Edited transcript keeps original acoustic timeline")
+        XCTAssertNil(try decode(value).displayedPace)
+        value = fixture()
+        value["quality"] = "limited"
+        value["approximateWordsPerMinute"] = NSNull()
+        XCTAssertTrue(try decode(value).canDisplay(for: recording), "Quiet or clipped recordings retain valid timing without a rate")
+    }
+
+    func testSilentRecordingHasNoInventedSpeechOrInternalPause() throws {
+        var value = fixture()
+        value["quality"] = "no-speech"
+        XCTAssertFalse(try decode(value).canDisplay(for: recording))
+        value["detectedSpeechSeconds"] = 0.0
+        value["speechSpanSeconds"] = 0.0
+        value["leadingSilenceSeconds"] = 10.0
+        value["trailingSilenceSeconds"] = 0.0
+        value["internalPauseSeconds"] = 0.0
+        value["longestPauseSeconds"] = 0.0
+        value["internalPauseCount"] = 0
+        value["recognizedWords"] = NSNull()
+        value["approximateWordsPerMinute"] = NSNull()
+        value["segments"] = [["startSeconds": 0.0, "endSeconds": 10.0, "kind": "leading-silence"]]
+        XCTAssertTrue(try decode(value).canDisplay(for: recording))
+        XCTAssertNil(try decode(value).displayedPace)
+        value["quality"] = "usable"
+        XCTAssertFalse(try decode(value).canDisplay(for: recording))
+    }
+
+    func testValidShortGapAndMillisecondRoundingRemainReadable() throws {
+        var value = fixture()
+        value["detectedSpeechSeconds"] = 5.7
+        value["approximateWordsPerMinute"] = 90.003
+        value["segments"] = [
+            ["startSeconds": 0.0, "endSeconds": 1.0, "kind": "leading-silence"],
+            ["startSeconds": 1.0, "endSeconds": 3.0, "kind": "speech"],
+            ["startSeconds": 3.0, "endSeconds": 3.3, "kind": "gap"],
+            ["startSeconds": 3.3, "endSeconds": 4.0, "kind": "speech"],
+            ["startSeconds": 4.0, "endSeconds": 6.0, "kind": "pause"],
+            ["startSeconds": 6.0, "endSeconds": 9.0, "kind": "speech"],
+            ["startSeconds": 9.0, "endSeconds": 10.0, "kind": "trailing-silence"]]
+        let timing = try decode(value)
+        XCTAssertTrue(timing.canDisplay(for: recording), "Short internal gaps are distinct from counted pauses")
+        XCTAssertEqual(timing.internalPauseCount, 1)
+        XCTAssertEqual(timing.displayedPace, 90.003, "Server rounding tolerance is preserved")
+    }
 }
