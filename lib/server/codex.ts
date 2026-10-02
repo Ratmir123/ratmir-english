@@ -7,6 +7,7 @@ import { brainAuthenticationMode } from './configuration';
 import { getSiwcBrainStatus, siwcRun } from './siwc';
 import { SubscriptionUsageCache, unavailableSubscriptionUsage } from './usage';
 import { getBrainActivity } from './store';
+import type { InferencePurpose } from './inference-timing';
 
 export const BRAIN_MODEL = 'gpt-6.1-sol';
 type Effort = 'low' | 'medium' | 'high';
@@ -294,17 +295,17 @@ export async function getSubscriptionUsage(force = false): Promise<SubscriptionU
   }
 }
 
-export async function codexJson<T>(prompt: string, schema: Record<string, unknown>, effort: Effort = 'medium'): Promise<T> {
+export async function codexJson<T>(prompt: string, schema: Record<string, unknown>, effort: Effort = 'medium', purpose: InferencePurpose = 'other'): Promise<T> {
   const answer = brainAuthenticationMode() === 'siwc'
-    ? await siwcRun(prompt, schema, effort, TEXT_ONLY_INSTRUCTIONS)
+    ? await siwcRun(prompt, schema, effort, TEXT_ONLY_INSTRUCTIONS, purpose)
     : await bridge().run(prompt, schema, effort);
   try { return JSON.parse(answer) as T; }
   catch { throw new Error('GPT-6.1 Sol вернула некорректный JSON. Результат не применён.'); }
 }
 
-export async function codexText(prompt: string, effort: Effort = 'medium'): Promise<string> {
+export async function codexText(prompt: string, effort: Effort = 'medium', purpose: InferencePurpose = 'other'): Promise<string> {
   return brainAuthenticationMode() === 'siwc'
-    ? siwcRun(prompt, undefined, effort, TEXT_ONLY_INSTRUCTIONS)
+    ? siwcRun(prompt, undefined, effort, TEXT_ONLY_INSTRUCTIONS, purpose)
     : bridge().run(prompt, undefined, effort);
 }
 

@@ -2,6 +2,7 @@ import type { JWTVerifyGetKey } from 'jose';
 import type { BrainStatus } from '../types';
 import { SiwcStore, type SiwcRegistration, type SiwcTokens } from './siwc-store';
 import { addBrainActivity } from './store';
+import { inferenceTiming, observeTiming, type InferenceTiming, type InferencePurpose, type TimingObserver } from './inference-timing';
 import { SIWC_ISSUER, SIWC_MODEL, SIWC_RESOURCE, SIWC_TOKEN, SiwcError, consumeCallback, consumeResponsesStream, objectValue, readJsonBounded, responseError, responsesBody, safeSiwcError, verifyIdentity,
   type Fetcher, type SignInAttempt, type SiwcEffort } from './siwc-protocol';
 
@@ -38,8 +39,12 @@ export class SiwcClient {
   private fetcher: Fetcher;
   private keys?: JWTVerifyGetKey;
   private now: () => number;
-  constructor(options: { store?: SiwcStore; fetcher?: Fetcher; keys?: JWTVerifyGetKey; now?: () => number } = {}) {
+  private onTiming?: TimingObserver<InferenceTiming>;
+  private purpose: InferencePurpose;
+  constructor(options: { store?: SiwcStore; fetcher?: Fetcher; keys?: JWTVerifyGetKey; now?: () => number;
+    onTiming?: TimingObserver<InferenceTiming>; purpose?: InferencePurpose } = {}) {
     this.store = options.store || new SiwcStore(); this.fetcher = options.fetcher || fetch; this.keys = options.keys; this.now = options.now || Date.now;
+    this.onTiming = options.onTiming; this.purpose = options.purpose ?? 'other';
   }
   async status(): Promise<BrainStatus> {
     const base: BrainStatus = { connected: false, authenticated: false, model: SIWC_MODEL, modelAvailable: false, verified: false, authType: 'siwc', plan: null };
@@ -149,9 +154,24 @@ export class SiwcClient {
     return this.execute(prompt, schema, effort, instructions, false);
   }
   private async execute(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string, explicitProbe: boolean): Promise<string> {
+    const timing = inferenceTiming({ purpose: this.purpose, effort, promptCharacters: prompt.length,
+      instructionsCharacters: instructions.length, schemaCharacters: schema ? JSON.stringify(schema).length : 0 });
+    let outcome: InferenceTiming['outcome'] = 'failed'; let failure: string | null = null;
+    try {
+      const text = await this.executeMeasured(prompt, schema, effort, instructions, explicitProbe, timing);
+      outcome = 'success'; return text;
+    } catch (error) { failure = error instanceof SiwcError ? error.code : 'unknown'; throw error; }
+    finally {
+      try { observeTiming(this.onTiming, timing.finish(outcome, failure)); }
+      catch { /* A diagnostic snapshot failure must not replace the inference result. */ }
+    }
+  }
+  private async executeMeasured(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string,
+    explicitProbe: boolean, timing: ReturnType<typeof inferenceTiming>): Promise<string> {
     const body = responsesBody(prompt, schema, effort, instructions);
     // Reserve the full 3-minute response deadline plus model discovery/overhead.
     const record = await this.access(210_000);
+    timing.mark('accessReadyMs');
     // A catalog is a discovery aid. An explicit probe of the user's fixed model
     // can verify access when a new model has not reached the catalog yet. Normal
     // lessons require either a listing or a previously completed exact-model turn.
@@ -163,9 +183,11 @@ export class SiwcClient {
     const controller = new AbortController();
     const deadline = Math.min(180_000, remaining); const timer = setTimeout(() => controller.abort(), deadline);
     try {
+      timing.mark('requestStartMs');
       const response = await this.fetcher(SIWC_RESOURCE + '/responses', { method: 'POST', headers: { authorization: 'Bearer ' + record.access_token,
         'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify(body), redirect: 'error', signal: controller.signal });
-      const text = await consumeResponsesStream(response);
+      timing.mark('headersMs');
+      const text = await consumeResponsesStream(response, timing.event);
       if (record.expires_at <= this.now()) throw new SiwcError('expired');
       if (!record.model_verified_at || record.model_available !== true) await this.markModel(record, true);
       return text;
@@ -194,10 +216,10 @@ export class SiwcClient {
 }
 function client(): SiwcClient { return new SiwcClient(); }
 export async function getSiwcBrainStatus(): Promise<BrainStatus> { return client().status(); }
-export async function siwcRun(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string): Promise<string> {
+export async function siwcRun(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string, purpose: InferencePurpose = 'other'): Promise<string> {
   const started = Date.now();
   try {
-    const answer = await client().run(prompt, schema, effort, instructions);
+    const answer = await new SiwcClient({ purpose, onTiming: result => console.info('[sol-timing]', JSON.stringify(result)) }).run(prompt, schema, effort, instructions);
     try { addBrainActivity('success', Date.now() - started); } catch { /* Statistics must not discard a completed response. */ }
     return answer;
   } catch (error) {

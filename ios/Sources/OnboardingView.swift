@@ -5,6 +5,7 @@ struct OnboardingView: View {
     @EnvironmentObject private var client: TrainingClient
     @State private var russianControl = ""
     @FocusState private var answerFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var nextStep: String? { onboarding.steps.first { $0.status != "ready" }?.id }
 
     var body: some View {
@@ -16,12 +17,14 @@ struct OnboardingView: View {
                         Spacer()
                         StatusPill(title: onboarding.status == "intro" ? "Знакомство" : "\(onboarding.completedStages) из 3 проб", color: Theme.lavender.opacity(0.55))
                     }.padding(.top, 8)
-                    if onboarding.status == "intro" { introduction } else { baseline }
+                    if onboarding.status == "intro" { introduction.transition(reduceMotion ? .identity : NativeMotion.insertion) }
+                    else { baseline.transition(reduceMotion ? .identity : NativeMotion.insertion) }
                     if client.hasUnuploadedRecording && client.orphanedRecording { oldRecording }
                     if client.busy {
                         ActivityPanel(title: client.operationStage ?? "Сохраняю результат", detail: "Можно остановиться после любого этапа. Мы сохраним место.", startedAt: client.operationStartedAt)
                     }
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
+                    .animation(reduceMotion ? nil : NativeMotion.reveal, value: onboarding.status)
             }.background(Theme.surface).navigationBarHidden(true)
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable { await client.perform { try await client.refresh() } }
@@ -117,7 +120,8 @@ struct OnboardingView: View {
                     Text("Откроется после предыдущей пробы").font(.caption).foregroundStyle(Theme.secondary)
                 }
             }
-        }
+        }.animation(reduceMotion ? nil : NativeMotion.reveal, value: step.status)
+            .sensoryFeedback(trigger: step.status) { _, current in current == "ready" ? .success : nil }
     }
 
     private var oldRecording: some View {

@@ -22,6 +22,7 @@ import { SubscriptionLimits } from './subscription-limits';
 import { BaselineProfile, OnboardingFlow } from './onboarding-flow';
 import { PracticeModeSwitch as ModeSwitch } from './practice-mode-switch';
 import { useContentEntrance, useInputModality, useNavigationHighlight } from './use-interface-motion';
+import motionStyles from './training-app.module.css';
 
 type Tab = 'today' | 'practice' | 'progress' | 'history' | 'settings' | 'session';
 type Status = { brain: BrainStatus; hosting?: 'local' | 'server'; audio: { configured: boolean; model: string } };
@@ -429,7 +430,7 @@ export function TrainingApp() {
   if (state && quickVisible) return <QuickCoach onDismiss={dismissStartup} />;
   if (state && startupVisible && (!state.onboarding || state.onboarding.status === 'ready')) return <StartupWelcome state={state} busy={busy} error={error} onStart={minutes => void start(undefined, undefined, minutes)} onResume={value => { dismissStartup(); open(value); }} onDismiss={dismissStartup} />;
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${motionStyles.motionShell}`}>
     <aside className="sidebar">
       <a href="/" className="brand"><span className="brand-symbol">R<span>·</span></span><span>ratmir<span>english</span></span></a>
       <div className="sidebar-caption">ТВОЯ ПРОГРАММА</div>
@@ -703,7 +704,7 @@ export function TrainingApp() {
       </>}
       {tab === 'session' && session && <SessionView session={session} setSession={setSession} busy={busy} busySince={busySince} input={input} setInput={changeInput} draft={drafts[session.id]} onDiscardDraft={() => { saveDraft(session.id, null); setInput(''); if (voice.recordingDraft?.contextKey?.startsWith(session.id + ':')) voice.discardRecording(); }} textMode={textMode} setTextMode={setTextMode} transcript={transcript} showTranscript={showTranscript} hintText={hintText} comfort={comfort} setComfort={setComfort} voice={voice} audioReady={!!status?.audio.configured} onSend={() => void send(input)} onResend={resend} onAction={sessionAction} onHint={level => void action('Подбираю опору', async () => { const result = await request<{ text: string }>(`sessions/${session.id}/hint`, { level }); setHintText(result.text); })} onBack={() => navigation('today')} onSettings={() => navigation('settings')} editing={editing} setEditing={setEditing} editText={editText} setEditText={setEditText} />}
       </>}
-      </div><footer className="page-footer"><span>Своя попытка → разбор → новый разговор</span><span>Личный тренинг · v0.3</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
+      </div><footer className="page-footer"><span>Своя попытка → разбор → новый разговор</span><span>Личный тренинг · v0.3.1</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
   </div>;
 }
 

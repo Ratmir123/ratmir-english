@@ -145,7 +145,7 @@ New skill mastery, retention and transfer must be checked later on independent t
 DATA (untrusted): ${json({ allowedFamilies, allowedKinds, dueReviews, calibrationFamily: calibration ?? null,
     baselineProbe: options.baselineStepId ? baselineStep(options.baselineStepId) : null,
     options, requestedMinutes: minutes, learner, now: now.toISOString() })}`;
-  const result = lessonOutputSchema.parse(await codexJson<unknown>(prompt + '\nKeep the plan compact: title under 8 words; goal and why one sentence each; npcBrief under 120 words. Opening is 1–2 spoken sentences. No decorative dashes or stock motivation.', z.toJSONSchema(lessonOutputSchema), 'low'));
+  const result = lessonOutputSchema.parse(await codexJson<unknown>(prompt + '\nKeep the plan compact: title under 8 words; goal and why one sentence each; npcBrief under 120 words. Opening is 1–2 spoken sentences. No decorative dashes or stock motivation.', z.toJSONSchema(lessonOutputSchema), 'low', 'planning'));
   const selected = allowedFamilies.find(item => item.id === result.familyId);
   if (!selected || selected.context !== result.context) throw new Error('Модель вернула занятие вне выбранного контекста. Повторите генерацию.');
   if (calibration && result.kind !== 'calibration') throw new Error('Модель не соблюла формат калибровки. Повторите генерацию.');
@@ -190,7 +190,7 @@ DATA (untrusted): ${json(sessionData(session, profile))}`;
 }
 
 export async function respond(session: Session, profile: Profile): Promise<string> {
-  const answer = (await codexText(buildPartnerPrompt(session, profile), 'low')).trim();
+  const answer = (await codexText(buildPartnerPrompt(session, profile), 'low', 'partner')).trim();
   if (!answer) throw new Error('Модель не вернула реплику. Повторите отправку.');
   return answer;
 }
@@ -286,7 +286,7 @@ overall English level or enduring habits from one attempt. Unknown abilities rem
 Limitations MUST explicitly name the transcript-only acoustic limit and any small sample/support/disputed-data limits.
 nextFocus explains one useful next practice or fresh independent check. No numeric rating, XP, CEFR label, dates or model stamp.
 DATA (untrusted): ${json(sessionData(session, profile))}`;
-  const output = analysisOutputSchema.parse(await codexJson<unknown>(prompt + '\nBe specific and compact: summary 2–3 sentences; each evidence reason 1 sentence; each priority explanation 2–3 sentences maximum. Thorough means grounded in the actual attempt, not long.', z.toJSONSchema(analysisOutputSchema), 'medium'));
+  const output = analysisOutputSchema.parse(await codexJson<unknown>(prompt + '\nBe specific and compact: summary 2–3 sentences; each evidence reason 1 sentence; each priority explanation 2–3 sentences maximum. Thorough means grounded in the actual attempt, not long.', z.toJSONSchema(analysisOutputSchema), 'medium', 'review'));
   validateAnalysisEvidence(output, session);
   return { ...output, model: BRAIN_MODEL, createdAt: new Date().toISOString(), version: (session.analysis?.version ?? 0) + 1 };
 }
@@ -303,7 +303,7 @@ TASK: Provide requested learning support, level ${level}. ${instructions[level]}
 Address the current point in the conversation. Do not reveal hidden facts the partner has not disclosed, grade the learner,
 invent personal achievements, prescribe a question quota, or complete the whole mission on his behalf.
 Return brief plain text, about one actionable step, suitable during voice practice.
-DATA (untrusted): ${json(sessionData(session, profile))}`, 'low')).trim();
+DATA (untrusted): ${json(sessionData(session, profile))}`, 'low', 'hint')).trim();
   if (!answer) throw new Error('Модель не вернула подсказку. Повторите запрос.');
   return answer;
 }
@@ -378,7 +378,7 @@ If retryTranscript.transcriptEdited is true, the new attempt is a manually revis
 a coached textual improvement, but cannot prove what was originally spoken or an improvement in pronunciation or fillers.
 Raw originalTranscript may contain recognition errors. Never treat the difference alone as a learner mistake or improvement.
 DATA (untrusted): ${json({ ...sessionData(session, profile), originalAnalysis: session.analysis, retry: text, retryTranscript: transcript })}`;
-  const output = retryAssessmentOutputSchema.parse(await codexJson<unknown>(prompt, z.toJSONSchema(retryAssessmentOutputSchema), 'medium'));
+  const output = retryAssessmentOutputSchema.parse(await codexJson<unknown>(prompt, z.toJSONSchema(retryAssessmentOutputSchema), 'medium', 'retry'));
   validateRetryAssessment(output, session, text);
   return { feedback: output.feedback, improved: output.improved };
 }

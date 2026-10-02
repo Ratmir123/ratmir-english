@@ -331,12 +331,19 @@ enum AccessKey {
                 body["source"] = recordedFile == nil ? "text" : "audio"
                 body["textVisible"] = assistantTextShown
             }
-            self.conversation = try await request("sessions/\(conversation.id)/\(retry ? "retry" : "message")", body: body)
-            draft = ""; recordedFile = nil; pendingMessageID = nil; hint = nil; originalTranscript = ""; liveTranscript = ""
+            let updated: Conversation = try await request("sessions/\(conversation.id)/\(retry ? "retry" : "message")", body: body)
             savedDrafts.removeValue(forKey: conversation.id)
+            guard self.conversation?.id == conversation.id else {
+                try await refresh()
+                return
+            }
+            self.conversation = updated
+            draft = ""; recordedFile = nil; pendingMessageID = nil; hint = nil; originalTranscript = ""; liveTranscript = ""
             assistantTextShown = conversation.mode == "learning"
-            try await refresh()
+            // Speech has its own task and safeguards. Start it from the accepted
+            // reply without waiting for profile, service status or quota reads.
             autoSpeakLatest()
+            try await refresh()
         }
     }
     func action(_ name: String, deferRetry: Bool = false) async {

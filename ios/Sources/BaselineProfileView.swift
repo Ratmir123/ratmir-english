@@ -3,11 +3,16 @@ import SwiftUI
 struct NativeBaselineProfile: View {
     let report: BaselineReport?
     @EnvironmentObject private var client: TrainingClient
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var buildingProfile: Bool { client.busy && client.operationStage == "Собираю твой стартовый профиль" }
     var body: some View {
-        if let report { reportContent(report) }
-        else {
-            SurfaceCard {
+        Group {
+            if let report { reportContent(report).transition(reduceMotion ? .identity : NativeMotion.insertion) }
+            else { invitation }
+        }.animation(reduceMotion ? nil : NativeMotion.reveal, value: report != nil)
+    }
+    private var invitation: some View {
+        SurfaceCard {
                 VStack(alignment: .leading, spacing: 14) {
                     InputLabel(title: "Стартовый профиль")
                     Text("Три разговора пройдены.").font(.title3.weight(.semibold))
@@ -18,10 +23,10 @@ struct NativeBaselineProfile: View {
                     }.buttonStyle(PrimaryButton()).disabled(client.busy)
                     if buildingProfile {
                         ActivityPanel(title: "Собираем стартовый профиль", detail: "Сравниваем три разговора и выбираем, что тренировать первым.", startedAt: client.operationStartedAt)
+                            .transition(reduceMotion ? .identity : NativeMotion.insertion)
                     }
                 }
-            }
-        }
+        }.animation(reduceMotion ? nil : NativeMotion.reveal, value: buildingProfile)
     }
     private func reportContent(_ report: BaselineReport) -> some View {
         SurfaceCard {

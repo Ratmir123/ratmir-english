@@ -8,6 +8,60 @@ enum Theme {
     static let secondary = charcoal.opacity(0.66)
 }
 
+/// Short, retargetable springs. State and hit targets never wait for motion.
+enum NativeMotion {
+    static let press = Animation.interactiveSpring(response: 0.20, dampingFraction: 0.82, blendDuration: 0.08)
+    static let selection = Animation.interactiveSpring(response: 0.28, dampingFraction: 0.88, blendDuration: 0.10)
+    static let settle = Animation.interactiveSpring(response: 0.30, dampingFraction: 0.82, blendDuration: 0.10)
+    static let reveal = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.22)
+    static let feedback = Animation.easeOut(duration: 0.16)
+    static var insertion: AnyTransition { .opacity.combined(with: .offset(y: 5)) }
+}
+
+/// Material belongs to floating controls. Reading surfaces remain quiet and solid.
+struct LiquidChrome: ViewModifier {
+    var radius: CGFloat = 28
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+    func body(content: Content) -> some View {
+        content
+            .background {
+                let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+                if reduceTransparency || contrast == .increased { shape.fill(Color.white) }
+                else { shape.fill(.thinMaterial).overlay { shape.fill(Color.white.opacity(0.28)) } }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(LinearGradient(colors: [.white.opacity(0.9), Theme.charcoal.opacity(0.06), .white.opacity(0.45)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: Theme.charcoal.opacity(0.065), radius: 10, x: 0, y: 4)
+    }
+}
+
+struct SoftDisclosureStyle: DisclosureGroupStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(reduceMotion ? nil : NativeMotion.reveal) { configuration.isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 12) {
+                    configuration.label.frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.down").font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(configuration.isExpanded ? 180 : 0))
+                        .foregroundStyle(Theme.secondary)
+                }.foregroundStyle(Theme.charcoal).frame(minHeight: 44).contentShape(Rectangle())
+            }.buttonStyle(PressButton())
+                .accessibilityValue(configuration.isExpanded ? "Развёрнуто" : "Свёрнуто")
+                .accessibilityHint("Дважды коснись, чтобы " + (configuration.isExpanded ? "свернуть подробности." : "раскрыть подробности."))
+            if configuration.isExpanded {
+                configuration.content.transition(reduceMotion ? .identity : NativeMotion.insertion)
+            }
+        }
+    }
+}
+
 enum NativeDate {
     static func parse(_ value: String) -> Date? {
         let formatter = ISO8601DateFormatter()
@@ -49,6 +103,7 @@ struct SurfaceCard<Content: View>: View {
     var body: some View {
         content.frame(maxWidth: .infinity, alignment: .leading).padding(20)
             .background(color, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color.white.opacity(0.45), lineWidth: 1).allowsHitTesting(false) }
     }
 }
 
@@ -56,12 +111,15 @@ struct Metric: View {
     let value: String
     let title: String
     let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(value).font(.system(.largeTitle, design: .rounded).weight(.semibold)).monospacedDigit().tracking(-1)
+                .contentTransition(reduceMotion ? .identity : .numericText())
             Text(title).font(.caption.weight(.medium))
         }.foregroundStyle(Theme.charcoal).frame(maxWidth: .infinity, alignment: .leading).padding(20)
             .background(color, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .animation(reduceMotion ? nil : NativeMotion.feedback, value: value)
     }
 }
 
@@ -84,20 +142,34 @@ struct SelectionRow: View {
     @Binding var selection: String
     let options: [SelectionOption]
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var lens
     var body: some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: dynamicTypeSize.isAccessibilitySize ? 1 : options.count)
         LazyVGrid(columns: columns, spacing: 8) {
             ForEach(options) { option in
-                Button { selection = option.id } label: {
+                Button {
+                    guard selection != option.id else { return }
+                    withAnimation(reduceMotion ? nil : NativeMotion.selection) { selection = option.id }
+                } label: {
                     VStack(spacing: 7) {
                         Image(systemName: option.icon).font(.body)
                         Text(option.title).font(.caption.weight(.medium))
-                    }.frame(maxWidth: .infinity).padding(.vertical, 13)
+                    }.frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 13)
                         .foregroundStyle(selection == option.id ? Theme.charcoal : Theme.secondary)
-                        .background(selection == option.id ? Theme.lavender.opacity(0.45) : Theme.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .background {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.surface.opacity(0.38))
+                            if selection == option.id {
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .fill(Theme.lavender.opacity(0.55))
+                                    .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(0.8), lineWidth: 1) }
+                                    .matchedGeometryEffect(id: "selected-lens", in: lens)
+                            }
+                        }.contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }.buttonStyle(PressButton()).accessibilityAddTraits(selection == option.id ? .isSelected : [])
             }
         }
+        .sensoryFeedback(.selection, trigger: selection)
     }
 }
 
@@ -106,8 +178,9 @@ struct PressButton: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.opacity(isEnabled ? 1 : 0.46)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: configuration.isPressed)
+            .opacity(configuration.isPressed && isEnabled ? 0.85 : 1)
+            .scaleEffect(x: configuration.isPressed && !reduceMotion ? 0.982 : 1, y: configuration.isPressed && !reduceMotion ? 0.965 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
     }
 }
 
@@ -116,10 +189,12 @@ struct PrimaryButton: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.subheadline.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 16)
-            .frame(maxWidth: .infinity).foregroundStyle(Theme.lime)
+            .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(Theme.lime)
             .background(Theme.charcoal, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .opacity(isEnabled ? 1 : 0.48).scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: configuration.isPressed)
+            .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(configuration.isPressed ? 0.22 : 0.10), lineWidth: 1).allowsHitTesting(false) }
+            .opacity(isEnabled ? configuration.isPressed ? 0.90 : 1 : 0.48)
+            .scaleEffect(x: configuration.isPressed && !reduceMotion ? 0.982 : 1, y: configuration.isPressed && !reduceMotion ? 0.965 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
     }
 }
 
@@ -128,10 +203,12 @@ struct SecondaryButton: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.subheadline.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 16)
-            .frame(maxWidth: .infinity).foregroundStyle(Theme.charcoal)
+            .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(Theme.charcoal)
             .background(Theme.lime, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .opacity(isEnabled ? 1 : 0.45).scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: configuration.isPressed)
+            .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(configuration.isPressed ? 0.8 : 0.4), lineWidth: 1).allowsHitTesting(false) }
+            .opacity(isEnabled ? configuration.isPressed ? 0.88 : 1 : 0.45)
+            .scaleEffect(x: configuration.isPressed && !reduceMotion ? 0.982 : 1, y: configuration.isPressed && !reduceMotion ? 0.965 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
     }
 }
 
@@ -140,9 +217,11 @@ struct QuietButton: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.footnote.weight(.medium)).padding(.horizontal, 14).padding(.vertical, 12)
-            .foregroundStyle(Theme.charcoal).background(Color.white.opacity(0.65), in: Capsule())
+            .frame(minWidth: 44, minHeight: 44)
+            .foregroundStyle(Theme.charcoal).background(Color.white.opacity(configuration.isPressed ? 0.95 : 0.72), in: Capsule())
+            .overlay { Capsule().strokeBorder(Color.white.opacity(0.85), lineWidth: 1).allowsHitTesting(false) }
             .opacity(isEnabled ? 1 : 0.45).scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
     }
 }
 
@@ -212,6 +291,7 @@ struct ActivityPanel: View {
                 Text(detail).font(.footnote).foregroundStyle(Theme.secondary)
             }
         }.padding(18).background(Color.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 23, style: .continuous))
+            .contentTransition(.opacity)
             .accessibilityElement(children: .combine)
     }
 }
@@ -238,6 +318,7 @@ struct VoiceOrb: View {
     @State private var winking = false
     @State private var lastInteraction = Date.distantPast
     @State private var interaction = 0
+    @GestureState private var touchOffset = CGSize.zero
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     private var animated: Bool { (mode != .ready || winking) && !reduceMotion && scenePhase == .active }
@@ -247,16 +328,31 @@ struct VoiceOrb: View {
     }
     var body: some View {
         Button(action: reactToTouch) { orbTimeline }
-            .buttonStyle(.plain)
+            .buttonStyle(PressButton())
             .contentShape(Circle())
+            .offset(x: reduceMotion ? 0 : touchOffset.width * 0.20, y: reduceMotion ? 0 : touchOffset.height * 0.10)
+            .rotationEffect(.degrees(reduceMotion ? 0 : Double(touchOffset.width) * 0.04))
+            .animation(reduceMotion ? nil : NativeMotion.settle, value: touchOffset)
+            .simultaneousGesture(orbTouch)
             .accessibilityLabel("Твой собеседник")
             .accessibilityValue(accessibilityText)
-            .accessibilityHint("Коснись, чтобы он подмигнул.")
+            .accessibilityHint("Коснись, чтобы он подмигнул. Можно слегка потянуть в сторону.")
             .sensoryFeedback(.selection, trigger: interaction)
             .task(id: interaction) {
                 guard interaction > 0 else { return }
-                do { try await Task.sleep(for: .milliseconds(780)) } catch { return }
+                do { try await Task.sleep(for: .milliseconds(620)) } catch { return }
                 winking = false
+            }
+    }
+    private var orbTouch: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .updating($touchOffset) { value, offset, _ in
+                // Horizontal play does not steal the surrounding vertical scroll.
+                guard !reduceMotion, abs(value.translation.width) > abs(value.translation.height) * 1.2 else { return }
+                offset = CGSize(width: max(-70, min(70, value.translation.width)), height: max(-30, min(30, value.translation.height)))
+            }
+            .onEnded { value in
+                if abs(value.translation.width) > abs(value.translation.height) * 1.2 { reactToTouch() }
             }
     }
     private var orbTimeline: some View {
@@ -270,18 +366,18 @@ struct VoiceOrb: View {
                 let blink = animated && blinkPhase > 7.18 ? 0.13 : 1.0
                 let shape = SoftOrbShape(warp: reduceMotion ? 0 : drift * 0.028 + energy * 0.035)
                 ZStack {
-                    Ellipse().fill(Color(red: 0.27, green: 0.5, blue: 0.76).opacity(0.13))
-                        .frame(width: size * 0.73, height: size * 0.14).blur(radius: 14).offset(y: size * 0.35)
+                    Ellipse().fill(RadialGradient(colors: [Color(red: 0.27, green: 0.5, blue: 0.76).opacity(0.14), .clear], center: .center, startRadius: 0, endRadius: size * 0.4))
+                        .frame(width: size * 0.80, height: size * 0.17).offset(y: size * 0.35)
                     ZStack {
                         shape.fill(Color(red: 0.31, green: 0.33, blue: 0.81))
-                        Ellipse().fill(Color(red: 0.39, green: 0.88, blue: 0.9))
-                            .frame(width: size * 0.73, height: size * 0.8).blur(radius: size * 0.14)
+                        Ellipse().fill(RadialGradient(colors: [Color(red: 0.39, green: 0.88, blue: 0.9), Color(red: 0.39, green: 0.88, blue: 0.9).opacity(0.80), .clear], center: .center, startRadius: 0, endRadius: size * 0.49))
+                            .frame(width: size * 0.98, height: size * 1.05)
                             .offset(x: -size * 0.30, y: -size * 0.13 + drift * size * 0.026)
-                        Ellipse().fill(Color(red: 0.49, green: 0.34, blue: 0.95))
-                            .frame(width: size * 0.88, height: size * 0.8).blur(radius: size * 0.15)
+                        Ellipse().fill(RadialGradient(colors: [Color(red: 0.49, green: 0.34, blue: 0.95), Color(red: 0.49, green: 0.34, blue: 0.95).opacity(0.75), .clear], center: .center, startRadius: 0, endRadius: size * 0.5))
+                            .frame(width: size * 1.05, height: size * 0.98)
                             .offset(x: size * 0.12 + drift * size * 0.028, y: -size * 0.02)
-                        Ellipse().fill(Color(red: 0.35, green: 0.78, blue: 0.76).opacity(0.9))
-                            .frame(width: size * 0.66, height: size * 0.6).blur(radius: size * 0.18)
+                        Ellipse().fill(RadialGradient(colors: [Color(red: 0.35, green: 0.78, blue: 0.76).opacity(0.95), Color(red: 0.35, green: 0.78, blue: 0.76).opacity(0.6), .clear], center: .center, startRadius: 0, endRadius: size * 0.43))
+                            .frame(width: size * 0.94, height: size * 0.90)
                             .offset(x: size * 0.30, y: size * 0.31)
                         shape.fill(LinearGradient(colors: [Color.white.opacity(0.40), Color.white.opacity(0.015), Theme.charcoal.opacity(0.09)], startPoint: .topLeading, endPoint: .bottomTrailing))
                         HStack(spacing: size * 0.2) {
@@ -294,15 +390,16 @@ struct VoiceOrb: View {
                         .scaleEffect(reduceMotion ? 1 : 1 + energy * 0.08 + (mode == .thinking ? drift * 0.016 : 0))
                         .rotationEffect(.degrees(reduceMotion ? 0 : drift * (mode == .thinking ? 3.5 : 1.1)))
                         .offset(y: reduceMotion ? 0 : drift * size * 0.01)
-                        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: energy)
+                        .animation(reduceMotion ? nil : NativeMotion.feedback, value: energy)
                         .scaleEffect(winking && !reduceMotion ? 1.035 : 1)
-                        .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78), value: winking)
+                        .animation(reduceMotion ? nil : NativeMotion.settle, value: winking)
                 }.frame(width: geometry.size.width, height: geometry.size.height)
             }
         }.accessibilityHidden(true)
+            .animation(reduceMotion ? nil : NativeMotion.reveal, value: mode)
     }
     private func reactToTouch() {
-        guard Date().timeIntervalSince(lastInteraction) > 1.6 else { return }
+        guard Date().timeIntervalSince(lastInteraction) > 0.9 else { return }
         lastInteraction = Date()
         winking = true
         interaction += 1
@@ -319,6 +416,7 @@ struct OrbEye: View {
     let mood: VoiceOrbMood
     let blink: Double
     let wink: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var squint: Double {
         switch mood { case .attentive: return 1.13; case .curious: return side == 0 ? 0.95 : 0.62; case .supportive: return 0.76; default: return 1 }
     }
@@ -326,16 +424,16 @@ struct OrbEye: View {
         switch mood { case .curious: return side == 0 ? -7 : 12; case .supportive: return side == 0 ? -12 : 12; case .friendly: return side == 0 ? -3 : 3; default: return 0 }
     }
     var body: some View {
-        Group {
-            if wink || mood == .pleased {
-                OrbSmileEye().stroke(Color.white, style: StrokeStyle(lineWidth: size * 0.023, lineCap: .round))
-                    .frame(width: size * 0.073, height: size * 0.065)
-            } else {
-                Capsule().fill(Color.white).frame(width: size * 0.065, height: size * 0.11)
-                    .scaleEffect(y: squint * blink).rotationEffect(.degrees(tilt))
-            }
+        ZStack {
+            OrbSmileEye().stroke(Color.white, style: StrokeStyle(lineWidth: size * 0.023, lineCap: .round))
+                .frame(width: size * 0.073, height: size * 0.065).opacity(wink || mood == .pleased ? 1 : 0)
+            Capsule().fill(Color.white).frame(width: size * 0.065, height: size * 0.11)
+                .scaleEffect(y: squint * blink).rotationEffect(.degrees(tilt)).opacity(wink || mood == .pleased ? 0 : 1)
         }.frame(width: size * 0.075, height: size * 0.13)
             .shadow(color: Color.white.opacity(0.9), radius: size * 0.035)
+            .animation(reduceMotion ? nil : NativeMotion.feedback, value: mood)
+            .animation(reduceMotion ? nil : NativeMotion.feedback, value: wink)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.09), value: blink)
     }
 }
 

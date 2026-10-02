@@ -1,0 +1,163 @@
+.motionShell {
+  --motion-press: 110ms;
+  --motion-release: 220ms;
+  --motion-out: cubic-bezier(.23, 1, .32, 1);
+  --motion-slide: cubic-bezier(.32, .72, 0, 1);
+}
+
+/* Solid reading surfaces; the floating navigation is the one glass layer. */
+.motionShell :global(.daily-panel),
+.motionShell :global(.conversation-inspector),
+.motionShell :global(.skills-panel),
+.motionShell :global(.settings-status) {
+  box-shadow: inset 0 1px 0 #ffffffcc, 0 1px 2px #22212404;
+}
+.motionShell :global(.conversation-stage),
+.motionShell :global(.analysis-loading) {
+  box-shadow: inset 0 1px 0 #ffffff18, inset 0 -1px 0 #ffffff06;
+}
+.motionShell :global(.navigation-highlight) {
+  box-shadow: inset 0 1px 0 #ffffffb3, 0 2px 5px #22212410;
+  transition: transform var(--motion-release) var(--motion-slide), opacity 140ms ease;
+}
+.motionShell :global(.nav-item),
+.motionShell :global(.mobile-nav button) {
+  min-height: 48px;
+  transition: color 150ms ease, background-color 150ms ease,
+    transform var(--motion-release) var(--motion-out);
+}
+
+.motionShell :global(.button) {
+  min-height: 46px;
+  box-shadow: inset 0 1px 0 #ffffff45, inset 0 -1px 0 #2221240a;
+  transition: transform var(--motion-release) var(--motion-out),
+    background-color 160ms ease, opacity 160ms ease;
+}
+.motionShell :global(.button.primary) {
+  box-shadow: inset 0 1px 0 #ffffff70, inset 0 -1px 0 #22212414;
+}
+.motionShell :global(.button.secondary) {
+  box-shadow: inset 0 1px 0 #ffffff1c, inset 0 -1px 0 #22212424;
+}
+.motionShell :global(.button):active:not(:disabled):not(:focus-visible) {
+  transform: scale(.975, .965);
+  transition-duration: var(--motion-press);
+}
+.motionShell :global(.text-button),
+.motionShell :global(.icon-button),
+.motionShell :global(.support-buttons button),
+.motionShell :global(.conversation-mode button) {
+  min-height: 44px;
+  transition: transform var(--motion-release) var(--motion-out),
+    background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+.motionShell :global(.icon-button) { min-width: 44px; }
+.motionShell :global(.family-row),
+.motionShell :global(.recent-row),
+.motionShell :global(.history-row),
+.motionShell :global(.evidence-row) {
+  transition: transform 200ms var(--motion-out), background-color 150ms ease, opacity 150ms ease;
+}
+.motionShell :global(.family-row):active:not(:disabled):not(:focus-visible),
+.motionShell :global(.recent-row):active:not(:disabled):not(:focus-visible),
+.motionShell :global(.history-row):active:not(:disabled):not(:focus-visible),
+.motionShell :global(.evidence-row):active:not(:disabled):not(:focus-visible) {
+  transform: scale(.992, .979);
+  transition-duration: var(--motion-press);
+}
+.motionShell :global(.family-row .selection-marker) {
+  box-shadow: inset 0 1px 0 #ffffff60;
+  transition: transform 200ms var(--motion-out), background-color 150ms ease, color 150ms ease;
+}
+
+/* Hitboxes stay still; the circular control surface absorbs the press. */
+.motionShell :global(.voice-control) { min-height: 84px; min-width: 60px; }
+.motionShell :global(.voice-control > svg) {
+  box-shadow: inset 0 1px 0 #ffffff2c, inset 0 -1px 0 #22212418;
+  transition: transform 220ms var(--motion-out), background-color 160ms ease, opacity 140ms ease;
+}
+.motionShell :global(.voice-control):active:not(:disabled):not(:focus-visible) > svg {
+  transform: scale(1.025, .93);
+  transition-duration: 110ms;
+}
+.motionShell :global(.voice-control.main > svg) {
+  box-shadow: inset 0 1px 0 #ffffff70, inset 0 -1px 0 #2221241a;
+}
+.motionShell :global(.conversation-mode) {
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+  padding: 4px;
+  gap: 4px;
+  background: #ffffff08;
+  border-radius: 28px;
+  box-shadow: inset 0 1px 0 #ffffff12;
+}
+.motionShell :global(.conversation-mode button.selected) {
+  box-shadow: inset 0 1px 0 #ffffffb0, 0 1px 3px #22212412;
+}
+.motionShell :global(.live-caption),
+.motionShell :global(.recording-evidence),
+.motionShell :global(.unuploaded-recording) {
+  box-shadow: inset 0 1px 0 #ffffff18;
+}
+.motionShell :global(input),
+.motionShell :global(textarea),
+.motionShell :global(select) {
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+.motionShell :global(input:focus),
+.motionShell :global(textarea:focus),
+.motionShell :global(select:focus) { border-color: var(--accent-ink); }
+.motionShell :global(details > summary) { min-height: 48px; touch-action: manipulation; }
+
+@media (max-width: 800px), (max-width: 1000px) and (max-height: 500px) {
+  .motionShell :global(.mobile-nav) {
+    background: #222124f5;
+    border: 1px solid #ffffff14;
+    box-shadow: inset 0 1px 0 #ffffff0f, 0 8px 24px #22212426;
+  }
+  @supports (backdrop-filter: blur(8px)) {
+    .motionShell :global(.mobile-nav) {
+      background: #222124e8;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+  }
+  .motionShell :global(.mobile-nav .navigation-highlight) {
+    box-shadow: inset 0 1px 0 #ffffff80, inset 0 -1px 0 #22212412;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :global(html:not([data-input='keyboard'])) .motionShell :global(.button.primary):hover:not(:active):not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: inset 0 1px 0 #ffffff70, inset 0 -1px 0 #22212414;
+  }
+  :global(html:not([data-input='keyboard'])) .motionShell :global(.voice-control):hover:not(:active):not(:disabled) > svg {
+    transform: translateY(-1px);
+    opacity: .94;
+  }
+}
+
+/* Keyboard navigation is immediate, with the existing visible focus retained. */
+:global(html[data-input='keyboard']) .motionShell :global(button),
+:global(html[data-input='keyboard']) .motionShell :global(.navigation-highlight),
+:global(html[data-input='keyboard']) .motionShell :global(.voice-control > svg),
+:global(html[data-input='keyboard']) .motionShell :global(.family-row .selection-marker) { transition: none; }
+:global(html[data-input='keyboard']) .motionShell :global(button:active),
+:global(html[data-input='keyboard']) .motionShell :global(.voice-control:active > svg) { transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .motionShell :global(button),
+  .motionShell :global(input),
+  .motionShell :global(textarea),
+  .motionShell :global(select),
+  .motionShell :global(.navigation-highlight),
+  .motionShell :global(.voice-control > svg),
+  .motionShell :global(.family-row .selection-marker) { transition: none; }
+  .motionShell :global(button:active),
+  .motionShell :global(.voice-control:active > svg),
+  .motionShell :global(.voice-control:hover > svg) { transform: none !important; }
+  .motionShell :global(.mobile-nav) { backdrop-filter: none; -webkit-backdrop-filter: none; background: #222124; }
+}

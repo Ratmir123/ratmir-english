@@ -5,6 +5,8 @@ import SwiftUI
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(client).tint(Theme.charcoal)
+                .disclosureGroupStyle(SoftDisclosureStyle())
+                .buttonStyle(PressButton())
                 .preferredColorScheme(.light).task {
 #if DEBUG
                     if PreviewFixtures.install(client) { return }
@@ -103,6 +105,7 @@ struct HomeView: View {
     @EnvironmentObject private var client: TrainingClient
     @AppStorage("practice-context") private var context = "life"
     @AppStorage("practice-mode") private var mode = "learning"
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var saved: Conversation? { client.state?.sessions.first { ($0.baseline == nil || client.state?.onboarding?.status != "ready") && ($0.status != "completed" || $0.retryDeferred == true) } }
     var body: some View {
         NavigationStack {
@@ -175,6 +178,7 @@ struct HomeView: View {
                     }
                     if client.busy {
                         ActivityPanel(title: client.operationStage ?? "Готовим разговор", detail: "Подбираем ситуацию под твою практику.", startedAt: client.operationStartedAt)
+                            .transition(reduceMotion ? .identity : NativeMotion.insertion)
                     }
                     HStack(spacing: 12) {
                         Metric(value: "\(client.state?.completed ?? 0)", title: "Завершено", color: Theme.lavender)
@@ -183,6 +187,7 @@ struct HomeView: View {
                     Text("Новый разговор откроется отдельно. К прежнему можно вернуться в истории.")
                         .font(.footnote).foregroundStyle(Theme.secondary)
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
+                    .animation(reduceMotion ? nil : NativeMotion.reveal, value: client.busy)
             }.background(Theme.surface).navigationBarHidden(true)
                 .refreshable { await client.perform { try await client.refresh() } }
         }
@@ -203,7 +208,9 @@ struct ConversationView: View {
     @State private var showListeningCheck = false
     @State private var analysisStartedAt = Date()
     @FocusState private var draftFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var conversation: Conversation? { client.conversation }
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var active: Bool { conversation?.status == "active" || conversation?.status == "error" }
     private var hasReview: Bool { conversation?.analysis != nil }
     private var baselineReplies: Int {
@@ -283,12 +290,13 @@ struct ConversationView: View {
                 }
                 Color.clear.frame(height: 1).id("end")
             }
-        }
+        }.animation(reduceMotion ? nil : NativeMotion.reveal, value: hasReview)
+            .animation(reduceMotion ? nil : NativeMotion.reveal, value: conversation?.status)
     }
     @ViewBuilder private func conversationHeader(_ value: Conversation) -> some View {
-        if hasReview { reviewHeader(value) }
-        else if value.status == "analysing" { analysisWaiting }
-        else { liveConversation(value) }
+        if hasReview { reviewHeader(value).transition(reduceMotion ? .identity : NativeMotion.insertion) }
+        else if value.status == "analysing" { analysisWaiting.transition(reduceMotion ? .identity : NativeMotion.insertion) }
+        else { liveConversation(value).transition(reduceMotion ? .identity : NativeMotion.insertion) }
     }
     @ViewBuilder private var bottomDock: some View {
         if let value = conversation {
@@ -304,8 +312,8 @@ struct ConversationView: View {
         ToolbarItem(placement: .topBarTrailing) {
             Button { draftFocused = false; client.minimizeConversation() } label: {
                 Image(systemName: "chevron.down").font(.subheadline.weight(.semibold))
-                    .frame(width: 36, height: 36).background(Color.white.opacity(0.7), in: Circle())
-            }.accessibilityLabel("Свернуть занятие").disabled(client.recording)
+                    .frame(width: 44, height: 44).background(Color.white.opacity(0.7), in: Circle())
+            }.buttonStyle(PressButton()).accessibilityLabel("Свернуть занятие").disabled(client.recording)
         }
     }
     private var processingStart: Date? {
@@ -478,18 +486,18 @@ struct ConversationView: View {
                     .font(.footnote).foregroundStyle(Theme.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 composerContent(retry: true)
                 Button { Task { await client.action("complete", deferRetry: true) } } label: {
-                    Text("На сегодня всё. Вернёмся к попытке позже.")
-                }.font(.caption.weight(.medium)).foregroundStyle(Theme.secondary).disabled(client.busy || client.recording || !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || client.hasUnuploadedRecording)
+                    Text("На сегодня всё. Вернёмся к попытке позже.").frame(minHeight: 44).contentShape(Rectangle())
+                }.font(.caption.weight(.medium)).foregroundStyle(Theme.secondary).buttonStyle(PressButton()).disabled(client.busy || client.recording || !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || client.hasUnuploadedRecording)
             }
-        }.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 10).background(Theme.surface)
-            .overlay(alignment: .top) { Divider().opacity(0.6) }
+        }.padding(16).modifier(LiquidChrome()).padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
+            .animation(reduceMotion ? nil : NativeMotion.reveal, value: mayComplete)
     }
     private var composer: some View {
         VStack(spacing: 12) {
             composerContent(retry: false)
             Button { draftFocused = false; Task { await client.action("finish") } } label: {
-                HStack { Text("Закончить разговор и получить разбор"); Image(systemName: "arrow.right") }
-            }.font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary)
+                HStack { Text("Закончить разговор и получить разбор"); Image(systemName: "arrow.right") }.frame(minHeight: 44).contentShape(Rectangle())
+            }.font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary).buttonStyle(PressButton())
                 .disabled(client.busy || client.recording || client.hasUnuploadedRecording || !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !baselineHasEnoughReplies || conversation?.turns.contains(where: { $0.role == "user" }) != true)
             if !client.recording && !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text("Перед разбором отправь черновик или очисти текст.").font(.caption).foregroundStyle(Theme.secondary)
@@ -497,8 +505,7 @@ struct ConversationView: View {
             if conversation?.baseline != nil {
                 Text("Своих ответов голосом без опоры: \(baselineReplies)/2. Хорошая оценка не обязательна.").font(.caption).foregroundStyle(Theme.secondary)
             }
-        }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 8).background(Theme.surface)
-            .overlay(alignment: .top) { Divider().opacity(0.6) }
+        }.padding(16).modifier(LiquidChrome()).padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
     }
     private func composerContent(retry: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -509,35 +516,52 @@ struct ConversationView: View {
                         .font(.subheadline).frame(maxWidth: .infinity, alignment: .leading).lineLimit(5)
                     if !client.liveTranscriptStatus.isEmpty { Text(client.liveTranscriptStatus).font(.caption2).foregroundStyle(Theme.secondary) }
                 }.padding(14).background(.white, in: RoundedRectangle(cornerRadius: 18))
+                    .transition(reduceMotion ? .identity : .opacity)
             } else {
                 TextField(retry ? "Новая попытка на английском" : "Ответ на английском", text: $client.draft, axis: .vertical)
                     .lineLimit(1...3).focused($draftFocused).font(.subheadline).padding(14)
                     .background(.white, in: RoundedRectangle(cornerRadius: 18))
+                    .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(draftFocused ? Theme.lavender : Color.clear, lineWidth: 2).allowsHitTesting(false) }
+                    .animation(reduceMotion ? nil : NativeMotion.feedback, value: draftFocused)
                     .disabled(client.busy || conversation?.processing != nil || client.pendingMessageID != nil)
             }
-            HStack(spacing: 10) {
-                Button {
-                    draftFocused = false
-                    Task { if client.recording { await client.stopRecording() } else { await client.beginRecording() } }
-                } label: { HStack { Image(systemName: client.recording ? "stop.fill" : "mic.fill"); Text(client.recording ? "Готово" : client.microphoneStarting ? "Включаем" : "Говорить") } }
-                    .buttonStyle(PrimaryButton()).disabled(!client.recording && (client.busy || conversation?.processing != nil || client.pendingMessageID != nil || client.hasUnuploadedRecording || client.microphoneStarting))
-                Button { draftFocused = false; Task { await client.send(retry: retry) } } label: {
-                    HStack { Text(client.pendingMessageID != nil ? "Повторить" : "Отправить"); if client.busy { ProgressView().tint(Theme.charcoal) } else { Image(systemName: "arrow.up") } }
-                }.buttonStyle(SecondaryButton()).disabled(client.busy || conversation?.processing != nil || client.recording || client.hasUnuploadedRecording || client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 10) { recordingButton; sendButton(retry: retry) }
+            } else { HStack(spacing: 10) { recordingButton; sendButton(retry: retry) } }
             if !client.recording && (client.recordedFile != nil || client.hasUnuploadedRecording) {
-                HStack(spacing: 14) {
-                    Button { Task { await client.playRecording() } } label: { Label("Моя запись", systemImage: "play.circle") }
-                        .disabled(client.busy || client.voiceLoading)
-                    if client.hasUnuploadedRecording {
-                        Button("Повторить распознавание") { Task { await client.transcribeRecording() } }.disabled(client.busy)
-                    }
-                    Button("Удалить", role: .destructive) { client.discardRecording() }.disabled(client.busy)
-                }.font(.caption)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { recordingActions }.fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 8) { recordingActions }
+                }.font(.caption).buttonStyle(QuietButton())
                 Text(client.hasUnuploadedRecording ? "Запись осталась на iPhone. Повтори распознавание или удали её перед новой записью." : "Проверь текст по оригинальной записи перед отправкой.")
                     .font(.caption).foregroundStyle(Theme.secondary)
             }
+        }.animation(reduceMotion ? nil : NativeMotion.reveal, value: client.recording)
+    }
+    private var recordingButton: some View {
+        Button {
+            draftFocused = false
+            Task { if client.recording { await client.stopRecording() } else { await client.beginRecording() } }
+        } label: {
+            HStack {
+                Image(systemName: client.recording ? "stop.fill" : "mic.fill")
+                    .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                Text(client.recording ? "Стоп" : client.microphoneStarting ? "Включаем" : "Говорить")
+            }
+        }.buttonStyle(PrimaryButton()).disabled(!client.recording && (client.busy || conversation?.processing != nil || client.pendingMessageID != nil || client.hasUnuploadedRecording || client.microphoneStarting))
+    }
+    private func sendButton(retry: Bool) -> some View {
+        Button { draftFocused = false; Task { await client.send(retry: retry) } } label: {
+            HStack { Text(client.pendingMessageID != nil ? "Повторить" : "Отправить"); if client.busy { ProgressView().tint(Theme.charcoal) } else { Image(systemName: "arrow.up") } }
+        }.buttonStyle(SecondaryButton()).disabled(client.busy || conversation?.processing != nil || client.recording || client.hasUnuploadedRecording || client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+    @ViewBuilder private var recordingActions: some View {
+        Button { Task { await client.playRecording() } } label: { Label("Моя запись", systemImage: "play.circle") }
+            .disabled(client.busy || client.voiceLoading)
+        if client.hasUnuploadedRecording {
+            Button("Повторить распознавание") { Task { await client.transcribeRecording() } }.disabled(client.busy)
         }
+        Button("Удалить", role: .destructive) { client.discardRecording() }.disabled(client.busy)
     }
 }
 

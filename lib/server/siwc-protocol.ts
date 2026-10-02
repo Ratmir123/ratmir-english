@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey, type JWTPayload } from 'jose';
+import { inferenceUsage, observeTiming, type StreamTimingEvent, type TimingObserver } from './inference-timing';
 
 export const SIWC_MODEL = 'gpt-6.1-sol';
 export const SIWC_ISSUER = 'https://auth.openai.com';
@@ -175,7 +176,8 @@ function completedText(response: ObjectValue): string {
   if (!text || text.length > 1_000_000) throw new SiwcError('stream');
   return text;
 }
-export async function consumeResponsesStream(response: Response): Promise<string> {
+export async function consumeResponsesStream(response: Response, onTiming?: TimingObserver<StreamTimingEvent>): Promise<string> {
+  const timing = (event: StreamTimingEvent) => observeTiming(onTiming, event);
   if (!response.ok) {
     const body: ObjectValue = await readJsonBounded(response).catch(() => ({}));
     const error = body.error && typeof body.error === 'object' ? body.error as ObjectValue : {};
@@ -221,11 +223,13 @@ export async function consumeResponsesStream(response: Response): Promise<string
     if (item.type === 'response.output_text.delta') {
       if (typeof item.delta !== 'string') throw new SiwcError('stream');
       deltaLength += item.delta.length; if (deltaLength > 1_000_000) throw new SiwcError('stream');
+      if (item.delta.length) timing({ phase: 'text', characters: item.delta.length });
     }
     if (item.type === 'response.created' || item.type === 'response.in_progress' || item.type === 'response.completed') {
       const result = objectValue(item.response);
       if (result.model !== SIWC_MODEL || typeof result.id !== 'string' || (responseId && result.id !== responseId)) throw new SiwcError('tools');
       responseId = result.id;
+      if (item.type === 'response.created') timing({ phase: 'created' });
       if (item.type === 'response.completed') {
         // Plan-usage streams can leave terminal output empty after sending the
         // full items in output_item.done. Only committed items are reconstructed;
@@ -233,9 +237,13 @@ export async function consumeResponsesStream(response: Response): Promise<string
         if (Array.isArray(result.output) && result.output.length === 0 && completedItems.size) {
           const entries = [...completedItems].sort(([a], [b]) => a - b);
           if (entries.some(([index], position) => index !== position)) throw new SiwcError('stream');
-          return completedText({ ...result, output: entries.map(([, output]) => output) });
+          const text = completedText({ ...result, output: entries.map(([, output]) => output) });
+          timing({ phase: 'completed', usage: inferenceUsage(result.usage) });
+          return text;
         }
-        return completedText(result);
+        const text = completedText(result);
+        timing({ phase: 'completed', usage: inferenceUsage(result.usage) });
+        return text;
       }
     }
   };
@@ -243,6 +251,7 @@ export async function consumeResponsesStream(response: Response): Promise<string
     while (true) {
       const chunk = await reader.read();
       if (chunk.done) { buffer += decoder.decode(); break; }
+      timing({ phase: 'first-byte' });
       bytes += chunk.value.length; if (bytes > 8_000_000) throw new SiwcError('stream');
       buffer += decoder.decode(chunk.value, { stream: true });
       buffer = buffer.replace(/\r\n/g, '\n');

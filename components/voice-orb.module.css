@@ -14,32 +14,43 @@
   padding: 0;
   background: transparent;
   cursor: pointer;
+  touch-action: pan-y;
   -webkit-tap-highlight-color: transparent;
 }
 .orb:focus-visible { outline: 2px solid var(--accent-ink, #575075); outline-offset: 3px; border-radius: 36px; }
 
+/* Gesture feedback and actual voice deformation never share an animation. */
+.gel {
+  position: relative;
+  transform: scale(1, 1) rotate(0deg);
+  transition: transform 240ms var(--orb-ease);
+}
+.orb[data-greeting='true'] .gel { transform: scale(1.018, 0.991) rotate(-1deg); }
+.orb[data-pressed='true'] .gel { transform: scale(1.025, 0.955) rotate(-1deg); transition-duration: 105ms; }
+
 .shadow {
   position: absolute;
   width: 68%;
-  height: 18px;
+  height: 24px;
   bottom: 10px;
   border-radius: 50%;
-  background: #558fbd;
-  filter: blur(14px);
-  opacity: 0.17;
-  transition: opacity 180ms var(--orb-ease);
+  background: radial-gradient(ellipse, #558fbd40 0%, #558fbd14 45%, transparent 74%);
+  opacity: 0.72;
+  transform: scaleX(1);
+  transition: transform 180ms var(--orb-ease), opacity 180ms var(--orb-ease);
 }
+.orb[data-pressed='true'] .shadow { transform: scaleX(1.055); opacity: 0.9; }
 
 .body {
   position: relative;
   border-radius: 43% 44% 40% 41% / 41% 44% 42% 41%;
   overflow: hidden;
   isolation: isolate;
-  background: #5355d0;
-  box-shadow: inset -10px -16px 26px #22212414, inset 7px 12px 19px #ffffff40;
+  background: radial-gradient(ellipse at 30% 15%, #7adce3, transparent 55%), #5355d0;
+  box-shadow: inset -12px -18px 28px #2221241c, inset 7px 11px 18px #ffffff50;
   opacity: var(--body-opacity);
-  transform: scale(var(--voice-scale, 1));
-  transition: transform 140ms var(--orb-ease), opacity 200ms var(--orb-ease);
+  transform: translateY(var(--voice-lift, 0px)) scale(var(--voice-scale, 1), calc(var(--voice-scale, 1) * var(--voice-stretch, 1)));
+  transition: transform 120ms var(--orb-ease), opacity 180ms var(--orb-ease);
 }
 
 /* The state pose retargets immediately; the nested drift retains its own phase. */
@@ -86,18 +97,17 @@
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  filter: blur(28px);
   animation-play-state: paused;
 }
 
-.cyan { background: #63e1e8; }
+.cyan { background: radial-gradient(ellipse, #63e1e8 12%, #63e1e8bb 45%, transparent 73%); }
 .indigo {
-  background: #7960e8;
+  background: radial-gradient(ellipse, #7960e8 9%, #7960e8cc 46%, transparent 74%);
   opacity: 0.9;
   animation: indigo-drift 6.4s var(--orb-drift-ease) infinite alternate paused;
 }
 .teal {
-  background: #58bfbf;
+  background: radial-gradient(ellipse, #58bfbf 6%, #58bfbfbb 43%, transparent 74%);
   opacity: 0.82;
   animation: teal-drift 5.2s var(--orb-drift-ease) infinite alternate paused;
 }
@@ -109,6 +119,21 @@
     radial-gradient(ellipse at 71% 92%, #22212420, transparent 52%);
   opacity: var(--sheen-opacity);
   transition: opacity 220ms var(--orb-ease);
+}
+
+.rim {
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  box-shadow: inset 0 1px 1px #ffffff65, inset 1px 0 2px #ffffff18,
+    inset -1px -1px 1px #22212418;
+  pointer-events: none;
+}
+.face {
+  position: absolute;
+  inset: 0;
+  transform: translate(0, 0);
+  transition: transform 180ms var(--orb-ease);
 }
 
 .eyes {
@@ -161,8 +186,7 @@
 .orb[data-emotion='pleased'][data-wink='true'] .eye:first-child .pillEye { opacity: 1; }
 .orb[data-emotion='pleased'][data-wink='true'] .eye:first-child .arcEye { opacity: 0; }
 .orb[data-wink='true'] .eye:last-child { transform: none; }
-.orb[data-bounce='true'] .body { animation: greeting 280ms var(--orb-ease) paused; }
-.orb[data-awake='true'][data-bounce='true'] .body { animation-play-state: running; }
+.orb[data-keyboard-greeting='true'] .gel { transform: none; transition: none; }
 .orb[data-keyboard-greeting='true'] .pillEye,
 .orb[data-keyboard-greeting='true'] .arcEye,
 .orb[data-keyboard-greeting='true'] .eye { transition: none; }
@@ -204,7 +228,7 @@
   --sheen-opacity: 0.45;
   --eye-squint: 0.55;
 }
-.orb[data-state='paused'] .shadow { opacity: 0.1; }
+.orb[data-state='paused'] .shadow { opacity: 0.4; }
 
 .orb[data-page-hidden='true'] *,
 .orb[data-page-hidden='true'] *::before,
@@ -222,10 +246,8 @@
   0%, 95%, 100% { transform: scaleY(1); }
   97% { transform: scaleY(0.12); }
 }
-@keyframes greeting {
-  0%, 100% { transform: scale(var(--voice-scale, 1)) rotate(0deg); }
-  45% { transform: scale(calc(var(--voice-scale, 1) * 1.035)) rotate(-2deg); }
-}
+:global(html[data-input='keyboard']) .gel,
+:global(html[data-input='keyboard']) .face { transform: none !important; transition: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .body,
@@ -237,7 +259,10 @@
   .teal,
   .eye,
   .blink,
-  .orb[data-bounce='true'] .body {
+  .gel,
+  .face,
+  .orb[data-greeting='true'] .gel,
+  .orb[data-pressed='true'] .gel {
     animation: none;
     transform: none;
     transition: none;
@@ -247,4 +272,5 @@
   .sheen,
   .pillEye,
   .arcEye { transition: none; }
+  .face, .shadow { transform: none !important; }
 }

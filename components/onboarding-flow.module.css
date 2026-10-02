@@ -16,7 +16,7 @@
 .control > label:not(.confirmation) { display: block; margin-bottom: 9px; font-size: 13px; color: var(--muted); }
 .control textarea { min-height: 160px; }
 .control > small { display: block; margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.75; }
-.confirmation { display: flex; align-items: flex-start; gap: 11px; margin: 25px 0; padding: 0; cursor: pointer; font-size: 13px; line-height: 1.7; }
+.confirmation { display: flex; align-items: flex-start; gap: 11px; margin: 25px 0; padding: 10px 0; min-height: 44px; cursor: pointer; font-size: 13px; line-height: 1.7; }
 .confirmation input { width: 19px; height: 19px; margin: 2px 0 0; accent-color: var(--accent-ink); flex: 0 0 19px; }
 .control > button { width: 100%; justify-content: space-between; }
 .baselineHeading { display: flex; justify-content: space-between; align-items: center; gap: 25px; margin-bottom: 28px; }
@@ -31,8 +31,8 @@
 .audioNotice p { font-size: 13px; line-height: 1.7; margin: 5px 0 0; }
 .audioNotice > :global(.button) { flex-shrink: 0; }
 .steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 17px; }
-.step { display: flex; align-items: flex-start; gap: 22px; padding: 26px; border-radius: 28px; background: var(--surface); }
-.stepNumber { width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; background: var(--raised); border-radius: 16px; font-size: 16px; font-variant-numeric: tabular-nums; }
+.step { display: flex; align-items: flex-start; gap: 22px; padding: 26px; border-radius: 28px; background: var(--surface); box-shadow: inset 0 1px 0 #ffffffb0, 0 1px 2px #22212404; }
+.stepNumber { width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; background: var(--raised); border-radius: 16px; font-size: 16px; font-variant-numeric: tabular-nums; box-shadow: inset 0 1px 0 #ffffffa0; transition: background-color 180ms ease, color 180ms ease; }
 .step[data-ready='true'] .stepNumber { background: var(--lime); }
 .stepCopy { flex: 1; min-width: 0; }
 .stepCopy h2 { font-size: 22px; line-height: 1.4; letter-spacing: -0.4px; margin: 10px 0; }
@@ -66,10 +66,16 @@
 .skillEvidence { padding: 20px 0; border-top: 1px solid var(--line-soft); }
 .skillEvidence h3 { font-size: 16px; margin-bottom: 4px; }
 .skillEvidence p { font-size: 14px; color: var(--muted); line-height: 1.8; }
-.evidence { display: block; width: 100%; padding: 17px 19px; border: 0; background: var(--raised); border-radius: 18px; text-align: left; margin-top: 12px; transition: transform 140ms var(--ease); }
+.evidence { display: block; width: 100%; padding: 17px 19px; min-height: 44px; border: 0; background: var(--raised); border-radius: 18px; text-align: left; margin-top: 12px; box-shadow: inset 0 1px 0 #ffffffb0; transition: transform 220ms var(--ease), background-color 150ms ease; }
 .evidence q { display: block; font-size: 15px; line-height: 1.75; }
 .evidence span { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; margin-top: 9px; }
-.evidence:active { transform: scale(0.985); }
+.evidence:active:not(:focus-visible) { transform: scale(0.992, 0.978); transition-duration: 110ms; }
+.evidence:focus-visible { transition: none; }
+.control, .reportInvitation { box-shadow: inset 0 1px 0 #ffffffb0, 0 1px 2px #22212404; }
+.stepCopy > button, .report details > summary { min-height: 44px; }
+:global(html[data-input='keyboard']) .evidence, :global(html[data-input='keyboard']) .stepNumber { transition: none; }
+:global(html[data-input='keyboard']) .evidence:active { transform: none; }
+@media (hover: hover) and (pointer: fine) { .evidence:hover { background: #e9e8ec; } }
 .nextFocus { padding: 18px 20px; margin-top: 20px; background: var(--lime); border-radius: 22px; }
 .nextFocus strong { font-size: 15px; }
 .nextFocus p { font-size: 14px; margin: 8px 0 0; line-height: 1.8; }
@@ -109,4 +115,4 @@
   .reportInvitation > button, .audioNotice > button { width: 100%; }
   .cefr { flex-direction: column; gap: 12px; padding: 20px; }
 }
-@media (prefers-reduced-motion: reduce) { .evidence { transition: none; } .evidence:active { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .evidence, .stepNumber { transition: none; } .evidence:active { transform: none; } }

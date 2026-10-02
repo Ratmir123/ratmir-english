@@ -139,14 +139,14 @@ Do not infer improvement over an earlier attempt: only one userAnswer is supplie
 
 /** No training record, XP or inferred skill is saved by a quick explanation. */
 export async function explainQuickCoach(state: AppState, input: QuickCoachInput): Promise<QuickCoachResult> {
-  const output = await codexJson<unknown>(buildQuickCoachPrompt(state, input), z.toJSONSchema(quickCoachOutputSchema), 'medium');
+  const output = await codexJson<unknown>(buildQuickCoachPrompt(state, input), z.toJSONSchema(quickCoachOutputSchema), 'medium', 'quick-coach');
   const result = quickCoachOutputSchema.safeParse(output);
   if (!result.success) throw new ApiError('Sol вернул неподходящий разбор. Повтори запрос.', 503);
   return { ...result.data, model: BRAIN_MODEL, createdAt: new Date().toISOString() };
 }
 
 export async function assessQuickCoachRetry(state: AppState, input: QuickCoachRetryInput): Promise<QuickCoachRetryResult> {
-  const output = await codexJson<unknown>(buildQuickCoachRetryPrompt(state, input), z.toJSONSchema(quickCoachRetryOutputSchema), 'medium');
+  const output = await codexJson<unknown>(buildQuickCoachRetryPrompt(state, input), z.toJSONSchema(quickCoachRetryOutputSchema), 'medium', 'retry');
   const result = quickCoachRetryOutputSchema.safeParse(output);
   if (!result.success) throw new ApiError('Sol вернул неподходящий разбор попытки. Повтори запрос.', 503);
   return { ...result.data, model: BRAIN_MODEL, createdAt: new Date().toISOString() };
