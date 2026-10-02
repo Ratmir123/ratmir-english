@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "createdAt": "2026-10-02T00:58:45.098Z",
+  "createdAt": "2026-10-02T01:15:43.859Z",
   "reviewRequired": true,
   "published": false,
   "licenseCandidate": "MIT",
@@ -18,8 +18,8 @@
     },
     {
       "path": ".github/workflows/ios.yml",
-      "bytes": 2579,
-      "sha256": "37dddd9792b7a0dd033c4be766392cd2dbcb16d6b14b5b10535472ac3117be71"
+      "bytes": 2589,
+      "sha256": "141c5783fd914b9b83d8737d6c2b1fcc7eaaec5488700f44a1ce783bc37e1c91"
     },
     {
       "path": "Disable Autostart.cmd",
@@ -133,8 +133,8 @@
     },
     {
       "path": "components/training-app.tsx",
-      "bytes": 64349,
-      "sha256": "47696dc5bc414ac6bc69a360b26d7dd601700e543717b7c016cd846bc4af93ed"
+      "bytes": 67162,
+      "sha256": "60eb5236969409d8cff2fabb4bcc091ff1ac789a7313e9be2a3952776b573cee"
     },
     {
       "path": "components/use-interface-motion.ts",
@@ -148,13 +148,13 @@
     },
     {
       "path": "components/voice-orb.module.css",
-      "bytes": 3649,
-      "sha256": "c6343b588244d059305076f6e278f15cc6710f4d0242a96c223c69a3ce9029ce"
+      "bytes": 6356,
+      "sha256": "2bc4259f21d8feb2d01c016628ec6807e6cc8d335edd74f4119b625969743d4f"
     },
     {
       "path": "components/voice-orb.tsx",
-      "bytes": 1957,
-      "sha256": "9779791d1e032e92008e09c3233948e9496ee6a94a7a703a0c3a807c72de587b"
+      "bytes": 4672,
+      "sha256": "496410beb6b38dfaf0244daeedf2739f5afae7a6b39e46cb5eda5b9e5cef4248"
     },
     {
       "path": "deploy/.env.example",
@@ -168,8 +168,8 @@
     },
     {
       "path": "deploy/README.md",
-      "bytes": 19122,
-      "sha256": "b30ec24ec093a772cdac212947fb30a85923a3af662e06349749a59d440e1026"
+      "bytes": 20697,
+      "sha256": "329398a88556f68a1698c8a0dd50c1a69c85c502e9676c2e8b80b63b13b82d6d"
     },
     {
       "path": "deploy/compose.yaml",
@@ -233,23 +233,23 @@
     },
     {
       "path": "ios/Sources/NativeDesign.swift",
-      "bytes": 15717,
-      "sha256": "59e97fed2124c06c0507914c1f47772671902a923fd813f2a64ab41d9f167b38"
+      "bytes": 18581,
+      "sha256": "ab9362316e4f6550b45c6afd71f46d071c6a7d2330dbd9d3e9f7d5845c9191a2"
     },
     {
       "path": "ios/Sources/PreviewFixtures.swift",
-      "bytes": 5016,
-      "sha256": "e90a0ef320f34a4c11bf864569130695958f6263a735de31efed768b820450c5"
+      "bytes": 5422,
+      "sha256": "7b3de22971855202e659bad46e197dd1b29c14a773874b3a40a3d59b09370249"
     },
     {
       "path": "ios/Sources/RatmirEnglishApp.swift",
-      "bytes": 51166,
-      "sha256": "850b2c26be4c8c76015d46d19ce6065ea448b562ae25c40c90592afe4be86b20"
+      "bytes": 52567,
+      "sha256": "59e4ec755d79bcb7bfb3810b30baa6c25dca64613d1b9958d4e6994d78ef700c"
     },
     {
       "path": "ios/Sources/TrainingClient.swift",
-      "bytes": 38728,
-      "sha256": "0afd4c3dff72d775aad718517ad8708eda49863b5bac621159d5cd45d94a78ac"
+      "bytes": 42851,
+      "sha256": "95efb28e8558db35deb7290ed7a3f01f52f2ac9539f4a117922303e6dad1f217"
     },
     {
       "path": "ios/Sources/VoiceCapture.swift",

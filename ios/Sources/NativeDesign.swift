@@ -217,12 +217,14 @@ struct ActivityPanel: View {
 }
 
 enum VoiceOrbMode { case ready, listening, speaking, thinking }
+enum VoiceOrbMood { case calm, attentive, curious, friendly, pleased, supportive }
 
 /// Meter updates invalidate only this small view rather than the whole conversation.
 struct MeasuredVoiceOrb: View {
     @ObservedObject var meter: VoiceMeter
     let mode: VoiceOrbMode
-    var body: some View { VoiceOrb(mode: mode, level: meter.level) }
+    var mood: VoiceOrbMood? = nil
+    var body: some View { VoiceOrb(mode: mode, level: meter.level, mood: mood) }
 }
 
 /// Keep the timeline in this leaf; it never recomputes the transcript or composer.
@@ -230,10 +232,32 @@ struct MeasuredVoiceOrb: View {
 struct VoiceOrb: View {
     let mode: VoiceOrbMode
     let level: Double
+    var mood: VoiceOrbMood? = nil
+    @State private var winking = false
+    @State private var lastInteraction = Date.distantPast
+    @State private var interaction = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    private var animated: Bool { mode != .ready && !reduceMotion && scenePhase == .active }
+    private var animated: Bool { (mode != .ready || winking) && !reduceMotion && scenePhase == .active }
+    private var expression: VoiceOrbMood {
+        if let mood { return mood }
+        switch mode { case .ready: return .calm; case .listening: return .attentive; case .speaking: return .friendly; case .thinking: return .curious }
+    }
     var body: some View {
+        Button(action: reactToTouch) { orbTimeline }
+            .buttonStyle(.plain)
+            .contentShape(Circle())
+            .accessibilityLabel("Твой собеседник")
+            .accessibilityValue(accessibilityText)
+            .accessibilityHint("Коснись, чтобы он подмигнул.")
+            .sensoryFeedback(.selection, trigger: interaction)
+            .task(id: interaction) {
+                guard interaction > 0 else { return }
+                do { try await Task.sleep(for: .milliseconds(780)) } catch { return }
+                winking = false
+            }
+    }
+    private var orbTimeline: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animated)) { timeline in
             GeometryReader { geometry in
                 let size = min(geometry.size.width, geometry.size.height)
@@ -242,7 +266,6 @@ struct VoiceOrb: View {
                 let drift = animated ? sin(time * (mode == .thinking ? 0.85 : 1.4)) : 0
                 let blinkPhase = time.truncatingRemainder(dividingBy: 7.4)
                 let blink = animated && blinkPhase > 7.18 ? 0.13 : 1.0
-                let eyeHeight = mode == .thinking ? 0.62 : blink
                 let shape = SoftOrbShape(warp: reduceMotion ? 0 : drift * 0.028 + energy * 0.035)
                 ZStack {
                     Ellipse().fill(Color(red: 0.27, green: 0.5, blue: 0.76).opacity(0.13))
@@ -259,7 +282,10 @@ struct VoiceOrb: View {
                             .frame(width: size * 0.66, height: size * 0.6).blur(radius: size * 0.18)
                             .offset(x: size * 0.30, y: size * 0.31)
                         shape.fill(LinearGradient(colors: [Color.white.opacity(0.40), Color.white.opacity(0.015), Theme.charcoal.opacity(0.09)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        HStack(spacing: size * 0.2) { eye(size: size, height: eyeHeight); eye(size: size, height: eyeHeight) }
+                        HStack(spacing: size * 0.2) {
+                            OrbEye(size: size, side: 0, mood: expression, blink: blink, wink: false)
+                            OrbEye(size: size, side: 1, mood: expression, blink: blink, wink: winking)
+                        }
                             .offset(y: -size * 0.005 + (mode == .listening ? -energy * size * 0.012 : 0))
                     }.frame(width: size * 0.82, height: size * 0.82).clipShape(shape)
                         .overlay { shape.stroke(Color.white.opacity(0.16), lineWidth: 1).frame(width: size * 0.82, height: size * 0.82) }
@@ -267,16 +293,55 @@ struct VoiceOrb: View {
                         .rotationEffect(.degrees(reduceMotion ? 0 : drift * (mode == .thinking ? 3.5 : 1.1)))
                         .offset(y: reduceMotion ? 0 : drift * size * 0.01)
                         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: energy)
+                        .scaleEffect(winking && !reduceMotion ? 1.035 : 1)
+                        .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78), value: winking)
                 }.frame(width: geometry.size.width, height: geometry.size.height)
             }
-        }.accessibilityLabel(accessibilityText).accessibilityAddTraits(.isImage)
+        }.accessibilityHidden(true)
     }
-    private func eye(size: CGFloat, height: Double) -> some View {
-        Capsule().fill(Color.white).frame(width: size * 0.065, height: size * 0.11).scaleEffect(y: height)
-            .shadow(color: Color.white.opacity(0.9), radius: size * 0.035)
+    private func reactToTouch() {
+        guard Date().timeIntervalSince(lastInteraction) > 1.6 else { return }
+        lastInteraction = Date()
+        winking = true
+        interaction += 1
     }
     private var accessibilityText: String {
         switch mode { case .ready: return "Собеседник ждёт твоего ответа"; case .listening: return "Собеседник слушает, микрофон включён"; case .speaking: return "Собеседник говорит"; case .thinking: return "Собеседник готовит ответ" }
+    }
+}
+
+struct OrbEye: View {
+    let size: CGFloat
+    let side: Int
+    let mood: VoiceOrbMood
+    let blink: Double
+    let wink: Bool
+    private var squint: Double {
+        switch mood { case .attentive: return 1.13; case .curious: return side == 0 ? 0.95 : 0.62; case .supportive: return 0.76; default: return 1 }
+    }
+    private var tilt: Double {
+        switch mood { case .curious: return side == 0 ? -7 : 12; case .supportive: return side == 0 ? -12 : 12; case .friendly: return side == 0 ? -3 : 3; default: return 0 }
+    }
+    var body: some View {
+        Group {
+            if wink || mood == .pleased {
+                OrbSmileEye().stroke(Color.white, style: StrokeStyle(lineWidth: size * 0.023, lineCap: .round))
+                    .frame(width: size * 0.073, height: size * 0.065)
+            } else {
+                Capsule().fill(Color.white).frame(width: size * 0.065, height: size * 0.11)
+                    .scaleEffect(y: squint * blink).rotationEffect(.degrees(tilt))
+            }
+        }.frame(width: size * 0.075, height: size * 0.13)
+            .shadow(color: Color.white.opacity(0.9), radius: size * 0.035)
+    }
+}
+
+struct OrbSmileEye: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 0, y: rect.height * 0.7))
+        path.addQuadCurve(to: CGPoint(x: rect.width, y: rect.height * 0.7), control: CGPoint(x: rect.width * 0.5, y: -rect.height * 0.32))
+        return path
     }
 }
 

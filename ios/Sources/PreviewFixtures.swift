@@ -18,11 +18,15 @@ import Foundation
             conversation["status"] = "analysing"
             conversation["processing"] = ["stage": "evaluating", "startedAt": now, "attempt": 1]
         }
-        if screen == "review" {
+        if screen == "review" || screen == "celebrate" {
             conversation["status"] = "review"
             conversation["turns"] = [["id": "a1", "role": "assistant", "text": "There's a new climbing gym near my place."], ["id": "u1", "role": "user", "text": "Yeah, um, I like sport too. I play games on weekends."]]
             conversation["analysis"] = ["summary": "Ты поддержал тему, но сразу перевёл разговор на себя. Зацепись за новую деталь: собеседник только начал заниматься скалолазанием.", "strengths": ["Ответ понятный. Ты связал тему спорта со своим опытом."], "priorities": [["title": "Подхвати деталь собеседника", "turnId": "u1", "quote": "I play games on weekends.", "explanation": "Собеседник рассказал о новом увлечении. Вопрос поможет узнать его лучше и продолжить тему.", "example": "Oh, nice. What got you into climbing?", "retryInstruction": "Ответь заново: коротко отреагируй и спроси о скалолазании."]], "limitations": ["По одному ответу пока рано оценивать устойчивость навыка."]]
             conversation["completion"] = ["canComplete": false, "needsRetry": true, "reason": "Сделай улучшенную попытку или сохрани задание на потом."]
+        }
+        if screen == "celebrate" {
+            conversation["retries"] = [["text": "Oh, nice. What got you into climbing?", "feedback": "Теперь ты подхватил тему и оставил собеседнику место ответить.", "improved": true]]
+            conversation["completion"] = ["canComplete": true, "needsRetry": false]
         }
         let state: [String: Any] = ["profile": ["name": "Alex", "dailyMinutes": 15], "sessions": [conversation], "skills": [["id": "follow-up", "state": "practising", "independentSuccesses": 2, "transfer": false, "retention": false]], "xp": 120, "completed": 6, "audioUsage": ["usedUsd": 1.28, "estimated": true, "budgetUsd": 35, "recordedMinutes": 42.5, "spokenCharacters": 6200]]
         let status: [String: Any] = ["brain": ["model": "gpt-6.1-sol", "verified": true], "audio": ["configured": true]]
@@ -38,7 +42,7 @@ import Foundation
         client.signedIn = true
         client.notificationState = "authorized"
         client.reminderEnabled = true
-        if ["practice", "listening", "analysing", "review"].contains(screen) {
+        if ["practice", "listening", "analysing", "review", "celebrate"].contains(screen) {
             client.conversation = decode(conversation, as: Conversation.self)
             client.conversationPresented = true
             client.reviewStartedAt = Date().addingTimeInterval(-24)

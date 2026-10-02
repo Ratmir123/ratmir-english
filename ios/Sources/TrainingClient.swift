@@ -85,6 +85,7 @@ enum AccessKey {
     @Published var reminderMinute = 0
     @Published var reminderBusy = false
     @Published var reminderTestMessage: String?
+    @Published var reminderDiagnostic: String?
     @Published var hasUnuploadedRecording = false
     @Published var originalTranscript = ""
     @Published var server = UserDefaults.standard.string(forKey: "training-server") ?? ""
@@ -616,11 +617,20 @@ enum AccessKey {
                 notificationState = "unavailable"
                 throw ClientError.message("iPhone не сохранил напоминание. Проверь разрешение на уведомления в настройках приложения и попробуй ещё раз.")
             }
-        } catch let error as ClientError { self.error = error.localizedDescription }
+            reminderDiagnostic = nil
+        } catch let error as ClientError {
+            let authorized = await snapshotReminderFailure(nil, identifier: "daily-practice", kind: "daily-calendar")
+            self.error = authorized
+                ? "Разрешение включено, но напоминание не появилось в очереди iPhone. Состояние сохранено в диагностике ниже."
+                : error.localizedDescription
+        }
         catch {
             await refreshReminderStatus()
+            let authorized = await snapshotReminderFailure(error, identifier: "daily-practice", kind: "daily-calendar")
             notificationState = notificationState == "denied" ? "denied" : "unavailable"
-            self.error = "iPhone не разрешил сохранить напоминание. Открой настройки Ratmir English и проверь «Уведомления». Если этого пункта нет, потребуется проверить подпись приложения в AltStore."
+            self.error = authorized
+                ? "Разрешение на уведомления включено, но iPhone отклонил напоминание. Подробности сохранены в диагностике ниже."
+                : "iPhone не разрешил сохранить напоминание. Открой настройки Ratmir English и проверь «Уведомления»."
         }
     }
     func disableReminder() async {
@@ -640,6 +650,7 @@ enum AccessKey {
             }
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
                 await refreshReminderStatus()
+                _ = await snapshotReminderFailure(nil, identifier: "practice-reminder-test", kind: "test-interval")
                 reminderTestMessage = "Уведомления не разрешены. Открой настройки Ratmir English и включи «Допуск уведомлений»."
                 return
             }
@@ -654,17 +665,66 @@ enum AccessKey {
             await refreshReminderStatus()
             guard pending.contains(where: { $0.identifier == identifier }) else {
                 notificationState = "unavailable"
+                _ = await snapshotReminderFailure(nil, identifier: identifier, kind: "test-interval")
                 reminderTestMessage = "iPhone не сохранил проверочное уведомление. Проверь разрешение в настройках приложения и повтори тест."
                 return
             }
+            reminderDiagnostic = nil
             reminderTestMessage = settings.authorizationStatus == .provisional
                 ? "Проверка запланирована на 10 секунд. Сверни приложение и открой Центр уведомлений: при тихом разрешении баннер может не появиться."
                 : "Проверка запланирована на 10 секунд. Сверни приложение и проверь уведомление. Его показ зависит от настроек iPhone и режима фокусирования."
         } catch {
             await refreshReminderStatus()
+            let authorized = await snapshotReminderFailure(error, identifier: "practice-reminder-test", kind: "test-interval")
             notificationState = notificationState == "denied" ? "denied" : "unavailable"
-            reminderTestMessage = "iPhone не разрешил сохранить проверочное уведомление. Проверь «Уведомления» в настройках Ratmir English. Если этого пункта нет, нужно проверить подпись приложения в AltStore."
+            reminderTestMessage = authorized
+                ? "Разрешение включено, но iPhone отклонил проверочное уведомление. Открой диагностику ниже: она поможет разобраться с регистрацией приложения."
+                : "iPhone не разрешил сохранить проверочное уведомление. Проверь «Уведомления» в настройках Ratmir English."
         }
+    }
+    /// Local, user-visible diagnostics only. No error descriptions, userInfo dump, keys or remote logging.
+    private func snapshotReminderFailure(_ failure: Error?, identifier: String, kind: String) async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        let pending = await center.pendingNotificationRequests()
+        let request = pending.first { $0.identifier == identifier }
+        func setting(_ value: UNNotificationSetting) -> String {
+            switch value {
+            case .enabled: return "enabled"
+            case .disabled: return "disabled"
+            case .notSupported: return "notSupported"
+            @unknown default: return "unknown(\(value.rawValue))"
+            }
+        }
+        let authorized = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+        var lines = [
+            "Checked: \(ISO8601DateFormatter().string(from: Date()))",
+            "Bundle: \(Bundle.main.bundleIdentifier ?? "unknown")",
+            "App: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown") / \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")",
+            "iOS: \(UIDevice.current.systemVersion)",
+            "Request: \(kind)",
+            "Authorization raw value: \(settings.authorizationStatus.rawValue)",
+            "Scheduling authorized: \(authorized)",
+            "Alert: \(setting(settings.alertSetting)); sound: \(setting(settings.soundSetting)); badge: \(setting(settings.badgeSetting))",
+            "Notification center: \(setting(settings.notificationCenterSetting)); lock screen: \(setting(settings.lockScreenSetting))",
+            "Pending count: \(pending.count); requested identifier present: \(request != nil)"
+        ]
+        let next: Date?
+        if let trigger = request?.trigger as? UNCalendarNotificationTrigger { next = trigger.nextTriggerDate() }
+        else if let trigger = request?.trigger as? UNTimeIntervalNotificationTrigger { next = trigger.nextTriggerDate() }
+        else { next = nil }
+        if let next {
+            lines.append("Saved next trigger: \(ISO8601DateFormatter().string(from: next))")
+        } else { lines.append("Saved next trigger: none") }
+        if let failure {
+            let native = failure as NSError
+            lines.append("Error: \(native.domain) / \(native.code)")
+            if let underlying = native.userInfo[NSUnderlyingErrorKey] as? NSError {
+                lines.append("Underlying: \(underlying.domain) / \(underlying.code)")
+            }
+        } else { lines.append("Error: no NSError; authorization or pending-request verification failed") }
+        reminderDiagnostic = lines.joined(separator: "\n")
+        return authorized
     }
     func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }

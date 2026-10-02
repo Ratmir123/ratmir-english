@@ -97,7 +97,7 @@ struct HomeView: View {
     @EnvironmentObject private var client: TrainingClient
     @AppStorage("practice-context") private var context = "life"
     @AppStorage("practice-mode") private var mode = "learning"
-    private var saved: Conversation? { client.state?.sessions.first { $0.status != "completed" } }
+    private var saved: Conversation? { client.state?.sessions.first { $0.status != "completed" || $0.retryDeferred == true } }
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -170,6 +170,7 @@ struct HomeView: View {
         }
     }
     private func sessionLabel(_ value: Conversation) -> String {
+        if value.retryDeferred == true { return "Одна попытка ждёт тебя" }
         if value.status == "review" { return "Разбор готов" }
         if value.status == "analysing" { return "Разбор ещё готовится" }
         return "Продолжить разговор"
@@ -196,6 +197,13 @@ struct ConversationView: View {
         if client.playing { return .speaking }
         if client.voiceLoading || client.busy || conversation?.processing != nil || conversation?.status == "analysing" { return .thinking }
         return .ready
+    }
+    private var orbMood: VoiceOrbMood {
+        if client.recording || client.playingLearnerRecording { return .attentive }
+        if client.error != nil { return .supportive }
+        if client.playing { return .friendly }
+        if client.busy || client.voiceLoading || conversation?.processing != nil { return .curious }
+        return .calm
     }
     var body: some View {
         NavigationStack {
@@ -253,7 +261,7 @@ struct ConversationView: View {
     @ViewBuilder private var bottomDock: some View {
         if let value = conversation {
             if active { composer }
-            else if hasReview && value.status != "completed" { reviewDock }
+            else if hasReview && (value.status != "completed" || value.retryDeferred == true) { reviewDock }
         }
     }
     @ToolbarContentBuilder private var conversationToolbar: some ToolbarContent {
@@ -284,7 +292,7 @@ struct ConversationView: View {
                 } label: { Text("Твоя задача").font(.footnote.weight(.medium)) }
             }
             VStack(spacing: 8) {
-                MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode).frame(width: 214, height: 214)
+                MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode, mood: orbMood).frame(width: 214, height: 214)
                 HStack(spacing: 7) {
                     Circle().fill(client.recording ? Theme.lime : client.playing ? Theme.lavender : Theme.charcoal.opacity(0.45)).frame(width: 6, height: 6)
                     Text(voiceLabel).font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary)
@@ -334,7 +342,7 @@ struct ConversationView: View {
     }
     private var analysisWaiting: some View {
         VStack(spacing: 22) {
-            MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode).frame(width: 200, height: 200)
+            MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode, mood: orbMood).frame(width: 200, height: 200)
             ActivityPanel(title: conversation?.processing?.stage == "waiting-retry" ? "Сервис задержал разбор" : "Разбираем разговор", detail: "Проверяем смысл, английский и то, как ты использовал ответы собеседника.", startedAt: analysisStartedAt)
             if let turn = conversation?.turns.last(where: { $0.role == "assistant" }) {
                 SurfaceCard {
@@ -367,13 +375,13 @@ struct ConversationView: View {
     private func reviewHeader(_ value: Conversation) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: value.status == "completed" ? "checkmark" : "sparkle")
-                    .font(.title3).frame(width: 44, height: 44).background(Theme.lime, in: Circle())
+                VoiceOrb(mode: .ready, level: 0, mood: value.retries.last?.improved == true ? .pleased : .calm)
+                    .frame(width: 78, height: 78)
                 Spacer()
-                Text(value.status == "completed" ? "ЗАВЕРШЕНО" : "СЛЕДУЮЩИЙ ШАГ")
+                Text(value.retryDeferred == true ? "ПОПЫТКА НА ПОТОМ" : value.status == "completed" ? "ЗАВЕРШЕНО" : value.retries.last?.improved == true ? "ЕСТЬ УЛУЧШЕНИЕ" : "СЛЕДУЮЩИЙ ШАГ")
                     .font(.caption2.weight(.semibold)).tracking(1).foregroundStyle(Theme.secondary)
             }
-            Text(value.status == "completed" ? "Практика сохранена." : "Одна реплика.\nСделаем её сильнее.")
+            Text(value.retryDeferred == true ? "Осталась одна попытка." : value.retries.last?.improved == true ? "Вот, уже сильнее." : value.status == "completed" ? "Практика сохранена." : "Одна реплика.\nСделаем её сильнее.")
                 .font(.system(.title, design: .rounded).weight(.semibold)).tracking(-0.5)
             Text(value.lesson.title).font(.subheadline).foregroundStyle(Theme.secondary)
             if value.retryDeferred == true { Text("К улучшенной попытке вернёмся позже. Навык пока не считается закреплённым.").font(.footnote).foregroundStyle(Theme.secondary) }
@@ -421,7 +429,7 @@ struct ConversationView: View {
     }
     private var reviewDock: some View {
         VStack(spacing: 10) {
-            if mayComplete {
+            if mayComplete && conversation?.retryDeferred != true {
                 Label("Всё сохранено. Можно завершать.", systemImage: "checkmark.circle.fill").font(.footnote).foregroundStyle(Theme.secondary)
                 Button { Task { await client.action("complete") } } label: {
                     HStack { Text(client.busy ? "Сохраняем" : "Завершить занятие"); Spacer(); if client.busy { ProgressView().tint(Theme.lime) } else { Image(systemName: "checkmark") } }
@@ -547,11 +555,11 @@ struct HistoryView: View {
                     ForEach(client.state?.sessions ?? []) { value in
                         Button { client.resume(value) } label: {
                             HStack(alignment: .top, spacing: 14) {
-                                Image(systemName: historyIcon(value.status)).font(.body).frame(width: 40, height: 40)
-                                    .background(value.status == "completed" ? Theme.lime : Theme.lavender.opacity(0.45), in: Circle())
+                                Image(systemName: value.retryDeferred == true ? "arrow.clockwise" : historyIcon(value.status)).font(.body).frame(width: 40, height: 40)
+                                    .background(value.status == "completed" && value.retryDeferred != true ? Theme.lime : Theme.lavender.opacity(0.45), in: Circle())
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(value.lesson.title).font(.subheadline.weight(.semibold)).multilineTextAlignment(.leading)
-                                    HStack(spacing: 6) { Text(historyLabel(value.status)); Text("·"); Text(value.mode == "call" ? "Созвон" : "С опорами") }
+                                    HStack(spacing: 6) { Text(value.retryDeferred == true ? "Осталась попытка" : historyLabel(value.status)); Text("·"); Text(value.mode == "call" ? "Созвон" : "С опорами") }
                                         .font(.caption).foregroundStyle(Theme.secondary)
                                     Text("Твоих реплик: \(value.turns.filter { $0.role == "user" }.count)").font(.caption).foregroundStyle(Theme.secondary)
                                 }
@@ -717,6 +725,12 @@ struct SettingsView: View {
                 }.buttonStyle(QuietButton()).disabled(client.reminderBusy)
                 Text(client.reminderTestMessage ?? "Тест отправит одно уведомление через 10 секунд.")
                     .font(.footnote).foregroundStyle(Theme.secondary)
+                if let diagnostic = client.reminderDiagnostic {
+                    DisclosureGroup {
+                        Text(diagnostic).font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(Theme.secondary).textSelection(.enabled).padding(.top, 8)
+                    } label: { Text("Данные для проверки").font(.footnote.weight(.medium)) }
+                }
             }
         }
     }
