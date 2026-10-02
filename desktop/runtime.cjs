@@ -52,7 +52,7 @@ function isPublicLoadRequest(details, expectedOrigin = APP_ORIGIN) {
     const url = new URL(details.url);
     if (url.origin !== expectedOrigin || url.username || url.password) return false;
     return url.pathname === '/' || url.pathname.startsWith('/_next/static/') ||
-      ['/manifest.webmanifest', '/favicon.ico', '/icon.svg', '/icon.ico', '/icon-192.png', '/icon-512.png'].includes(url.pathname);
+      ['/manifest.webmanifest', '/favicon.ico', '/icon.svg', '/icon.ico', '/icon-192.png', '/icon-512.png', '/icon-pearl-v04-192.png', '/icon-pearl-v04-512.png', '/icon-pearl-v04-64.png'].includes(url.pathname);
   } catch { return false; }
 }
 

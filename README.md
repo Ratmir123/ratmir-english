@@ -2,6 +2,8 @@
 
 Open-source English conversation trainer with native SwiftUI and Windows clients and a private self-hosted backend. The application practises dialogue, provides feedback, and derives skill observations from the learner's own attempts. It does not certify a CEFR level or infer pronunciation from a transcript.
 
+Version 0.4 adds evidence-based practice achievements, short completion feedback, and four connected learning tracks: daily life, work, relocation and IELTS foundations. IELTS practice uses original generated speaking/listening/reading/writing material, not official test questions or an official band prediction. Reading and writing use visible task material and appropriate feedback. Activity XP remains separate from independent skill observations and baseline assessment. Choose any required exam type with the receiving institution before relying on an exam result.
+
 ## Run locally
 
 Use Node.js 24 or newer, then run npm ci, npm run build, and npm run start. The default address is http://127.0.0.1:3000. Set up your own profile in Settings. The generic source profile contains no learner history.
@@ -30,6 +32,6 @@ See [ios/README.md](ios/README.md). SwiftUI screens use the same private backend
 
 Run npm run build before npm run typecheck. This export omits the private workspace's test/smoke scripts and source history. It is a review artifact, not a claim that hosted OAuth or every deployment path has passed end-to-end verification.
 
-Our source code is licensed under MIT. Third-party packages keep their own licenses. No user-supplied visual reference is included or relicensed. The iOS icon is generated from our own lettermark drawing code during CI.
+Our source code is licensed under MIT. Third-party packages keep their own licenses. No user-supplied visual reference is included or relicensed. The selected pearl icon is original project artwork generated with OpenAI image generation, re-encoded without private metadata and shared across the clients. The legacy lettermark drawing script remains in source history.
 
 Only audited source files belong in this repository. Never add a private profile seed, SQLite database, recordings, server env file, SSH key or OAuth credentials. Publishing code does not publish private runtime data.

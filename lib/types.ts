@@ -11,6 +11,8 @@ export const SKILLS = [
 export type SkillId = typeof SKILLS[number]['id'];
 export type Context = 'work' | 'life' | 'relocation';
 export type Mode = 'learning' | 'call';
+export type LearningTrackId = 'life' | 'work' | 'relocation' | 'ielts-foundation';
+export type LearningActivity = 'speaking' | 'listening' | 'reading' | 'writing';
 export type EvidenceResult = 'success' | 'partial' | 'difficulty' | 'unobserved' | 'disputed';
 export type Support = 0 | 1 | 2 | 3;
 export interface Profile {
@@ -24,6 +26,8 @@ export interface LessonPlan {
   languageFocus: string; opening: string; role: string; npcBrief: string;
   hiddenFacts: string[]; successCriteria: string[]; difficulty: string;
   kind: 'calibration' | 'practice' | 'transfer' | 'retention';
+  track?: LearningTrackId; activity?: LearningActivity;
+  material?: { type: 'reading-passage' | 'writing-prompt'; text: string; instruction: string; source: 'generated' } | null;
 }
 export interface Turn {
   id: string; role: 'user' | 'assistant'; text: string; createdAt: string;
@@ -54,6 +58,7 @@ export interface Session {
   baseline?: { version: 1; stepId: BaselineStepId };
   processing?: { stage: 'queued' | 'evaluating' | 'waiting-retry' | 'responding'; startedAt: string; attempt?: number; nextAttemptAt?: string };
   completion?: { canComplete: boolean; needsRetry: boolean; reason: string | null };
+  completedAt?: string;
 }
 export interface SkillState {
   id: SkillId; state: 'unknown' | 'supported' | 'provisional' | 'independent' | 'recheck';
@@ -73,6 +78,28 @@ export interface AppState {
   xp: number; completed: number; calibrationCompleted: number;
   audioUsage: AudioUsage;
   onboarding?: OnboardingState;
+  progression?: ProgressionState;
+}
+export interface PracticeQuality {
+  observedTargets: number; targetCount: number; independentSuccesses: number;
+  supportedObservations: number; partial: number; difficulty: number;
+}
+export interface PracticeResult {
+  sessionId: string; xp: number; completedAt: string; track: LearningTrackId; activity: LearningActivity;
+  improvedRetry: boolean; improvedAt?: string; quality: PracticeQuality;
+  evidence: { skill: SkillId; result: 'success' | 'partial' | 'difficulty'; supported: boolean; turnId: string; quote: string }[];
+}
+export interface ProgressionState {
+  version: 1; xp: number; level: number; levelTitle: string;
+  levelFloorXP: number; nextLevelXP: number; xpInLevel: number; xpToNextLevel: number;
+  completedPractice: number; practiceDays: number; practiceDayTimezone: 'UTC';
+  evidenceCoverage: { observedSkills: number; observableSkills: number; independentSuccesses: number;
+    supportedObservations: number; partial: number; difficulty: number };
+  tracks: { id: LearningTrackId; title: string; description: string; completedSessions: number; targetSessions: number;
+    activities: { id: LearningActivity; title: string; completedSessions: number; targetSessions: number }[] }[];
+  achievements: { id: string; title: string; description: string; current: number; target: number; unlocked: boolean; unlockedAt: string | null }[];
+  recentResults: PracticeResult[]; notice: string;
+  recommendation?: { familyId: string; title: string; track: LearningTrackId; activity: LearningActivity; preferredMode: Mode; why: string } | null;
 }
 export type BaselineStepId = 'expression' | 'listening' | 'interaction';
 export type CEFRBand = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';

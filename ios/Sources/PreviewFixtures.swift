@@ -1,5 +1,13 @@
 #if DEBUG
 import Foundation
+import SwiftUI
+
+struct PreviewAccessibility: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if ProcessInfo.processInfo.arguments.contains("--large-type") { content.dynamicTypeSize(.accessibility3) }
+        else { content }
+    }
+}
 
 /// Synthetic screenshots only. This code is excluded from the device Release IPA.
 @MainActor enum PreviewFixtures {
@@ -18,20 +26,30 @@ import Foundation
             conversation["status"] = "analysing"
             conversation["processing"] = ["stage": "evaluating", "startedAt": now, "attempt": 1]
         }
-        if screen == "review" || screen == "celebrate" {
+        if ["review", "celebrate", "completed", "saved-deferred"].contains(screen) {
             conversation["status"] = "review"
             conversation["turns"] = [["id": "a1", "role": "assistant", "text": "There's a new climbing gym near my place."], ["id": "u1", "role": "user", "text": "Yeah, um, I like sport too. I play games on weekends."]]
             conversation["analysis"] = ["version": 1, "summary": "Ты поддержал тему, но сразу перевёл разговор на себя. Зацепись за новую деталь: собеседник только начал заниматься скалолазанием.", "strengths": ["Ответ понятный. Ты связал тему спорта со своим опытом."], "priorities": [["title": "Подхвати деталь собеседника", "turnId": "u1", "quote": "I play games on weekends.", "explanation": "Собеседник рассказал о новом увлечении. Вопрос поможет узнать его лучше и продолжить тему.", "example": "Oh, nice. What got you into climbing?", "retryInstruction": "Ответь заново: коротко отреагируй и спроси о скалолазании."]], "limitations": ["По одному ответу пока рано оценивать устойчивость навыка."]]
             conversation["completion"] = ["canComplete": false, "needsRetry": true, "reason": "Сделай улучшенную попытку или сохрани задание на потом."]
         }
-        if screen == "celebrate" {
+        if screen == "celebrate" || screen == "completed" {
             conversation["retries"] = [
                 ["text": "Oh, nice. What got you into climbing?", "feedback": "Теперь ты подхватил тему и оставил собеседнику место ответить.", "improved": true, "analysisVersion": 1],
                 ["text": "Yeah, I like sports too. I play games on weekends.", "feedback": "В этой попытке вопрос снова потерялся. Предыдущая улучшенная попытка остаётся подтверждённой.", "improved": false, "analysisVersion": 1]
             ]
             conversation["completion"] = ["canComplete": true, "needsRetry": false]
         }
+        if screen == "completed" || screen == "saved-deferred" {
+            conversation["status"] = "completed"
+            if screen == "saved-deferred" { conversation["retryDeferred"] = true }
+        }
+        if screen == "ielts-reading" || screen == "ielts-writing" {
+            let reading = screen == "ielts-reading"
+            conversation["lesson"] = ["title": reading ? "Прочитать и проверить" : "Небольшой аргумент", "goal": reading ? "Найди детали, которыми можно обосновать ответ." : "Напиши мысль, причину и пример.", "why": "Короткая практика одного из четырёх навыков.", "minutes": 10, "context": "life", "track": "ielts-foundation", "activity": reading ? "reading" : "writing", "material": ["type": reading ? "reading-passage" : "writing-prompt", "source": "generated", "text": reading ? "A neighbourhood library recently started a tool-sharing programme. Members can borrow simple equipment for home repairs. The organisers expected the service to appeal mainly to homeowners, but students have used it most often. Volunteers now offer short demonstrations on Saturday mornings." : "Some people prefer to work alone, while others enjoy working in a team. Describe your preference and explain it with a specific example.", "instruction": reading ? "Explain what surprised the organisers. Which detail supports your answer?" : "Write a short paragraph with your view, a reason and a real example."]]
+            conversation["turns"] = [["id": "a1", "role": "assistant", "text": reading ? "Read the short passage, then explain what surprised the organisers." : "Write your paragraph below. Take a moment to decide what example you want to use."]]
+        }
         var state: [String: Any] = ["profile": ["name": "Alex", "dailyMinutes": 15], "sessions": [conversation], "skills": [["id": "reciprocity", "state": "provisional", "independentSuccesses": 2, "transfer": false, "retention": false, "lastChecked": now, "examples": [["sessionId": conversation["id"]!, "quote": "What got you into climbing?", "reason": "Вопрос продолжил тему собеседника."]]], ["id": "clarity", "state": "unknown", "independentSuccesses": 0, "transfer": false, "retention": false]], "xp": 120, "completed": 6, "audioUsage": ["usedUsd": 1.28, "estimated": true, "budgetUsd": 35, "recordedMinutes": 42.5, "spokenCharacters": 6200]]
+        state["progression"] = PreviewProgression.make(sessionId: conversation["id"] as! String, now: now, deferred: screen == "saved-deferred")
         if ["intro", "baseline", "baseline-report"].contains(screen) {
             let ready = screen == "baseline-report"
             let steps: [[String: Any]] = [
@@ -58,10 +76,13 @@ import Foundation
         client.signedIn = true
         client.notificationState = "authorized"
         client.reminderEnabled = true
-        if ["practice", "listening", "analysing", "review", "celebrate"].contains(screen) {
+        if ["practice", "listening", "analysing", "review", "celebrate", "completed", "saved-deferred", "ielts-reading", "ielts-writing"].contains(screen) {
             client.conversation = decode(conversation, as: Conversation.self)
             client.conversationPresented = true
             client.reviewStartedAt = Date().addingTimeInterval(-24)
+        }
+        if screen == "completed" || screen == "saved-deferred" {
+            client.completionMoment = CompletionMoment(sessionId: conversation["id"] as! String, deferred: screen == "saved-deferred", baseline: false, unlockedBefore: [])
         }
         if screen == "listening" {
             client.recording = true; client.audioLevel = 0.48

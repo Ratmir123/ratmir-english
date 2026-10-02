@@ -11,7 +11,7 @@ import { audioConfigured, setAudioKey, getAudio, transcribe, synthesize, cleanAu
 import { checkAccess, checkOrigin, validAccessCode, accessCookie, requestIsSecure, ApiError } from '@/lib/server/security';
 import { ensureWorker, processAnalysisQueue } from '@/lib/server/worker';
 import { assessQuickCoachRetry, explainQuickCoach, quickCoachInputSchema, quickCoachRetryInputSchema } from '@/lib/server/quick-coach';
-import { FAMILIES, CALIBRATION_OPTIONS } from '@/lib/training';
+import { FAMILIES, CALIBRATION_OPTIONS, lessonMode } from '@/lib/training';
 import { baselineStartDecision, baselineStep, ONBOARDING_VERSION, unassistedSpokenTurns } from '@/lib/onboarding';
 import { baselineReportFingerprint } from '@/lib/server/onboarding-data';
 import { generateBaselineReport } from '@/lib/server/baseline-report';
@@ -103,7 +103,7 @@ async function handle(req: NextRequest, route: Route) {
   ensureWorker();
   if (req.method === 'GET') {
     if (path[0] === 'state') { cleanAudio(getAppState().profile.audioRetentionDays); return json(safeState(getAppState())); }
-    if (path[0] === 'status') return json({ brain: await getBrainStatus(), hosting: process.env.TRAINING_DEPLOYMENT === 'server' ? 'server' : 'local', audio: { configured: audioConfigured(), model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts' } });
+    if (path[0] === 'status') return json({ app: { version: '0.4.0', channel: 'alpha' }, brain: await getBrainStatus(), hosting: process.env.TRAINING_DEPLOYMENT === 'server' ? 'server' : 'local', audio: { configured: audioConfigured(), model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts' } });
     if (path[0] === 'families') return json({ families: FAMILIES, calibration: CALIBRATION_OPTIONS });
     if (path[0] === 'sessions' && path[1]) return json(safeSession(session(path[1])));
     if (path[0] === 'audio' && path[1]) {
@@ -169,8 +169,11 @@ async function handle(req: NextRequest, route: Route) {
       const step = decision.kind === 'baseline' ? baselineStep(decision.stepId) : null;
       const options = step ? { ...data, mode: 'call' as const, familyId: step.familyId,
         context: step.id === 'interaction' ? 'work' as const : 'life' as const, minutes: step.minutes } : data;
+      const family = FAMILIES.find(item => item.id === options.familyId);
+      options.mode = lessonMode(family?.activity, options.mode);
       const plan = await planLesson(state, options);
-      const value = createSession({ ...plan, id: randomUUID() }, options.mode, data.requestId, generation);
+      const mode = lessonMode(plan.activity, options.mode);
+      const value = createSession({ ...plan, id: randomUUID() }, mode, data.requestId, generation);
       if (step) value.baseline = { version: ONBOARDING_VERSION, stepId: step.id };
       value.turns.push({ id: randomUUID(), role: 'assistant', text: plan.opening, createdAt: new Date().toISOString(), source: 'text', support: 0 });
       saveSession(value); return json(safeSession(value));

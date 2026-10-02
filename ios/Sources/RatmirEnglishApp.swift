@@ -7,7 +7,11 @@ import SwiftUI
             RootView().environmentObject(client).tint(Theme.charcoal)
                 .disclosureGroupStyle(SoftDisclosureStyle())
                 .buttonStyle(PressButton())
-                .preferredColorScheme(.light).task {
+                .preferredColorScheme(.light)
+#if DEBUG
+                .modifier(PreviewAccessibility())
+#endif
+                .task {
 #if DEBUG
                     if PreviewFixtures.install(client) { return }
 #endif
@@ -40,6 +44,7 @@ struct RootView: View {
 #if DEBUG
             if PreviewFixtures.screen == "settings" { selectedTab = 3 }
             if PreviewFixtures.screen == "progress" || PreviewFixtures.screen == "baseline-report" { selectedTab = 1 }
+            if ["curriculum", "achievements", "ielts-track"].contains(PreviewFixtures.screen ?? "") { selectedTab = 1 }
 #endif
         }
         .sheet(isPresented: $client.conversationPresented) {
@@ -153,6 +158,10 @@ struct HomeView: View {
                                 .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 24))
                         }.buttonStyle(PressButton()).disabled(client.busy || client.recording)
                     }
+                    if let progression = client.state?.progression {
+                        NextPracticeCard(progression: progression)
+                        JourneySummary(progression: progression)
+                    }
                     SurfaceCard {
                         VStack(alignment: .leading, spacing: 20) {
                             HStack { Text("Новый разговор").font(.title3.weight(.semibold)); Spacer(); Image(systemName: "waveform").foregroundStyle(Theme.secondary) }
@@ -180,9 +189,11 @@ struct HomeView: View {
                         ActivityPanel(title: client.operationStage ?? "Готовим разговор", detail: "Подбираем ситуацию под твою практику.", startedAt: client.operationStartedAt)
                             .transition(reduceMotion ? .identity : NativeMotion.insertion)
                     }
-                    HStack(spacing: 12) {
-                        Metric(value: "\(client.state?.completed ?? 0)", title: "Завершено", color: Theme.lavender)
-                        Metric(value: "\(client.state?.xp ?? 0)", title: "Опыт XP", color: Theme.lime)
+                    if client.state?.progression == nil {
+                        HStack(spacing: 12) {
+                            Metric(value: "\(client.state?.completed ?? 0)", title: "Завершено", color: Theme.lavender)
+                            Metric(value: "\(client.state?.xp ?? 0)", title: "Опыт XP", color: Theme.lime)
+                        }
                     }
                     Text("Новый разговор откроется отдельно. К прежнему можно вернуться в истории.")
                         .font(.footnote).foregroundStyle(Theme.secondary)
@@ -210,6 +221,8 @@ struct ConversationView: View {
     @FocusState private var draftFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var conversation: Conversation? { client.conversation }
+    private var textActivity: Bool { conversation?.lesson.material != nil }
+    private var readingActivity: Bool { conversation?.lesson.material?.type == "reading-passage" }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var active: Bool { conversation?.status == "active" || conversation?.status == "error" }
     private var hasReview: Bool { conversation?.analysis != nil }
@@ -264,10 +277,16 @@ struct ConversationView: View {
     private var decoratedConversation: some View {
         conversationScroll
             .safeAreaInset(edge: .bottom, spacing: 0) { bottomDock }
+            .safeAreaInset(edge: .top, spacing: 0) { completionBanner }
             .navigationTitle(hasReview ? "Твой разбор" : "Разговор")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.surface, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+    }
+    @ViewBuilder private var completionBanner: some View {
+        if let moment = client.completionMoment, moment.sessionId == id, conversation?.status == "completed" {
+            CompletionMomentBanner(moment: moment)
+        }
     }
     private var conversationScroll: some View {
         ScrollViewReader { proxy in
@@ -284,6 +303,9 @@ struct ConversationView: View {
         VStack(alignment: .leading, spacing: 20) {
             if let value = conversation {
                 conversationHeader(value)
+                if value.status == "completed", let result = client.state?.progression?.recentResults.first(where: { $0.sessionId == value.id }) {
+                    PracticeOutcomeView(result: result)
+                }
                 if let analysis = value.analysis { reviewContent(analysis, conversation: value) }
                 if (client.busy || value.processing != nil) && !client.recording && value.status != "analysing" {
                     ActivityPanel(title: client.operationStage ?? "Собеседник готовит ответ", detail: "Твой ответ сохранён. Можно немного выдохнуть.", startedAt: client.operationStartedAt ?? processingStart)
@@ -306,7 +328,7 @@ struct ConversationView: View {
     }
     @ToolbarContentBuilder private var conversationToolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            Text(conversation?.mode == "call" ? "СОЗВОН" : "С ОПОРАМИ")
+            Text(textActivity ? (readingActivity ? "ЧТЕНИЕ" : "ПИСЬМО") : conversation?.mode == "call" ? "СОЗВОН" : "С ОПОРАМИ")
                 .font(.caption2.weight(.semibold)).tracking(0.8).foregroundStyle(Theme.secondary)
         }
         ToolbarItem(placement: .topBarTrailing) {
@@ -335,8 +357,10 @@ struct ConversationView: View {
                     }.padding(.top, 10)
                 } label: { Text("Твоя задача").font(.footnote.weight(.medium)) }
             }
+            if let material = value.lesson.material { lessonMaterial(material) }
             VStack(spacing: 8) {
-                MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode, mood: orbMood, statusDescription: voiceLabel).frame(width: 214, height: 214)
+                MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode, mood: orbMood, statusDescription: voiceLabel)
+                    .frame(width: value.lesson.material == nil ? 214 : 112, height: value.lesson.material == nil ? 214 : 112)
                 HStack(spacing: 7) {
                     Circle().fill(client.recording ? Theme.lime : client.playing ? Theme.lavender : Theme.charcoal.opacity(0.45)).frame(width: 6, height: 6)
                     Text(voiceLabel).font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary)
@@ -347,7 +371,7 @@ struct ConversationView: View {
                 Button {
                     if client.playing { client.stopSpeaking() } else { Task { if client.needsPlaybackAcknowledgement { await client.retryPlaybackAcknowledgement() } else { await client.speak() } } }
                 } label: { Label(playbackControlLabel, systemImage: client.playing ? "stop.fill" : client.needsPlaybackAcknowledgement ? "checkmark" : "speaker.wave.2") }
-                    .buttonStyle(QuietButton()).disabled(client.busy || client.voiceLoading || client.recording)
+                    .buttonStyle(QuietButton()).disabled(!client.playing && (client.busy || client.voiceLoading || client.recording))
                 if value.mode == "call" && value.baseline == nil && !client.assistantTextShown {
                     Button { Task { await client.revealText() } } label: { Label("Текст", systemImage: "text.alignleft") }
                         .buttonStyle(QuietButton()).disabled(client.busy || client.recording)
@@ -372,7 +396,19 @@ struct ConversationView: View {
                             if turn.role == "user" || value.mode == "learning" || client.assistantTextShown { TranscriptCard(turn: turn) }
                         }
                     }.padding(.top, 12)
-                } label: { Text("Весь разговор").font(.footnote.weight(.medium)) }
+                } label: { Text(textActivity ? "Все ответы" : "Весь разговор").font(.footnote.weight(.medium)) }
+            }
+        }
+    }
+    private func lessonMaterial(_ material: Lesson.Material) -> some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 14) {
+                Label(material.type == "reading-passage" ? "Текст для чтения" : "Задание для письма", systemImage: material.type == "reading-passage" ? "text.book.closed" : "square.and.pencil")
+                    .font(.caption.weight(.semibold))
+                Text(material.text).font(.subheadline).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                Divider().opacity(0.5)
+                Text(material.instruction).font(.footnote.weight(.medium)).fixedSize(horizontal: false, vertical: true)
+                Text("Оригинальный учебный материал. Это не задание официального экзамена.").font(.caption).foregroundStyle(Theme.secondary)
             }
         }
     }
@@ -381,31 +417,36 @@ struct ConversationView: View {
         if client.playing { return client.playingLearnerRecording ? "Слушаем твою запись" : "Собеседник говорит" }
         if client.voiceLoading { return "Готовим голос" }
         if client.busy { return client.operationStage ?? "Готовим ответ" }
-        if conversation?.status == "analysing" { return "Разбираем разговор" }
+        if conversation?.status == "analysing" { return textActivity ? "Разбираем задание" : "Разбираем разговор" }
         if conversation?.processing != nil { return "Собеседник готовит ответ" }
         return "Твой ход"
     }
     private var analysisWaiting: some View {
         VStack(spacing: 22) {
             MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode, mood: orbMood, statusDescription: voiceLabel).frame(width: 200, height: 200)
-            ActivityPanel(title: conversation?.processing?.stage == "waiting-retry" ? "Сервис задержал разбор" : "Разбираем разговор", detail: "Проверяем смысл, английский и то, как ты использовал ответы собеседника.", startedAt: analysisStartedAt)
+            ActivityPanel(title: conversation?.processing?.stage == "waiting-retry" ? "Сервис задержал разбор" : textActivity ? "Разбираем задание" : "Разбираем разговор", detail: textActivity ? (readingActivity ? "Сверяем твои ответы с текстом и проверяем английский." : "Проверяем ясность мысли, структуру и английский в твоём тексте.") : "Проверяем смысл, английский и то, как ты использовал ответы собеседника.", startedAt: analysisStartedAt)
             if let turn = conversation?.turns.last(where: { $0.role == "assistant" }) {
                 SurfaceCard {
                     VStack(alignment: .leading, spacing: 14) {
                         InputLabel(title: "Пока ждём")
-                        Text("Что было важно собеседнику? Вспомни одну конкретную деталь.")
+                        Text(textActivity ? (readingActivity ? "Какая деталь текста подтверждает твой ответ?" : "Какую мысль ты хотел донести? Найди её в своём тексте.") : "Что было важно собеседнику? Вспомни одну конкретную деталь.")
                             .font(.subheadline.weight(.medium))
                         HStack(spacing: 10) {
                             Button { showListeningCheck.toggle() } label: {
                                 Label(showListeningCheck ? "Скрыть ответ" : "Проверить себя", systemImage: "text.alignleft")
                             }.buttonStyle(QuietButton())
-                            Button {
-                                if client.playing { client.stopSpeaking() } else { Task { if client.needsPlaybackAcknowledgement { await client.retryPlaybackAcknowledgement() } else { await client.speak() } } }
-                            } label: { Image(systemName: client.playing ? "stop.fill" : client.needsPlaybackAcknowledgement ? "checkmark" : "speaker.wave.2") }
-                                .buttonStyle(QuietButton()).disabled(client.busy || client.voiceLoading)
-                                .accessibilityLabel(playbackControlLabel)
+                            if !textActivity {
+                                Button {
+                                    if client.playing { client.stopSpeaking() } else { Task { if client.needsPlaybackAcknowledgement { await client.retryPlaybackAcknowledgement() } else { await client.speak() } } }
+                                } label: { Image(systemName: client.playing ? "stop.fill" : client.needsPlaybackAcknowledgement ? "checkmark" : "speaker.wave.2") }
+                                    .buttonStyle(QuietButton()).disabled(!client.playing && (client.busy || client.voiceLoading))
+                                    .accessibilityLabel(playbackControlLabel)
+                            }
                         }
-                        if showListeningCheck { Text(turn.text).font(.subheadline).foregroundStyle(Theme.secondary).textSelection(.enabled) }
+                        if showListeningCheck {
+                            Text(textActivity ? (readingActivity ? conversation?.lesson.material?.text ?? turn.text : conversation?.turns.last(where: { $0.role == "user" })?.text ?? turn.text) : turn.text)
+                                .font(.subheadline).foregroundStyle(Theme.secondary).textSelection(.enabled)
+                        }
                     }
                 }
             }
@@ -470,8 +511,11 @@ struct ConversationView: View {
                 } label: { Text("Что пока нельзя оценить").font(.footnote.weight(.medium)) }
             }
             DisclosureGroup {
-                VStack(spacing: 12) { ForEach(value.turns) { TranscriptCard(turn: $0) } }.padding(.top, 12)
-            } label: { Text("Текст разговора").font(.footnote.weight(.medium)) }
+                VStack(spacing: 12) {
+                    if let material = value.lesson.material { lessonMaterial(material) }
+                    ForEach(value.turns) { TranscriptCard(turn: $0) }
+                }.padding(.top, 12)
+            } label: { Text(textActivity ? "Задание и твои ответы" : "Текст разговора").font(.footnote.weight(.medium)) }
         }
     }
     private var reviewDock: some View {
@@ -496,7 +540,7 @@ struct ConversationView: View {
         VStack(spacing: 12) {
             composerContent(retry: false)
             Button { draftFocused = false; Task { await client.action("finish") } } label: {
-                HStack { Text("Закончить разговор и получить разбор"); Image(systemName: "arrow.right") }.frame(minHeight: 44).contentShape(Rectangle())
+                HStack { Text(textActivity ? "Завершить задание и получить разбор" : "Закончить разговор и получить разбор"); Image(systemName: "arrow.right") }.frame(minHeight: 44).contentShape(Rectangle())
             }.font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary).buttonStyle(PressButton())
                 .disabled(client.busy || client.recording || client.hasUnuploadedRecording || !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !baselineHasEnoughReplies || conversation?.turns.contains(where: { $0.role == "user" }) != true)
             if !client.recording && !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -518,14 +562,17 @@ struct ConversationView: View {
                 }.padding(14).background(.white, in: RoundedRectangle(cornerRadius: 18))
                     .transition(reduceMotion ? .identity : .opacity)
             } else {
-                TextField(retry ? "Новая попытка на английском" : "Ответ на английском", text: $client.draft, axis: .vertical)
-                    .lineLimit(1...3).focused($draftFocused).font(.subheadline).padding(14)
+                TextField(retry ? "Новая попытка на английском" : writingActivity ? "Напиши ответ на английском" : "Ответ на английском", text: $client.draft, axis: .vertical)
+                    .lineLimit(writingActivity ? 3...6 : 1...3).focused($draftFocused).font(.subheadline).padding(14)
                     .background(.white, in: RoundedRectangle(cornerRadius: 18))
                     .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(draftFocused ? Theme.lavender : Color.clear, lineWidth: 2).allowsHitTesting(false) }
                     .animation(reduceMotion ? nil : NativeMotion.feedback, value: draftFocused)
                     .disabled(client.busy || conversation?.processing != nil || client.pendingMessageID != nil)
             }
-            if dynamicTypeSize.isAccessibilitySize {
+            if writingActivity {
+                Text("Проверяем письмо. Ответ здесь вводим с клавиатуры.").font(.caption).foregroundStyle(Theme.secondary)
+                sendButton(retry: retry)
+            } else if dynamicTypeSize.isAccessibilitySize {
                 VStack(spacing: 10) { recordingButton; sendButton(retry: retry) }
             } else { HStack(spacing: 10) { recordingButton; sendButton(retry: retry) } }
             if !client.recording && (client.recordedFile != nil || client.hasUnuploadedRecording) {
@@ -538,6 +585,7 @@ struct ConversationView: View {
             }
         }.animation(reduceMotion ? nil : NativeMotion.reveal, value: client.recording)
     }
+    private var writingActivity: Bool { conversation?.lesson.activity == "writing" || conversation?.lesson.material?.type == "writing-prompt" }
     private var recordingButton: some View {
         Button {
             draftFocused = false
@@ -571,15 +619,41 @@ struct ProgressViewScreen: View {
     private let states = ["unknown": "Нужна первая проверка", "supported": "Получается с опорой", "provisional": "Первые самостоятельные успехи", "independent": "Получается самостоятельно", "recheck": "Пора проверить ещё раз"]
     var body: some View {
         NavigationStack {
+            progressScreen
+        }
+    }
+    @ViewBuilder private var progressScreen: some View {
+#if DEBUG
+        if PreviewFixtures.screen == "curriculum" { CurriculumView() }
+        else if PreviewFixtures.screen == "achievements" { AchievementsView() }
+        else if PreviewFixtures.screen == "ielts-track" { PracticeTrackView(trackID: "ielts-foundation") }
+        else { progressScroll }
+#else
+        progressScroll
+#endif
+    }
+    private var progressScroll: some View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    ScreenHeading(title: "Твой прогресс", subtitle: "Смотрим на то, что получается в разговоре.")
+                    ScreenHeading(title: "Твой прогресс", subtitle: "Смотрим на то, что получается в твоих попытках.")
+                    if let progression = client.state?.progression { JourneySummary(progression: progression) }
                     if client.state?.onboarding?.status == "ready" {
                         NativeBaselineProfile(report: client.state?.onboarding?.report)
                     }
-                    HStack(spacing: 12) {
-                        Metric(value: "\(client.state?.completed ?? 0)", title: "Занятий", color: Theme.lavender)
-                        Metric(value: "\(client.state?.xp ?? 0)", title: "Опыт XP", color: Theme.lime)
+                    if let progression = client.state?.progression {
+                        HStack(spacing: 12) {
+                            Metric(value: "\(progression.completedPractice)", title: "Практик с разбором", color: Theme.lavender)
+                            Metric(value: "\(progression.practiceDays)", title: "Дней практики", color: Theme.lime)
+                        }
+                        Text("Наблюдения есть по \(progression.evidenceCoverage.observedSkills) из \(progression.evidenceCoverage.observableSkills) доступных навыков. Это охват примеров, а не уровень владения.")
+                            .font(.footnote).foregroundStyle(Theme.secondary)
+                        Text("Дни практики считаются по \(progression.practiceDayTimezone ?? "UTC"). Это не обязательная серия посещений.")
+                            .font(.caption).foregroundStyle(Theme.secondary)
+                    } else {
+                        HStack(spacing: 12) {
+                            Metric(value: "\(client.state?.completed ?? 0)", title: "Занятий", color: Theme.lavender)
+                            Metric(value: "\(client.state?.xp ?? 0)", title: "Опыт XP", color: Theme.lime)
+                        }
                     }
                     ForEach(client.state?.skills ?? []) { skill in
                         SurfaceCard {
@@ -632,7 +706,6 @@ struct ProgressViewScreen: View {
                         .font(.footnote).foregroundStyle(Theme.secondary)
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
             }.background(Theme.surface).navigationBarHidden(true).refreshable { await client.perform { try await client.refresh() } }
-        }
     }
     private func successLabel(_ count: Int) -> String {
         if count % 100 >= 11 && count % 100 <= 14 { return "самостоятельных\nуспехов" }
@@ -648,12 +721,12 @@ struct HistoryView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    ScreenHeading(title: "Твои разговоры", subtitle: "Вернись к реплике, разбору или незавершённой практике.")
+                    ScreenHeading(title: "Твои занятия", subtitle: "Вернись к ответам, разбору или незавершённой практике.")
                     if client.state?.sessions.isEmpty != false {
                         SurfaceCard {
                             VStack(alignment: .leading, spacing: 12) {
                                 Image(systemName: "bubble.left.and.bubble.right").font(.title2).foregroundStyle(Theme.secondary)
-                                Text("Первый разговор ещё впереди.").font(.headline)
+                                Text("Первая практика ещё впереди.").font(.headline)
                                 Text("Начни на вкладке «Сегодня». Здесь останутся запись и разбор.").font(.subheadline).foregroundStyle(Theme.secondary)
                             }
                         }

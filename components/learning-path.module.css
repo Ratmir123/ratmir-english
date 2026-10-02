@@ -1,0 +1,93 @@
+.kicker { color: var(--muted); font-size: 11px; letter-spacing: 1.3px; font-weight: 600; }
+.note { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.level { padding: 24px; background: var(--graphite); color: var(--surface); border-radius: 26px; }
+.levelHeading { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+.levelMark { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 16px; background: var(--lavender); color: var(--graphite); font-size: 22px; font-weight: 600; }
+.levelHeading h3 { font-size: 17px; margin-top: 2px; }
+.level .kicker, .level .note, .level .lineLabels { color: #c2bfc8; }
+.xp { margin-left: auto; font-size: 19px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.xp small { color: #c2bfc8; font-size: 12px; }
+.line { height: 6px; width: 100%; border-radius: 8px; background: #22212417; overflow: hidden; }
+.line span { display: block; height: 100%; width: 100%; background: var(--lime); border-radius: inherit; transform-origin: left; transition: transform 220ms cubic-bezier(.23,1,.32,1); }
+.level .line { background: #ffffff20; }
+.lineLabels { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 12px; margin: 10px 0 14px; }
+.compact { margin-top: 22px; padding: 20px; }
+.compact .levelHeading { gap: 10px; }
+.compact .levelHeading h3 { font-size: 15px; }
+.compact .kicker { font-size: 9px; letter-spacing: .9px; }
+.compact .xp { font-size: 16px; }
+.curriculum, .achievements { margin-top: 22px; padding: 26px; background: var(--surface); border-radius: 28px; }
+.sectionHeading { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
+.sectionHeading h2 { font-size: 23px; margin-top: 6px; }
+.sectionHeading > svg { flex-shrink: 0; color: var(--muted); }
+.trackList { margin: 22px 0 16px; }
+.trackRow { display: flex; gap: 13px; align-items: center; padding: 17px 0; border: none; border-top: 1px solid var(--line-soft); width: 100%; text-align: left; background: transparent; border-radius: 0; }
+.trackRow:last-child { border-bottom: 1px solid var(--line-soft); }
+.trackMark { display: grid; place-items: center; width: 37px; height: 37px; flex-shrink: 0; font-size: 12px; font-weight: 600; border-radius: 13px; background: var(--raised); }
+.ieltsMark { background: var(--lavender); font-size: 20px; }
+.trackCopy { flex: 1; min-width: 0; }
+.trackCopy strong, .trackCopy small { display: block; }
+.trackCopy strong { font-size: 15px; font-weight: 550; }
+.trackCopy small { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.trackCount { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 18px; font-weight: 550; }
+.trackCount small { font-size: 12px; color: var(--muted); }
+.trackRow > svg { color: var(--muted); transition: transform 200ms cubic-bezier(.23,1,.32,1); }
+.coverage { padding: 25px 0 12px; display: grid; gap: 24px; grid-template-columns: minmax(0, 1.3fr) minmax(280px, 1fr); }
+.coverage h2 { font-size: 23px; margin: 8px 0; max-width: 26ch; }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 17px 24px; margin: 0; }
+.facts > div { min-width: 0; }
+.facts dt { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.facts dd { margin: 4px 0 0; font-size: 24px; line-height: 1.2; font-weight: 550; font-variant-numeric: tabular-nums; }
+.achievementList { margin: 18px 0 7px; }
+.achievement { border-top: 1px solid var(--line-soft); }
+.achievement:last-child { border-bottom: 1px solid var(--line-soft); }
+.achievement summary { display: flex; min-height: 78px; align-items: center; gap: 12px; cursor: pointer; list-style: none; }
+.achievement summary::-webkit-details-marker { display: none; }
+.achievement summary > span:nth-child(2) { min-width: 0; flex: 1; }
+.achievement strong, .achievement small { display: block; }
+.achievement strong { font-size: 14px; font-weight: 550; }
+.achievement small { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.achievementIcon { display: grid; place-items: center; width: 37px; height: 37px; flex-shrink: 0; background: var(--raised); border-radius: 13px; color: var(--muted); }
+.achievement[data-unlocked='true'] .achievementIcon { background: var(--lime); color: var(--graphite); }
+.achievementState { color: var(--muted); }
+.achievementDetail { padding: 0 0 17px 49px; font-size: 13px; }
+.achievementDetail .line { margin: 12px 0 8px; }
+.outcome { position: relative; margin-bottom: 25px; padding: 27px; border-radius: 28px; background: #bbb2f540; }
+.outcomeHeading { display: flex; align-items: center; gap: 13px; margin-bottom: 22px; }
+.outcomeHeading > button { margin-left: auto; background: #ffffff80; }
+.companion { position: relative; width: 70px; height: 74px; flex-shrink: 0; }
+.companion :global(.voice-orb) { width: 70px; height: 74px; }
+.companion :global(.orb-body) { width: 58px; height: 58px; }
+.outcomeMark { position: absolute; right: 0; bottom: 3px; display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: var(--lime); }
+.outcome h2 { font-size: 28px; max-width: 30ch; margin-bottom: 13px; }
+.outcome > p { font-size: 14px; margin-bottom: 18px; }
+.outcome[data-celebrating='true'] .outcomeMark > svg { animation: confirmed 440ms cubic-bezier(.23,1,.32,1) both; }
+.resultHeading { display: flex; align-items: baseline; gap: 13px; padding-top: 4px; margin-bottom: 20px; }
+.resultHeading strong { font-size: 22px; white-space: nowrap; }
+.resultHeading span { font-size: 13px; color: var(--muted); }
+.outcome .facts { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 20px; }
+.resultEvidence { font-size: 13px; border-top: 1px solid #22212414; margin-top: 16px; }
+.resultEvidence summary { cursor: pointer; min-height: 46px; display: flex; align-items: center; }
+.resultEvidence > div { margin: 14px 0; }
+.resultEvidence strong { display: block; font-weight: 550; }
+.resultEvidence span { color: var(--muted); }
+.resultEvidence q { display: block; font-size: 15px; margin-top: 8px; }
+.outcomeActions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin: 20px 0 24px; }
+.unlock { display: flex; align-items: center; gap: 12px; padding-top: 19px; margin-top: 16px; border-top: 1px solid #22212414; }
+.unlock > svg { flex-shrink: 0; }
+.unlock strong, .unlock small { display: block; }
+.unlock strong { font-size: 14px; font-weight: 550; }
+.unlock small { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.savedLine { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0 25px; font-size: 13px; }
+.savedLine > .text-button { margin-left: auto; }
+.burst { position: absolute; inset: 0; pointer-events: none; }
+.burst i { position: absolute; width: 6px; height: 9px; border-radius: 3px; top: 31px; left: 31px; background: var(--lime); animation: unlock-burst 820ms cubic-bezier(.23,1,.32,1) both; }
+.burst i:nth-child(even) { background: var(--lavender); }
+@keyframes confirmed { from { transform: scale(.86); opacity: .5; } to { transform: scale(1); opacity: 1; } }
+@keyframes unlock-burst { 0% { transform: translate(0, 0) rotate(0); opacity: 0; } 20% { opacity: 1; } 100% { transform: translate(var(--dx),var(--dy)) rotate(var(--rotation)); opacity: 0; } }
+@media (hover:hover) and (pointer:fine) { .trackRow:hover > svg { transform: translate(2px,-2px); } .trackRow:hover .trackCopy strong { color: var(--accent-ink); } }
+@media (max-width: 800px) { .coverage { grid-template-columns: 1fr; } }
+@media (max-width: 500px) { .curriculum, .achievements { padding: 22px; } .sectionHeading h2 { font-size: 21px; } .trackCount { font-size: 15px; } .trackRow > svg { display: none; } .trackCopy small { font-size: 12px; } .outcome { padding: 22px; } .outcome h2 { font-size: 25px; } .outcome .facts { grid-template-columns: 1fr 1fr; } .outcomeHeading { gap: 9px; } .outcomeHeading .kicker { font-size: 9px; } .outcomeActions .button { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .line span, .trackRow > svg { transition: none; } .burst { display: none; } .outcomeMark > svg { animation: none !important; } }
+:global(html[data-input='keyboard']) .line span { transition: none; }
+:global(html[data-input='keyboard']) .trackRow > svg { transition: none; transform: none; }

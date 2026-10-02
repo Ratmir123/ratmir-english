@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { SKILLS, type Evidence, type ReviewItem, type Session, type SkillId, type SkillState, type Turn } from '../types';
+import { lessonActivity, lessonMaterialSignature, practiceResults } from '../progression';
 
 const DAY = 86_400_000;
 const knownSkills = new Set<string>(SKILLS.map((skill) => skill.id));
@@ -16,11 +17,7 @@ interface Observation {
 
 /** IDs and cosmetic labels are deliberately excluded: regenerating an ID is not a new task. */
 export function lessonFingerprint(session: Session): string {
-  const lesson = session.lesson;
-  return createHash('sha256').update(JSON.stringify([
-    lesson.familyId, lesson.opening, lesson.role, lesson.npcBrief,
-    lesson.hiddenFacts, lesson.successCriteria, lesson.difficulty, lesson.languageFocus,
-  ])).digest('hex');
+  return createHash('sha256').update(lessonMaterialSignature(session)).digest('hex');
 }
 
 function uniqueSessions(sessions: Session[]): Session[] {
@@ -47,6 +44,9 @@ function observations(sessions: Session[]): Observation[] {
       if (!knownSkills.has(evidence.skill) || !evidence.opportunity || ['disputed', 'unobserved'].includes(evidence.result)) continue;
       // The present brain receives transcripts, not an independently validated acoustic assessment.
       if (evidence.skill === 'clarity') continue;
+      const activity = lessonActivity(session).activity;
+      if (activity === 'writing' && !['grammar', 'vocabulary', 'coherence'].includes(evidence.skill)) continue;
+      if (activity === 'reading' && evidence.skill === 'listening') continue;
       const turnIndex = session.turns.findIndex((turn) => turn.id === evidence.turnId);
       const turn = session.turns[turnIndex];
       if (!turn || turn.role !== 'user' || turn.disputed || !normalized(evidence.quote)
@@ -134,14 +134,7 @@ export function deriveSkillStates(sessions: Session[]): SkillState[] {
 
 /** Practice points, not a language score; replaying the same scene cannot farm points. */
 export function calculateXP(sessions: Session[]): number {
-  const variants = new Map<string, number>();
-  for (const session of uniqueSessions(sessions)) {
-    if (!['review', 'completed'].includes(session.status) || !session.turns.some((turn) => turn.role === 'user' && turn.text.trim())) continue;
-    const points = 10 + (session.analysis ? 5 : 0) + (session.retries.some((retry) => retry.text.trim()) ? 5 : 0);
-    const key = lessonFingerprint(session);
-    variants.set(key, Math.max(variants.get(key) ?? 0, points));
-  }
-  return [...variants.values()].reduce((sum, points) => sum + points, 0);
+  return practiceResults(sessions).reduce((sum, result) => sum + result.xp, 0);
 }
 
 export function deriveReviews(sessions: Session[]): ReviewItem[] {

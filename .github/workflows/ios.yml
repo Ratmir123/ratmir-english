@@ -15,7 +15,7 @@ jobs:
         run: |
           brew install xcodegen
           cd ios
-          swift scripts/create-icon.swift Resources/Assets.xcassets/AppIcon.appiconset/icon.png
+          test -f Resources/Assets.xcassets/AppIcon.appiconset/icon-pearl-v04-1024.png
           xcodegen generate
       - name: Build unsigned device app
         run: |
@@ -48,11 +48,17 @@ jobs:
           xcrun simctl launch "$device" app.ratmirenglish.personal
           sleep 3
           xcrun simctl io "$device" screenshot iPhone11-login.png
-          for screen in intro baseline baseline-report home practice listening analysing review celebrate progress settings; do
+          for screen in intro baseline baseline-report home practice listening analysing review celebrate completed saved-deferred progress curriculum achievements ielts-track ielts-reading ielts-writing settings; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3
             xcrun simctl io "$device" screenshot "iPhone11-$screen.png"
+          done
+          for screen in achievements completed; do
+            xcrun simctl terminate "$device" app.ratmirenglish.personal || true
+            xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen" --large-type
+            sleep 3
+            xcrun simctl io "$device" screenshot "iPhone11-$screen-large.png"
           done
       - uses: actions/upload-artifact@v4
         with:

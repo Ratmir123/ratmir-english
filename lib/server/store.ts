@@ -3,7 +3,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { AppState, LessonPlan, Mode, Profile, Session } from '../types';
-import { calculateXP, deriveReviews, deriveSkillStates } from './adaptation';
+import { deriveReviews, deriveSkillStates } from './adaptation';
+import { deriveProgression, nextRecommendedFamily } from '../progression';
 import { initialProfile } from './profile';
 import { baselineReportFingerprint, emptyOnboardingRecord, presentOnboarding, type OnboardingRecord } from './onboarding-data';
 import type { BaselineReport } from '../types';
@@ -182,11 +183,15 @@ export function saveSession(input: Session, expectedSource?: Session): void {
       session.analysis = null;
       if (['review', 'completed'].includes(session.status)) session.status = 'active';
     }
+    if (session.status === 'completed') session.completedAt = previous.status === 'completed'
+      ? previous.completedAt ?? previous.updatedAt : session.updatedAt;
+    else delete session.completedAt;
     writeSession(db, session);
     input.createdAt = session.createdAt;
     input.updatedAt = session.updatedAt;
     input.analysis = session.analysis;
     input.status = session.status;
+    input.completedAt = session.completedAt;
   });
 }
 
@@ -386,10 +391,11 @@ export function getAppState(): AppState {
       .filter((row) => moscowMonth(new Date(row.created_at)) === month);
     const completed = sessions.filter((session) => session.status === 'completed' && session.turns.some((turn) => turn.role === 'user' && turn.text.trim()));
     const onboarding = presentOnboarding(readOnboardingRecord(db), sessions, profile);
-    return {
-      profile, sessions, skills: deriveSkillStates(sessions), reviews: deriveReviews(sessions), xp: calculateXP(sessions),
+    const progression = deriveProgression(sessions);
+    const state: AppState = {
+      profile, sessions, skills: deriveSkillStates(sessions), reviews: deriveReviews(sessions), xp: progression.xp, progression,
       onboarding,
-      completed: completed.length,
+      completed: progression.completedPractice,
       calibrationCompleted: onboarding.introCompletedAt ? onboarding.completedStages
         : completed.filter((session) => session.lesson.kind === 'calibration').length,
       audioUsage: {
@@ -398,5 +404,7 @@ export function getAppState(): AppState {
         spokenCharacters: usage.filter((row) => row.kind === 'speech').reduce((sum, row) => sum + row.amount, 0),
       },
     };
+    progression.recommendation = nextRecommendedFamily(state);
+    return state;
   });
 }

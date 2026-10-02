@@ -5,8 +5,8 @@
   "directories": { "app": "desktop", "output": ".runtime/desktop-dist" },
   "files": ["*.cjs", "package.json", "!node_modules{,/**/*}"],
   "beforeBuild": "scripts/desktop-before-build.cjs",
-  "extraFiles": [{ "from": "public/icon.ico", "to": "resources/app-icons/icon.ico" }],
-  "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "public/icon.ico" },
+  "extraFiles": [{ "from": "public/icon-pearl-v04.ico", "to": "resources/app-icons/icon.ico" }],
+  "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "public/icon-pearl-v04.ico" },
   "nsis": {
     "oneClick": true,
     "perMachine": false,

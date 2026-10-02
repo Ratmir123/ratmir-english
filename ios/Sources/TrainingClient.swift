@@ -68,6 +68,7 @@ enum AccessKey {
     @Published var pendingMessageID: String?
     @Published var assistantTextShown = true
     @Published var conversationPresented = false
+    @Published var completionMoment: CompletionMoment?
     let voiceMeter = VoiceMeter()
     var audioLevel: Double {
         get { voiceMeter.level }
@@ -243,6 +244,7 @@ enum AccessKey {
             savedDrafts[id] = DraftSnapshot(text: draft, file: recordedFile, pendingID: pendingMessageID,
                 transcript: originalTranscript, liveText: liveTranscript)
         }
+        completionMoment = nil
         conversation = value
         playbackAcknowledgementTurn = pendingPlaybackAcknowledgements[value.id]
         conversationPresented = true
@@ -261,14 +263,15 @@ enum AccessKey {
         guard !recording else { return }
         stopSpeaking()
         conversationPresented = false
+        completionMoment = nil
     }
-    func start(mode: String, context: String, forceNew: Bool = false) async {
+    func start(mode: String, context: String, forceNew: Bool = false, familyId: String? = nil) async {
         guard !hasUnuploadedRecording else {
             error = "Сначала сохрани текущую запись: вернись к занятию и повтори распознавание. Или явно удали запись, если она больше не нужна."; return
         }
         await perform(stage: "Выбираю ситуацию для разговора") {
             let shouldResume = !forceNew && conversation != nil
-            let intent = "\(mode)|\(context)|\(shouldResume)|\(shouldResume ? conversation?.id ?? "" : "")"
+            let intent = "\(mode)|\(context)|\(familyId ?? "automatic")|\(shouldResume)|\(shouldResume ? conversation?.id ?? "" : "")"
             if startRequestID == nil || startRequestIntent != intent {
                 startRequestID = UUID().uuidString.lowercased(); startRequestIntent = intent
             }
@@ -276,11 +279,35 @@ enum AccessKey {
                 "intent": shouldResume ? "resume" : "new", "minutes": state?.profile.dailyMinutes ?? 15,
                 "requestId": startRequestID!]
             if shouldResume, let id = conversation?.id { body["sessionId"] = id }
+            if let familyId { body["familyId"] = familyId }
             let value: Conversation = try await request("sessions", body: body)
             startRequestID = nil
             resume(value)
             try await refresh()
         }
+    }
+    func startTrack(_ track: String, activity: String = "speaking", mode: String = "learning") async {
+        if let onboarding = state?.onboarding, onboarding.status != "ready" {
+            error = "Сначала закончим три стартовые пробы. Они помогут подобрать дальнейшую практику."; return
+        }
+        if track == "ielts-foundation" {
+            guard ["speaking", "listening", "reading", "writing"].contains(activity) else { return }
+            await start(mode: activity == "listening" ? "call" : "learning", context: "life", forceNew: true, familyId: "ielts-" + activity)
+        } else if ["life", "work", "relocation"].contains(track) {
+            await start(mode: mode, context: track, forceNew: true)
+        }
+    }
+    func dismissCompletionMoment() { completionMoment = nil }
+    private func acknowledgeCompletion(_ value: Conversation) {
+        guard value.status == "completed" else { return }
+        let key = "shown-completion-sessions"
+        var seen = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+        guard !seen.contains(value.id) else { return }
+        seen.insert(value.id)
+        UserDefaults.standard.set(Array(seen), forKey: key)
+        guard conversationPresented, conversation?.id == value.id else { return }
+        completionMoment = CompletionMoment(sessionId: value.id, deferred: value.retryDeferred == true, baseline: value.baseline != nil,
+            unlockedBefore: state?.progression?.achievements.filter { $0.unlocked }.map { $0.id } ?? [])
     }
     func completeIntroduction(russianControl: String) async {
         await perform(stage: "Сохраняю знакомство") {
@@ -358,7 +385,9 @@ enum AccessKey {
         }
         stopSpeaking()
         await perform(stage: name == "complete" ? "Сохраняю результат" : name == "finish" ? "Передаю разговор на разбор" : "Обновляю занятие") {
-            self.conversation = try await request("sessions/\(conversation.id)/\(name)", body: deferRetry ? ["deferRetry": true] : [:])
+            let value: Conversation = try await request("sessions/\(conversation.id)/\(name)", body: deferRetry ? ["deferRetry": true] : [:])
+            if self.conversation?.id == conversation.id { self.conversation = value }
+            if name == "complete" { acknowledgeCompletion(value) }
             try await refresh()
             if self.conversation?.status == "analysing" { reviewStartedAt = Date() }
         }
@@ -395,6 +424,7 @@ enum AccessKey {
     }
     private func autoSpeakLatest() {
         guard conversationPresented, let conversation, conversation.status == "active",
+              conversation.lesson.activity != "reading", conversation.lesson.activity != "writing",
               let turn = conversation.turns.last, turn.role == "assistant",
               !heardTurns.contains(turn.id), pendingSpeechTurn != turn.id, !recording, !microphoneStarting,
               !hasUnuploadedRecording, recordedFile == nil,

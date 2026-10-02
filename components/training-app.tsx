@@ -14,8 +14,8 @@ import {
   ShieldCheckIcon as ShieldCheck, SparkleIcon as Sparkles, SquareIcon as Square,
   TargetIcon as Target, TrashIcon as Trash2, TrendUpIcon as TrendingUp, XIcon as X,
 } from '@phosphor-icons/react';
-import { SKILLS, type AppState, type BaselineStepId, type BrainStatus, type Context, type Mode, type OnboardingState, type Profile, type Session, type SubscriptionUsage } from '@/lib/types';
-import { FAMILIES, type ScenarioFamily } from '@/lib/training';
+import { SKILLS, type AppState, type BaselineStepId, type BrainStatus, type Context, type LearningTrackId, type Mode, type OnboardingState, type PracticeResult, type Profile, type ProgressionState, type Session, type SubscriptionUsage } from '@/lib/types';
+import { FAMILIES, LEARNING_ACTIVITIES, LEARNING_TRACKS, type ScenarioFamily } from '@/lib/training';
 import { VoiceOrb } from './voice-orb';
 import { useVoice, type RecordingDraft } from './use-voice';
 import { SubscriptionLimits } from './subscription-limits';
@@ -23,6 +23,7 @@ import { BaselineProfile, OnboardingFlow } from './onboarding-flow';
 import { PracticeModeSwitch as ModeSwitch } from './practice-mode-switch';
 import { useContentEntrance, useInputModality, useNavigationHighlight } from './use-interface-motion';
 import motionStyles from './training-app.module.css';
+import { Achievements, CurriculumOverview, EvidenceCoverage, PracticeLevel, SessionOutcome } from './learning-path';
 
 type Tab = 'today' | 'practice' | 'progress' | 'history' | 'settings' | 'session';
 type Status = { brain: BrainStatus; hosting?: 'local' | 'server'; audio: { configured: boolean; model: string } };
@@ -47,10 +48,10 @@ function ElapsedTime({ startedAt }: { startedAt: number | null }) {
 }
 
 function PreparationPanel({ startedAt, stage }: { startedAt: number | null; stage: string }) {
-  return <section className="preparation-panel" aria-label="Подготовка разговора">
+  return <section className="preparation-panel" aria-label="Подготовка занятия">
     <VoiceOrb state="thinking" statusDescription="Готовим твой разговор" />
     <div><span className="eyebrow">СЕЙЧАС</span><h2>{stage || 'Готовим твой разговор'}</h2>
-      <p>Выбираем ситуацию под твой уровень и последний прогресс. Первый ответ появится здесь.</p>
+      <p>Подбираем задачу по твоим ответам и последней практике. Когда она будет готова, можно начать.</p>
       <ElapsedTime startedAt={startedAt} />
     </div>
   </section>;
@@ -91,13 +92,13 @@ function ScenarioPreview({ family, mode, minutes, topic, busy, onStart, inline =
   const previewRef = useContentEntrance<HTMLDivElement>(family?.id || 'empty', 4, 180, inline);
   return <aside className={'scenario-preview ' + (inline ? 'scenario-preview-inline' : 'scenario-preview-desktop') + (!family ? ' scenario-preview-empty' : '')}><div ref={previewRef} className="scenario-preview-content">
     {family ? <>
-      <span className="eyebrow">{contextNames[family.context]}</span>
+      <span className="eyebrow">{family.track === 'ielts-foundation' ? 'ОСНОВА ДЛЯ IELTS · ' + LEARNING_ACTIVITIES.find(activity => activity.id === family.activity)?.title : contextNames[family.context]}</span>
       <h2>{family.title}</h2><p>{family.description}</p>
       <div className="scenario-skills"><span className="caption">Что потренируем</span>{family.skills.map(skill => <span className="quiet-tag" key={skill}>{SKILLS.find(item => item.id === skill)?.label}</span>)}</div>
       <div className="daily-controls"><span className="duration"><History size={16} /> {minutes} минут</span><span className="quiet-tag">{mode === 'call' ? 'Созвон' : 'С опорами'}</span></div>
       {topic.trim() && <p className="caption">Тема: {topic.trim()}</p>}
-      <button className="button primary" disabled={!!busy} onClick={() => onStart(family)}>{busy || (inline ? 'Начать разговор' : 'Начать этот разговор')} <ArrowRight size={18} /></button>
-      <small className="daily-note">Сначала попробуешь сам. Потом разберём конкретные реплики.</small>
+      <button className="button primary" disabled={!!busy} onClick={() => onStart(family)}>{busy || (['reading', 'writing'].includes(family.activity) ? 'Начать задание' : inline ? 'Начать разговор' : 'Начать этот разговор')} <ArrowRight size={18} /></button>
+      <small className="daily-note">{family.activity === 'reading' ? 'Прочитаешь учебный текст и покажешь, что понял. Ответ можно написать.' : family.activity === 'writing' ? 'Напишешь короткий текст и переработаешь его по разбору. Микрофон не нужен.' : family.activity === 'listening' ? 'Услышанное пригодится в твоём ответе. Текст сначала скрыт.' : 'Сначала попробуешь сам. Потом разберём конкретные реплики.'}</small>
     </> : <>
       <span className="round-icon"><AudioLines size={25} /></span><h2>Какая ситуация тебе ближе?</h2>
       <p>Выбери её в списке. Здесь появятся цель разговора и навыки, которые он тренирует.</p>
@@ -146,6 +147,8 @@ export function TrainingApp() {
   const [textMode, setTextMode] = useState(true);
   const [topic, setTopic] = useState('');
   const [selectedFamily, setSelectedFamily] = useState('');
+  const [selectedTrack, setSelectedTrack] = useState<LearningTrackId | 'all'>('all');
+  const [completionMoment, setCompletionMoment] = useState<{ sessionId: string; previousUnlocks: string[] } | null>(null);
   const [search, setSearch] = useState('');
   const [key, setKey] = useState('');
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -303,6 +306,7 @@ export function TrainingApp() {
     const current = sessionRef.current;
     const turn = current?.turns.at(-1);
     if (tab !== 'session' || !status?.audio.configured || !current || current.processing || current.analysis
+      || ['reading', 'writing'].includes(current.lesson.activity || '')
       || turn?.role !== 'assistant' || !['idle', 'paused'].includes(voice.state)
       || voice.hasUnuploadedRecording || draftsRef.current[current.id]?.audioFile) return;
     const key = current.id + ':' + turn.id;
@@ -347,7 +351,8 @@ export function TrainingApp() {
       setError('Сначала закончи запись и распознавание. Потом можно начать отдельный разговор.');
       if (session) setTab('session'); return;
     }
-    const options = { mode: baselineStepId ? 'call' as const : mode, familyId, context, topic, minutes, baselineStepId };
+    const family = FAMILIES.find(value => value.id === familyId);
+    const options = { mode: baselineStepId ? 'call' as const : family?.track === 'ielts-foundation' ? family.preferredMode : mode, familyId, context, topic, minutes, baselineStepId };
     const optionsKey = JSON.stringify(options);
     const attempt = lessonStart.current?.optionsKey === optionsKey
       ? lessonStart.current
@@ -366,7 +371,7 @@ export function TrainingApp() {
     if (sessionRef.current?.id !== value.id && (voice.state === 'listening' || voice.state === 'transcribing' || voice.hasUnuploadedRecording)) {
       setError('Сначала закончи текущую запись. Она останется в своём разговоре.'); return;
     }
-    voice.stop(); lastAutoplay.current = null; setSession(value); setTab('session'); restoreDraft(value); setHintText('');
+    setCompletionMoment(null); voice.stop(); lastAutoplay.current = null; setSession(value); setTab('session'); restoreDraft(value); setHintText('');
     setTranscript(value.mode === 'learning' || !status?.audio.configured); setTextMode(value.mode === 'learning' || !status?.audio.configured); setError(''); voice.setState('idle');
   }
   async function sessionAction(name: string, data: unknown = {}) {
@@ -384,6 +389,10 @@ export function TrainingApp() {
       audioFile: draft?.intent === 'retry' ? draft.audioFile : undefined, originalTranscript: draft?.intent === 'retry' ? draft.originalTranscript : undefined } : data;
     const next = await action(name === 'finish' ? 'Готовлю разбор' : name === 'retry' ? 'Сравниваем твою попытку' : 'Сохраняю результат', () => request<Session>(`sessions/${sessionId}/${name}`, payload));
     if (next) {
+      if (name === 'complete' && next.status === 'completed' && session.status !== 'completed') {
+        setCompletionMoment({ sessionId: next.id, previousUnlocks: state?.progression?.achievements.filter(item => item.unlocked).map(item => item.id) || [] });
+        if (sessionRef.current?.id === sessionId && tabRef.current === 'session') window.scrollTo({ top: 0, behavior: 'auto' });
+      }
       if (name === 'retry') { saveDraft(sessionId, null); if (voice.recordingDraft?.contextKey === sessionId + ':retry') voice.markSubmitted(); }
       if (sessionRef.current?.id === sessionId) { setSession(next); if (name === 'retry') setInput(''); }
       void refresh();
@@ -405,9 +414,11 @@ export function TrainingApp() {
   const pending = !!busy;
   const navigation = (next: Tab) => { voice.stop(); dismissStartup(); setTab(next); setError(''); };
   const chosenFamily = FAMILIES.find(family => family.id === selectedFamily);
+  const chooseTrack = (track: LearningTrackId) => { setSelectedTrack(track); setSelectedFamily(''); navigation('practice'); };
   const visibleSessions = state?.sessions.filter(value => (value.lesson.title + ' ' + value.lesson.goal).toLowerCase().includes(search.toLowerCase())) || [];
   const calibration = Math.min(3, state?.onboarding?.completedStages ?? state?.calibrationCompleted ?? 0);
   const independent = state?.skills.filter(skill => skill.state === 'independent').length || 0;
+  const recommendation = state?.progression?.recommendation;
 
   if (needLogin) return (
     <main className="login-screen">
@@ -476,23 +487,26 @@ export function TrainingApp() {
                 {active && <span className="session-status">{sessionStatus(active)}</span>}
               </div>
               <div className="lesson-copy">
-                <h2>{active?.lesson.title || (calibration < 3 ? 'Узнаем, как ты говоришь' : state.reviews[0]?.focus || 'Новый разговор на английском')}</h2>
-                <p>{active?.lesson.goal || (calibration < 3 ? 'Знакомая тема и живой диалог. Найдём твои сильные стороны и то, что стоит потренировать первым.' : 'Следующий разговор учтёт твои последние попытки и ближайшие цели.')}</p>
-              </div>
-              <div className="lesson-steps" aria-label="Как проходит занятие">
-                <span><small>01</small> Разговор</span><span><small>02</small> Разбор</span><span><small>03</small> Своя версия</span>
+                <h2>{active?.lesson.title || (calibration < 3 ? 'Узнаем, как ты говоришь' : recommendation?.title || state.reviews[0]?.focus || 'Новый разговор на английском')}</h2>
+                <p>{active?.lesson.goal || (calibration < 3 ? 'Знакомая тема и живой диалог. Найдём твои сильные стороны и то, что стоит потренировать первым.' : 'Следующая практика учтёт твои последние попытки и ближайшие цели.')}</p>
               </div>
               <div className="daily-controls lesson-meta">
                 <span className="duration"><History size={16} /> {active?.lesson.minutes || state.profile.dailyMinutes} минут</span>
-                {active ? <span className="quiet-tag">{active.mode === 'call' ? 'Созвон' : 'Учебный режим'}</span> : <ModeSwitch mode={mode} setMode={setMode} />}
+                {active ? <span className="quiet-tag">{active.mode === 'call' ? 'Созвон' : 'Учебный режим'}</span> : recommendation?.track === 'ielts-foundation' ? <span className="quiet-tag">{recommendation.activity === 'writing' ? 'Письменная практика' : recommendation.activity === 'reading' ? 'Чтение и ответ' : recommendation.preferredMode === 'call' ? 'Без текста' : 'С опорами'}</span> : <ModeSwitch mode={mode} setMode={setMode} />}
               </div>
-              <button className="button primary large" disabled={pending} onClick={() => active ? open(active) : void start()}>
+              <button className="button primary large" disabled={pending} onClick={() => active ? open(active) : void start(recommendation?.familyId, FAMILIES.find(family => family.id === recommendation?.familyId)?.context)}>
                 <Play size={18} /><span>{pending ? busy : active ? 'Продолжить занятие' : calibration < 3 ? 'Начать калибровку' : 'Начать практику'}</span><ArrowRight size={21} />
               </button>
-              {active && <button className="text-button new-session-link" disabled={pending} onClick={() => navigation('practice')}>Начать другой разговор<ArrowRight size={16} /></button>}
+              {active && <button className="text-button new-session-link" disabled={pending} onClick={() => navigation('practice')}>Начать другую практику<ArrowRight size={16} /></button>}
+              {!active && recommendation && <button className="text-button new-session-link" disabled={pending} onClick={() => { setSelectedTrack('all'); setSelectedFamily(''); navigation('practice'); }}>Выбрать другую ситуацию<ArrowRight size={16} /></button>}
+              {!active && recommendation && <div className={motionStyles.recommendationReason}><span>Почему сегодня</span><p>{recommendation.why}</p>{recommendation.track === 'ielts-foundation' && <small>Основа для IELTS. Сложность учитывает текущий профиль, экзаменационный band не выставляется.</small>}</div>}
+              <div className="lesson-steps" aria-label="Как проходит занятие">
+                <span><small>01</small> {['reading', 'writing'].includes(active?.lesson.activity || recommendation?.activity || '') ? 'Задача' : 'Разговор'}</span><span><small>02</small> Разбор</span><span><small>03</small> Своя версия</span>
+              </div>
               <small className="daily-note">{status?.audio.configured ? 'Можно говорить или писать. Разбор по-русски.' : 'Начни текстом. Голос можно подключить в настройках.'}</small>
               <button type="button" className="text-button" onClick={launchQuick}><BookOpen size={16} />Быстрый разбор фразы</button>
             </section>
+            {state.progression && <CurriculumOverview value={state.progression} onChoose={chooseTrack} />}
             <Activity state={state} />
             <section className="recent-section">
               <div className="section-title"><h3>Недавние занятия</h3><button className="text-button" onClick={() => navigation('history')}>Вся история <ArrowUpRight size={15} /></button></div>
@@ -519,10 +533,7 @@ export function TrainingApp() {
                 </div>
                 <div><h2>{state.profile.name}</h2><span className="profile-level">{calibration < 3 ? 'Калибруем навыки' : 'Калибровка завершена'}</span><p className="caption">{calibration < 3 ? 'Сначала реальные попытки, затем оценка.' : 'Следующие занятия уточняют профиль.'}</p></div>
               </div>
-              <div className="profile-stats">
-                <div><strong>{state.xp}<small> XP</small></strong><span>за практику</span></div>
-                <div><strong>{state.completed}</strong><span>занятий завершено</span></div>
-              </div>
+              {state.progression ? <PracticeLevel value={state.progression} compact /> : <div className="profile-stats"><div><strong>{state.xp}<small> XP</small></strong><span>за практику</span></div><div><strong>{state.completed}</strong><span>занятий завершено</span></div></div>}
             </section>
             <SubscriptionLimits usage={subscriptionUsage} loading={usageLoading} onRefresh={() => void refreshUsage(true)} compact />
             <section className="skills-panel">
@@ -535,7 +546,12 @@ export function TrainingApp() {
         </div>
       </>}
       {tab === 'practice' && (!state.onboarding || state.onboarding.status === 'ready') && <>
-        <div className="page-heading"><div><h1>Выбери разговор</h1><p>Ситуация твоя. Задачу и сложность подберёт Sol.</p></div><ModeSwitch mode={mode} setMode={setMode} /></div>
+        <div className="page-heading"><div><h1>Выбери практику</h1><p>Ситуация твоя. Задачу и сложность подберёт Sol.</p></div><ModeSwitch mode={mode} setMode={setMode} /></div>
+        <div className={motionStyles.pathSelector} role="group" aria-label="Направление практики">
+          <button className={selectedTrack === 'all' ? motionStyles.selectedPath : ''} aria-pressed={selectedTrack === 'all'} onClick={() => { setSelectedTrack('all'); setSelectedFamily(''); }}>Все направления</button>
+          {LEARNING_TRACKS.map(track => <button key={track.id} className={selectedTrack === track.id ? motionStyles.selectedPath : ''} aria-pressed={selectedTrack === track.id} onClick={() => { setSelectedTrack(track.id); setSelectedFamily(''); }}>{track.title}</button>)}
+        </div>
+        {selectedTrack !== 'all' && <div className={motionStyles.pathPurpose}><strong>{LEARNING_TRACKS.find(track => track.id === selectedTrack)?.title}</strong><p>{LEARNING_TRACKS.find(track => track.id === selectedTrack)?.description}</p>{state.progression?.tracks.find(track => track.id === selectedTrack) && <><span className="caption">Завершено: {state.progression.tracks.find(track => track.id === selectedTrack)?.completedSessions}. Стартовый ориентир: {state.progression.tracks.find(track => track.id === selectedTrack)?.targetSessions}. Это счётчик практики, не оценка уровня.</span>{selectedTrack === 'ielts-foundation' && <div className={motionStyles.activityMilestones} aria-label="Практика основ IELTS">{state.progression.tracks.find(track => track.id === selectedTrack)?.activities.map(activity => <span key={activity.id}><strong>{activity.title}</strong>Завершено: {activity.completedSessions} / {activity.targetSessions}</span>)}</div>}</>}</div>}
         <div className="topic-bar">
           <Lightbulb size={18} />
           <input aria-label="Тема для следующего занятия" placeholder="О чём поговорим? AI, игра, спорт, идея проекта…" value={topic} onChange={event => setTopic(event.target.value)} maxLength={300} />
@@ -543,33 +559,34 @@ export function TrainingApp() {
         </div>
         <div className="practice-layout">
           <div className="practice-groups">
-            {(['life', 'work', 'relocation'] as const).map(context => {
-              const families = FAMILIES.filter(family => family.context === context);
-              return <section className="practice-group" key={context}>
-                <div className="section-title practice-group-title"><h2>{contextNames[context]}</h2><span className="quiet-tag">{families.length} {families.length < 5 ? 'сценария' : 'сценариев'}</span></div>
+            {LEARNING_TRACKS.filter(track => selectedTrack === 'all' || selectedTrack === track.id).map(track => {
+              const families = FAMILIES.filter(family => family.track === track.id);
+              return <section className="practice-group" key={track.id}>
+                <div className="section-title practice-group-title"><h2>{track.title}</h2><span className="quiet-tag">{families.length} {families.length < 5 ? 'сценария' : 'сценариев'}</span></div>
+                {track.id === 'ielts-foundation' && <p className={motionStyles.foundationNote}>Сначала короткие задачи, затем более связные ответы и повторная проверка. Здесь тренируем основу IELTS. Экзаменационный band не выставляем.</p>}
                 <div className="scenario-list">{families.map(family => <div key={family.id}>
                   <button className={'family-row ' + (chosenFamily?.id === family.id ? 'selected' : '')} aria-pressed={chosenFamily?.id === family.id} onClick={() => setSelectedFamily(family.id)}>
-                    <span className={'context-icon ' + context}>{context === 'life' ? <Ear size={19} /> : context === 'work' ? <AudioLines size={19} /> : <ArrowUpRight size={19} />}</span>
+                    <span className={'context-icon ' + family.context}>{track.id === 'ielts-foundation' ? <GraduationCap size={19} /> : family.context === 'life' ? <Ear size={19} /> : family.context === 'work' ? <AudioLines size={19} /> : <ArrowUpRight size={19} />}</span>
                     <span className="family-copy"><strong>{family.title}</strong><small>{family.description}</small></span>
                     <span className="selection-marker" aria-hidden="true">{chosenFamily?.id === family.id ? <Check size={17} /> : <ChevronRight size={17} />}</span>
                   </button>
-                  {chosenFamily?.id === family.id && <ScenarioPreview family={family} mode={mode} minutes={state.profile.dailyMinutes} topic={topic} busy={busy} inline onStart={value => void start(value.id, value.context)} />}
+                  {chosenFamily?.id === family.id && <ScenarioPreview family={family} mode={family.track === 'ielts-foundation' ? family.preferredMode : mode} minutes={state.profile.dailyMinutes} topic={topic} busy={busy} inline onStart={value => void start(value.id, value.context)} />}
                 </div>)}</div>
               </section>;
             })}
           </div>
-          <ScenarioPreview family={chosenFamily} mode={mode} minutes={state.profile.dailyMinutes} topic={topic} busy={busy} onStart={value => void start(value.id, value.context)} />
+          <ScenarioPreview family={chosenFamily} mode={chosenFamily?.track === 'ielts-foundation' ? chosenFamily.preferredMode : mode} minutes={state.profile.dailyMinutes} topic={topic} busy={busy} onStart={value => void start(value.id, value.context)} />
         </div>
         <p className="caption">Работа и обычная жизнь примерно поровну. Ближайшие интервью могут временно менять акцент.</p>
       </>}
       {tab === 'progress' && (!state.onboarding || state.onboarding.status === 'ready') && <>
         <div className="page-heading"><div><h1>Твой прогресс</h1><p>Что получается самому и на каких попытках это основано.</p></div><span className="quiet-tag">{calibration < 3 ? 'Калибровка ' + calibration + '/3' : 'Профиль по твоим данным'}</span></div>
         {state.onboarding?.status === 'ready' && <BaselineProfile report={state.onboarding.report} busy={busy === 'Собираем стартовый профиль' ? busy : ''} disabled={pending} activity={busy === 'Собираем стартовый профиль' ? <div className="baseline-build-status" role="status"><p>Сравниваем три разговора и выбираем, что тренировать первым.</p><ElapsedTime startedAt={busySince} /></div> : undefined} onBuild={() => void buildBaselineReport()} onOpenEvidence={sessionId => { const source = state.sessions.find(value => value.id === sessionId); if (source) open(source); }} />}
-        <div className="progress-summary progress-metrics">
-          <div><strong>{state.completed}</strong><span>завершённых занятий</span></div>
+        {state.progression ? <><PracticeLevel value={state.progression} /><EvidenceCoverage value={state.progression} /><button className="text-button" onClick={() => navigation('practice')}>Посмотреть маршрут и выбрать тему<ArrowRight size={16} /></button></> : <div className="progress-summary progress-metrics">
+          <div><strong>{state.completed}</strong><span>занятий завершено</span></div>
           <div><strong>{state.xp}<small> XP</small></strong><span>за практику и свои попытки</span></div>
           <div><strong>{independent}<small>/{SKILLS.length}</small></strong><span>навыков проверено самостоятельно</span></div>
-        </div>
+        </div>}
         <div className="progress-layout">
           <div className="progress-primary">
             <section className="progress-panel">
@@ -589,6 +606,7 @@ export function TrainingApp() {
             <Activity state={state} />
           </div>
           <aside className="progress-side">
+            {state.progression && <Achievements value={state.progression} />}
             <section className="review-list">
               <div className="section-title"><h3>Вернуться к навыку</h3><RefreshCw size={18} /></div>
               <p className="caption">Повторения появляются из твоих разборов.</p>
@@ -598,15 +616,15 @@ export function TrainingApp() {
                   <span><strong>{review.focus}</strong><small>{SKILLS.find(skill => skill.id === review.skill)?.label}</small>{source && <button className="text-button" disabled={pending} onClick={() => open(source)}>Посмотреть свою попытку<ArrowUpRight size={14} /></button>}</span>
                   <time>{date(review.dueAt)}</time>
                 </div>;
-              })}<button className="button secondary" disabled={pending} onClick={() => void start()}>Подобрать повторение<RefreshCw size={16} /></button></> : <div className="review-empty"><Target size={27} /><h3>Сначала найдём цель</h3><p>После первых разговоров здесь появятся подходящие повторения.</p></div>}
+              })}<button className="button secondary" disabled={pending} onClick={() => void start()}>Подобрать повторение<RefreshCw size={16} /></button></> : <div className="review-empty"><Target size={27} /><h3>Сначала найдём цель</h3><p>После первых занятий здесь появятся подходящие повторения.</p></div>}
             </section>
             <div className="learning-note"><GraduationCap size={23} /><h3>Рост видно по ответам</h3><p>XP показывает практику. Самостоятельность подтверждают новые ситуации и повторная проверка.</p></div>
           </aside>
         </div>
       </>}
       {tab === 'history' && <>
-        <div className="page-heading"><div><h1>Твои разговоры</h1><p>Исходная попытка, разбор и то, что ты смог улучшить.</p></div><a className="button secondary" href="/api/export" download><Download size={16} /> Скачать историю</a></div>
-        <label className="search-field"><span className="caption">Найти занятие</span><input className="search-input" placeholder="По названию или цели разговора…" value={search} onChange={event => setSearch(event.target.value)} /></label>
+        <div className="page-heading"><div><h1>Твоя практика</h1><p>Исходная попытка, разбор и то, что ты смог улучшить.</p></div><a className="button secondary" href="/api/export" download><Download size={16} /> Скачать историю</a></div>
+        <label className="search-field"><span className="caption">Найти занятие</span><input className="search-input" placeholder="По названию или цели занятия…" value={search} onChange={event => setSearch(event.target.value)} /></label>
         <div className="history-list">
           {visibleSessions.map(value => <div className="history-row" key={value.id}>
             <button onClick={() => open(value)}>
@@ -702,9 +720,9 @@ export function TrainingApp() {
           </section>
         </div>
       </>}
-      {tab === 'session' && session && <SessionView session={session} setSession={setSession} busy={busy} busySince={busySince} input={input} setInput={changeInput} draft={drafts[session.id]} onDiscardDraft={() => { saveDraft(session.id, null); setInput(''); if (voice.recordingDraft?.contextKey?.startsWith(session.id + ':')) voice.discardRecording(); }} textMode={textMode} setTextMode={setTextMode} transcript={transcript} showTranscript={showTranscript} hintText={hintText} comfort={comfort} setComfort={setComfort} voice={voice} audioReady={!!status?.audio.configured} onSend={() => void send(input)} onResend={resend} onAction={sessionAction} onHint={level => void action('Подбираю опору', async () => { const result = await request<{ text: string }>(`sessions/${session.id}/hint`, { level }); setHintText(result.text); })} onBack={() => navigation('today')} onSettings={() => navigation('settings')} editing={editing} setEditing={setEditing} editText={editText} setEditText={setEditText} />}
+      {tab === 'session' && session && <SessionView session={session} result={state.progression?.recentResults.find(result => result.sessionId === session.id)} progression={state.progression} confirmedCompletion={completionMoment?.sessionId === session.id} previousUnlocks={completionMoment?.sessionId === session.id ? completionMoment.previousUnlocks : []} onNext={() => navigation("practice")} onDone={() => navigation("today")} setSession={setSession} busy={busy} busySince={busySince} input={input} setInput={changeInput} draft={drafts[session.id]} onDiscardDraft={() => { saveDraft(session.id, null); setInput(''); if (voice.recordingDraft?.contextKey?.startsWith(session.id + ':')) voice.discardRecording(); }} textMode={textMode} setTextMode={setTextMode} transcript={transcript} showTranscript={showTranscript} hintText={hintText} comfort={comfort} setComfort={setComfort} voice={voice} audioReady={!!status?.audio.configured} onSend={() => void send(input)} onResend={resend} onAction={sessionAction} onHint={level => void action('Подбираю опору', async () => { const result = await request<{ text: string }>(`sessions/${session.id}/hint`, { level }); setHintText(result.text); })} onBack={() => navigation('today')} onSettings={() => navigation('settings')} editing={editing} setEditing={setEditing} editText={editText} setEditText={setEditText} />}
       </>}
-      </div><footer className="page-footer"><span>Своя попытка → разбор → новый разговор</span><span>Личный тренинг · v0.3.1</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
+      </div><footer className="page-footer"><span>Своя попытка → разбор → новая практика</span><span>Личный тренинг · 0.4 alpha</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
   </div>;
 }
 
@@ -722,11 +740,11 @@ function Activity({ state }: { state: AppState }) {
     <div className="section-title"><h3>Твой ритм</h3><span className="caption">Последние 7 дней</span></div>
     <div className="activity-body">
       <div className="activity-copy">
-        <div className="activity-stat"><strong className="activity-value">{total}</strong><span>завершённых занятий</span></div>
+        <div className="activity-stat"><strong className="activity-value">{total}</strong><span>занятий завершено</span></div>
         <p>{total ? days + ' из 7 дней с практикой. Продолжай в своём темпе.' : 'После первой практики здесь появится твой ритм.'}</p>
         <small className="caption">По дате начала занятия</small>
       </div>
-      <div className={'activity-chart ' + (!total ? 'activity-empty' : '')} role="img" aria-label={points.map(point => date(point.day.toISOString()) + ': ' + point.count + ' завершённых занятий').join(', ')}>
+      <div className={'activity-chart ' + (!total ? 'activity-empty' : '')} role="img" aria-label={points.map(point => date(point.day.toISOString()) + ': ' + point.count + ' · завершено').join(', ')}>
         {points.map((point, index) => <div className="activity-day" key={index}>
           <div className="bar-area">{point.count > 0 && <small className="bar-count">{point.count}</small>}<span style={{ height: point.count / maximum * 100 + '%' }} className={point.count ? 'filled' : ''} /></div>
           <small>{new Intl.DateTimeFormat('ru', { weekday: 'short', timeZone: 'Europe/Moscow' }).format(point.day)}</small>
@@ -739,6 +757,7 @@ function Activity({ state }: { state: AppState }) {
 
 type SessionProps = {
   session: Session; setSession: (s: Session) => void; busy: string; busySince: number | null;
+  result?: PracticeResult; progression?: ProgressionState; confirmedCompletion: boolean; previousUnlocks: string[]; onNext: () => void; onDone: () => void;
   input: string; setInput: (s: string) => void; draft?: SessionDraft; onDiscardDraft: () => void;
   textMode: boolean; setTextMode: (v: boolean) => void; transcript: boolean; showTranscript: () => Promise<void>;
   hintText: string; comfort: number; setComfort: (n: number) => void; voice: ReturnType<typeof useVoice>; audioReady: boolean;
@@ -794,8 +813,8 @@ function DraftComposer({ p, intent, pending }: { p: SessionProps; intent: 'messa
   const submit = () => { if (canSend) { p.voice.stop(); if (intent === 'retry') void p.onAction('retry', { text: p.input }); else p.onSend(); } };
   return <form className="reply-form" onSubmit={e => { e.preventDefault(); submit(); }}>
     <RecordingEvidence p={p} intent={intent} />
-    <label className="draft-label" htmlFor={'draft-' + p.session.id}>{intent === 'retry' ? 'Твоя улучшенная попытка' : p.draft?.audioFile ? 'Проверь расшифровку' : 'Твой ответ'}</label>
-    <textarea id={'draft-' + p.session.id} aria-label={intent === 'retry' ? 'Улучшенная попытка' : 'Твой ответ по-английски'} lang="en" placeholder={intent === 'retry' ? 'My improved reply…' : 'Your reply…'} rows={3} value={p.input} onChange={e => p.setInput(e.target.value)} disabled={pending || listening || (intent === 'message' && last?.role === 'user')}
+    <label className="draft-label" htmlFor={'draft-' + p.session.id}>{intent === 'retry' ? 'Твоя улучшенная попытка' : p.draft?.audioFile ? 'Проверь расшифровку' : p.session.lesson.activity === 'writing' ? 'Твой текст на английском' : 'Твой ответ'}</label>
+    <textarea id={'draft-' + p.session.id} aria-label={intent === 'retry' ? 'Улучшенная попытка' : 'Твой ответ по-английски'} lang="en" placeholder={intent === 'retry' ? 'My improved reply…' : p.session.lesson.activity === 'writing' ? 'Write your first version here…' : 'Your reply…'} rows={p.session.lesson.activity === 'writing' ? 7 : 3} value={p.input} onChange={e => p.setInput(e.target.value)} disabled={pending || listening || (intent === 'message' && last?.role === 'user')}
       onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } }} />
     <div><small>Черновик сохраняется.<br />Ctrl + Enter, чтобы отправить</small>
       <button className="button primary" data-testid="send-draft" disabled={!canSend}>{intent === 'retry' ? 'Проверить попытку' : 'Отправить'}<Send size={17} /></button>
@@ -803,11 +822,16 @@ function DraftComposer({ p, intent, pending }: { p: SessionProps; intent: 'messa
   </form>;
 }
 
+function LessonMaterial({ material }: { material: NonNullable<Session['lesson']['material']> }) {
+  return <section className={motionStyles.lessonMaterial} aria-label={material.type === 'reading-passage' ? 'Текст для чтения' : 'Задание для письма'}><span className="eyebrow">{material.type === 'reading-passage' ? 'ТЕКСТ ДЛЯ ЧТЕНИЯ' : 'ЗАДАНИЕ ДЛЯ ПИСЬМА'}</span><p lang="en">{material.text}</p><p lang="en" className={motionStyles.materialInstruction}>{material.instruction}</p><small>Учебный материал создан для этой практики. Это не официальный экзаменационный вариант.</small></section>;
+}
+
 function SessionView(p: SessionProps) {
   const { session: s, voice, busy } = p;
   const [showListeningCheck, setShowListeningCheck] = useState(false);
   const active = s.status === 'active' || (s.status === 'error' && !s.analysis);
   const baseline = !!s.baseline;
+  const textActivity = s.lesson.activity === 'reading' || s.lesson.activity === 'writing';
   const baselineReplies = s.turns.filter(turn => turn.role === 'user' && turn.source === 'audio' && turn.audioFile && turn.support === 0 && !turn.transcriptEdited && !turn.disputed).length;
   const retryAllowed = s.status === 'review' || (s.status === 'completed' && !!s.retryDeferred);
   const last = s.turns.at(-1);
@@ -830,7 +854,7 @@ function SessionView(p: SessionProps) {
         : 'Проверяем смысл, английский и то, как ты использовал ответы собеседника.';
   const parsedStart = Date.parse(s.processing?.startedAt || '');
   const startedAt = Number.isFinite(parsedStart) ? parsedStart : p.busySince;
-  const voiceLabel = listening ? 'Слушаю тебя' : voice.playingLearnerRecording ? 'Слушаем твою запись'
+  const voiceLabel = listening ? 'Слушаю тебя' : textActivity && voice.state === 'idle' ? s.lesson.activity === 'writing' ? 'Твой текст, твой ход' : 'Читай и проверь понимание' : voice.playingLearnerRecording ? 'Слушаем твою запись'
     : busy || (s.processing ? 'Собеседник готовит ответ' : voiceNames[voice.state]);
   const orbState = listening ? 'listening' : busy || s.processing ? 'thinking' : voice.state;
   const emotion = s.error ? 'supportive' : voice.playingLearnerRecording ? 'attentive' : hasImprovedRetry ? 'pleased' : undefined;
@@ -838,53 +862,56 @@ function SessionView(p: SessionProps) {
 
   return <div className="session-page">
     <div className="session-heading"><button className="text-button" onClick={p.onBack}><ChevronRight className="back-icon" size={17} />{baseline ? 'Стартовая проверка' : 'Сегодня'}</button><span className="quiet-tag">{baseline ? 'Без подсказок' : s.mode === 'call' ? 'Созвон без опор' : 'Учебный режим'}</span></div>
-    <div className="page-heading"><div><h1>{s.lesson.title}</h1><p>{baseline ? 'Сначала твои ответы голосом. Оценка будет после разговора.' : contextNames[s.lesson.context]}</p></div></div>
+    <div className="page-heading"><div><h1>{s.lesson.title}</h1><p>{baseline ? 'Сначала твои ответы голосом. Оценка будет после разговора.' : s.lesson.track === 'ielts-foundation' ? 'Основа для IELTS · ' + LEARNING_ACTIVITIES.find(activity => activity.id === s.lesson.activity)?.title : contextNames[s.lesson.context]}</p></div></div>
+    {s.status === 'completed' && <SessionOutcome key={s.id} session={s} result={p.result} progression={p.progression} confirmed={p.confirmedCompletion} previousUnlocks={p.previousUnlocks} onNext={p.onNext} onDone={p.onDone} />}
     {active && <div className="conversation-layout">
-      <section className={`conversation-stage ${p.textMode ? 'text-mode' : ''}`}>
+      <section className={`conversation-stage ${p.textMode ? 'text-mode' : ''} ${textActivity ? motionStyles.materialStage : ''}`}>
         <VoiceOrb state={orbState} meterStore={voice.meterStore} emotion={emotion} statusDescription={voiceLabel} />
         <h2 className="voice-state" aria-live="polite">{voiceLabel}</h2>
         <p className="voice-caption">{listening ? 'Я не перебиваю. Закончи мысль и нажми «Стоп».' : p.draft?.audioFile ? 'Твоя запись готова. Проверь её перед отправкой.' : 'Скажи реплику, проверь расшифровку и отправь. Твой ход.'}</p>
         {(busy || s.processing) && <div className="conversation-progress"><ElapsedTime startedAt={startedAt} /><p>Твоя реплика сохранена. Ответ появится здесь.</p></div>}
-        {p.textMode && !baseline && last?.role === 'assistant' && <div className="current-prompt"><span>Собеседник</span><p lang="en">{last.text}</p></div>}
+        {(textActivity || p.textMode) && !baseline && last?.role === 'assistant' && <div className="current-prompt"><span>Собеседник</span><p lang="en">{last.text}</p></div>}
+        {s.lesson.material && <LessonMaterial material={s.lesson.material} />}
         <LiveCaptions voice={voice} />
         <UnuploadedRecording p={p} />
         {last?.role === 'user' && !busy && !s.processing && <div className="pending-reply"><p>Твоя реплика сохранена. Можно повторить получение ответа.</p><button className="button secondary" disabled={pending} onClick={p.onResend}><RefreshCw size={17} />Повторить ответ собеседника</button></div>}
-        <div className="voice-controls">
+        {!textActivity && <div className="voice-controls">
           <button className="voice-control" disabled={listening || !['speaking', 'thinking'].includes(voice.state)} onClick={() => voice.stop()} aria-label="Остановить голос"><Square size={22} /><span>Стоп голоса</span></button>
           <button className={`voice-control main ${listening ? 'recording' : ''}`} data-testid="record-toggle" disabled={recordDisabled} onClick={() => void voice.record(s.id + ':message')} aria-label={listening ? 'Закончить запись' : 'Говорить'}>
             {listening ? <Square size={23} /> : <Mic size={27} />}<span>{listening ? 'Стоп' : 'Говорить'}</span>
           </button>
           <button className="voice-control" disabled={pending || listening || unresolvedRecording || !s.turns.some(t => t.role === 'user') || (baseline && baselineReplies < 2)} onClick={() => void p.onAction('finish')} aria-label="Завершить разговор и получить разбор"><Check size={23} /><span>Разбор</span></button>
-        </div>
+        </div>}
+        {textActivity && <div className={motionStyles.textActivityAction}><p>Ответ можно написать. Голос для этого задания не обязателен.</p><button className="button secondary" disabled={pending || unresolvedRecording || !s.turns.some(turn => turn.role === 'user')} onClick={() => void p.onAction('finish')}>Завершить и получить разбор<Check size={18} /></button></div>}
         {!p.audioReady && <button className="text-button audio-setup" onClick={p.onSettings}>Подключить голос <ArrowUpRight size={15} /></button>}
         {voice.autoplayBlocked && last?.role === 'assistant' && <div className="autoplay-notice"><p>Браузер ждёт твоего нажатия, чтобы включить звук.</p><button className="button secondary" disabled={pending || listening} onClick={() => void voice.speak(s, last)}><Play size={16} />Включить голос</button></div>}
         {voice.canRetry && !voice.hasUnuploadedRecording && <button className="button secondary voice-retry" disabled={pending || listening} onClick={() => void voice.retry()}><RefreshCw size={16} />{voice.retryLabel || 'Повторить'}</button>}
         <div className="conversation-mode">
-          {!baseline && <><button className={p.textMode ? 'selected' : ''} aria-pressed={p.textMode} disabled={pending || listening} onClick={() => { p.setTextMode(true); void p.showTranscript(); }}>С текстом</button>
+          {!baseline && !textActivity && <><button className={p.textMode ? 'selected' : ''} aria-pressed={p.textMode} disabled={pending || listening} onClick={() => { p.setTextMode(true); void p.showTranscript(); }}>С текстом</button>
           <button className={!p.textMode ? 'selected' : ''} aria-pressed={!p.textMode} disabled={!p.audioReady || pending || listening} onClick={() => p.setTextMode(false)}>Без текста</button></>}
           {last?.role === 'assistant' && p.audioReady && <button disabled={pending || listening} onClick={() => voice.state === 'speaking' ? voice.stop() : void voice.speak(s, last)}>{voice.state === 'speaking' ? <Square size={14} /> : <Play size={14} />}{voice.state === 'speaking' ? 'Стоп' : 'Ещё раз'}</button>}
         </div>
-        {((p.textMode && !baseline) || p.input.trim() || p.draft?.audioFile) && <DraftComposer p={p} intent="message" pending={pending} />}
+        {(textActivity || (p.textMode && !baseline) || p.input.trim() || p.draft?.audioFile) && <DraftComposer p={p} intent="message" pending={pending} />}
       </section>
       <aside className="conversation-inspector">
         <div className="goal-block"><span className="eyebrow">ТВОЯ ЗАДАЧА</span><h3>{s.lesson.goal}</h3><p>{s.lesson.why}</p></div>
         {!baseline && s.mode === 'learning' && <section className="support-section"><h3><Lightbulb size={17} />Поддержка</h3><p>Сначала попробуй сам. Опора учитывается в разборе.</p><div className="support-buttons"><button disabled={pending || listening} onClick={() => p.onHint(1)}>Намёк</button><button disabled={pending || listening} onClick={() => p.onHint(2)}>Конструкция</button><button disabled={pending || listening} onClick={() => p.onHint(3)}>Пример</button></div>{p.hintText && <div className="hint-text">{p.hintText}</div>}</section>}
-        {!baseline && <details className="transcript" open={p.transcript} onToggle={e => { if (e.currentTarget.open && !p.transcript && !pending && !listening) void p.showTranscript(); }}><summary>Текст разговора<BookOpen size={17} /></summary><div className="turn-list">{s.turns.map(turn => <div className={`turn ${turn.role}`} key={turn.id}><span>{turn.role === 'user' ? 'Ты' : 'Собеседник'}</span><p lang="en">{turn.text}</p></div>)}</div></details>}
+        {!baseline && <details className="transcript" open={p.transcript} onToggle={e => { if (e.currentTarget.open && !p.transcript && !pending && !listening) void p.showTranscript(); }}><summary>{textActivity ? 'Текст задания и твои ответы' : 'Текст разговора'}<BookOpen size={17} /></summary><div className="turn-list">{s.turns.map(turn => <div className={`turn ${turn.role}`} key={turn.id}><span>{turn.role === 'user' ? 'Ты' : 'Собеседник'}</span><p lang="en">{turn.text}</p></div>)}</div></details>}
         {baseline && <div className="baseline-session-note"><strong>Проверяем настоящую речь</strong><p>Нужны хотя бы два своих ответа голосом. Попросить повторить или пояснить сказанное можно. Текст собеседника и готовые формулировки появятся после разбора.</p><span className="caption">Своих ответов без опоры: {baselineReplies}/2</span></div>}
-        <div className="inspector-note"><GraduationCap size={18} /><p>Подробный разбор будет после разговора. {(p.textMode || p.transcript) && 'Текст помогает ответить. Понимание на слух проверим без текста. '}Произношение по одному тексту не оценивается.</p></div>
+        <div className="inspector-note"><GraduationCap size={18} /><p>Подробный разбор будет после {textActivity ? 'задания' : 'разговора'}. {!textActivity && (p.textMode || p.transcript) && 'Текст помогает ответить. Понимание на слух проверим без текста. '}Произношение по одному тексту не оценивается.</p></div>
       </aside>
     </div>}
     {s.status === 'analysing' && <section className="analysis-loading">
       <VoiceOrb state="thinking" emotion={s.error ? 'supportive' : undefined} statusDescription="Готовим разбор" />
       <h2>Разбираем твою попытку</h2><p aria-live="polite">{analysisStage}</p><ElapsedTime startedAt={startedAt} />
-      {lastPartner && <div className="listening-recall"><strong>Пока ждём</strong><p>Что было важно собеседнику? Вспомни одну конкретную деталь.</p><button className="button secondary" onClick={() => setShowListeningCheck(!showListeningCheck)}>{showListeningCheck ? 'Скрыть ответ' : 'Проверить себя'}</button>{showListeningCheck && <p lang="en">{lastPartner.text}</p>}</div>}
+      {!textActivity && lastPartner && <div className="listening-recall"><strong>Пока ждём</strong><p>Что было важно собеседнику? Вспомни одну конкретную деталь.</p><button className="button secondary" onClick={() => setShowListeningCheck(!showListeningCheck)}>{showListeningCheck ? 'Скрыть ответ' : 'Проверить себя'}</button>{showListeningCheck && <p lang="en">{lastPartner.text}</p>}</div>}
       <p>Можно свернуть занятие. Готовый разбор останется в истории.</p><button className="button secondary" onClick={p.onBack}>Вернусь чуть позже</button>
     </section>}
     {s.status === 'error' && s.error && <div className="message-banner error"><p>{s.error}</p>{s.analysis && <button className="button secondary" disabled={pending} onClick={() => void p.onAction('reanalyse')}>Повторить разбор</button>}</div>}
     {s.analysis && <div className="analysis-layout"><div>
-      <section className="analysis-intro"><div className="review-orb-heading"><VoiceOrb state="idle" emotion={hasImprovedRetry ? 'pleased' : 'calm'} statusDescription={hasImprovedRetry ? 'Твоя улучшенная попытка подтверждена' : 'Разбор готов'} /><div><span className="eyebrow">{s.retryDeferred ? 'ПОПЫТКА НА ПОТОМ' : hasImprovedRetry ? 'ЕСТЬ УЛУЧШЕНИЕ' : 'ТВОЙ РАЗБОР'}</span><h2>{hasImprovedRetry ? 'Вот, уже сильнее.' : s.retryDeferred ? 'Осталась одна попытка.' : 'Сделаем одну реплику сильнее.'}</h2></div></div><p className="analysis-summary">{s.analysis.summary}</p>{s.analysis.strengths.length > 0 && <div className="strengths">{s.analysis.strengths.map((value, i) => <p key={i}><Check size={17} />{value}</p>)}</div>}</section>
+      <section className="analysis-intro"><div className="review-orb-heading"><VoiceOrb state="idle" emotion={hasImprovedRetry ? 'pleased' : 'calm'} statusDescription={hasImprovedRetry ? 'Твоя улучшенная попытка подтверждена' : 'Разбор готов'} /><div><span className="eyebrow">{s.retryDeferred ? 'ПОПЫТКА НА ПОТОМ' : hasImprovedRetry ? 'ЕСТЬ УЛУЧШЕНИЕ' : 'ТВОЙ РАЗБОР'}</span><h2>{hasImprovedRetry ? 'Вот, уже сильнее.' : s.retryDeferred ? 'Осталась одна попытка.' : textActivity ? 'Сделаем твой ответ сильнее.' : 'Сделаем одну реплику сильнее.'}</h2></div></div><p className="analysis-summary">{s.analysis.summary}</p>{s.analysis.strengths.length > 0 && <div className="strengths">{s.analysis.strengths.map((value, i) => <p key={i}><Check size={17} />{value}</p>)}</div>}</section>
       {s.analysis.priorities.map((priority, i) => <section className="priority" key={i}><div className="priority-heading"><span className="priority-number">0{i + 1}</span><span className="quiet-tag">{priority.type === 'language' ? 'Английский' : 'Диалог'}</span></div><h3>{priority.title}</h3><blockquote lang="en">{priority.quote}</blockquote><p>{priority.explanation}</p><details><summary>Возможная формулировка</summary><p className="example" lang="en">{priority.example}</p><small>Один из вариантов. Свою попытку формулируй своими словами.</small></details><div className="retry-prompt"><Target size={17} /><span>{priority.retryInstruction}</span></div></section>)}
-      {retryAllowed && <section className="retry-section"><h2>Теперь твоя версия</h2><p>Повтори важный эпизод своими словами. Сравним его с исходной попыткой.</p>
+      {retryAllowed && <section className="retry-section"><h2>Теперь твоя версия</h2><p>{textActivity ? 'Вырази свою мысль заново. Сравним её с исходной попыткой.' : 'Повтори важный эпизод своими словами. Сравним его с исходной попыткой.'}</p>
         {p.audioReady && <><VoiceOrb state={orbState} meterStore={voice.meterStore} emotion={emotion} statusDescription={voiceLabel} /><div className="retry-voice"><button className="button secondary" data-testid="record-toggle" disabled={!listening && (pending || voice.hasUnuploadedRecording || !!p.draft?.audioFile)} onClick={() => void voice.record(s.id + ':retry')}>{listening ? <Square size={17} /> : <Mic size={17} />}{listening ? 'Стоп' : 'Сказать голосом'}</button><span aria-live="polite">{voiceLabel}</span></div></>}
         <LiveCaptions voice={voice} /><UnuploadedRecording p={p} />
         {voice.canRetry && !voice.hasUnuploadedRecording && <button className="text-button" disabled={pending || listening} onClick={() => void voice.retry()}>{voice.retryLabel || 'Повторить'}</button>}
@@ -892,13 +919,12 @@ function SessionView(p: SessionProps) {
         <DraftComposer p={p} intent="retry" pending={pending} />
       </section>}
       {s.retries.map((retry, i) => <section className="retry-result" key={retry.id || i}><span className="eyebrow">СОБСТВЕННАЯ ПОПЫТКА {i + 1} · {retry.improved === true ? 'Есть улучшение' : 'Продолжаем работу'}</span><blockquote lang="en">{retry.text}</blockquote>{retry.audioFile && <audio controls preload="none" src={'/api/audio/' + encodeURIComponent(retry.audioFile)} />}<p>{retry.feedback}</p></section>)}
-      {s.status !== 'completed' && <section className="finish-section"><h3>Как ощущался разговор?</h3><div className="comfort-choice" aria-label="Комфорт от 1 до 5">{[1, 2, 3, 4, 5].map(n => <button key={n} aria-pressed={p.comfort === n} className={p.comfort === n ? 'selected' : ''} onClick={() => p.setComfort(n)}>{n}</button>)}<span>Сложно → комфортно</span></div><button className="button primary" disabled={pending || listening || unresolvedRecording || s.status !== 'review' || !completion.canComplete} onClick={() => void p.onAction('complete', { comfort: p.comfort })}>Завершить занятие<Check size={18} /></button>{s.status === 'review' && completion.needsRetry && <><p>{completion.reason}</p><button className="button secondary" disabled={pending || listening || unresolvedRecording} onClick={() => void p.onAction('complete', { comfort: p.comfort, deferRetry: true })}>На сегодня всё. К попытке вернусь позже</button></>}</section>}
-      {s.status === 'completed' && <div className="completed-note"><Check size={22} /><span>{s.retryDeferred ? 'Разговор сохранён. К улучшенной попытке можно вернуться из истории.' : 'Занятие завершено. Свой повтор сохранён отдельно от независимой проверки.'}</span></div>}
+      {s.status !== 'completed' && <section className="finish-section"><h3>Как ощущалась {textActivity ? 'задача' : 'беседа'}?</h3><div className="comfort-choice" aria-label="Комфорт от 1 до 5">{[1, 2, 3, 4, 5].map(n => <button key={n} aria-pressed={p.comfort === n} className={p.comfort === n ? 'selected' : ''} onClick={() => p.setComfort(n)}>{n}</button>)}<span>Сложно → комфортно</span></div><button className="button primary" disabled={pending || listening || unresolvedRecording || s.status !== 'review' || !completion.canComplete} onClick={() => void p.onAction('complete', { comfort: p.comfort })}>Завершить занятие<Check size={18} /></button>{s.status === 'review' && completion.needsRetry && <><p>{completion.reason}</p><button className="button secondary" disabled={pending || listening || unresolvedRecording} onClick={() => void p.onAction('complete', { comfort: p.comfort, deferRetry: true })}>На сегодня всё. К попытке вернусь позже</button></>}</section>}
     </div><aside className="analysis-aside">
       <section><h3>Следующий шаг</h3><p>{s.analysis.nextFocus}</p><span className="caption">{date(s.analysis.createdAt)}</span></section>
       <details><summary>Наблюдения по навыкам</summary>{s.analysis.evidence.map((evidence, i) => <div className="observation" key={i}><strong>{SKILLS.find(skill => skill.id === evidence.skill)?.label}</strong><span>{evidence.result === 'success' ? 'Получилось' : evidence.result === 'partial' ? 'Частично' : evidence.result === 'difficulty' ? 'Есть трудность' : evidence.result === 'disputed' ? 'Спорно' : 'Не проверено'}</span><p>{evidence.reason}</p></div>)}</details>
       <details><summary>Ограничения оценки</summary>{s.analysis.limitations.map((value, i) => <p key={i}>{value}</p>)}</details>
-      <details><summary>Исходный разговор</summary>{s.turns.map(turn => <div className="turn" key={turn.id}><span>{turn.role === 'user' ? 'Ты' : 'Собеседник'}</span><p lang="en">{turn.text}</p>{turn.audioFile && <audio controls preload="none" src={'/api/audio/' + encodeURIComponent(turn.audioFile)} />}{turn.role === 'user' && <button className="text-button" disabled={pending || listening} onClick={() => { p.setEditing(turn.id); p.setEditText(turn.text); }}>Исправить расшифровку</button>}{p.editing === turn.id && <div className="edit-turn"><textarea value={p.editText} onChange={e => p.setEditText(e.target.value)} aria-label="Исправленный транскрипт" /><button className="button secondary" disabled={pending} onClick={() => { void p.onAction('edit', { turnId: turn.id, text: p.editText, disputed: false }); p.setEditing(''); }}>Сохранить и пересчитать</button><button className="text-button" disabled={pending} onClick={() => { void p.onAction('edit', { turnId: turn.id, text: p.editText, disputed: true }); p.setEditing(''); }}>Исключить как спорное</button></div>}</div>)}</details>
+      <details><summary>{textActivity ? 'Исходное задание и ответы' : 'Исходный разговор'}</summary>{s.lesson.material && <LessonMaterial material={s.lesson.material} />}{s.turns.map(turn => <div className="turn" key={turn.id}><span>{turn.role === 'user' ? 'Ты' : 'Собеседник'}</span><p lang="en">{turn.text}</p>{turn.audioFile && <audio controls preload="none" src={'/api/audio/' + encodeURIComponent(turn.audioFile)} />}{turn.role === 'user' && <button className="text-button" disabled={pending || listening} onClick={() => { p.setEditing(turn.id); p.setEditText(turn.text); }}>Исправить расшифровку</button>}{p.editing === turn.id && <div className="edit-turn"><textarea value={p.editText} onChange={e => p.setEditText(e.target.value)} aria-label="Исправленный транскрипт" /><button className="button secondary" disabled={pending} onClick={() => { void p.onAction('edit', { turnId: turn.id, text: p.editText, disputed: false }); p.setEditing(''); }}>Сохранить и пересчитать</button><button className="text-button" disabled={pending} onClick={() => { void p.onAction('edit', { turnId: turn.id, text: p.editText, disputed: true }); p.setEditing(''); }}>Исключить как спорное</button></div>}</div>)}</details>
     </aside></div>}
   </div>;
 }

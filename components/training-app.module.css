@@ -5,6 +5,36 @@
   --motion-slide: cubic-bezier(.32, .72, 0, 1);
 }
 
+.pathSelector { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
+.pathSelector button { min-height: 44px; padding: 10px 16px; border: 1px solid transparent; border-radius: 24px; background: #ffffff85; color: var(--muted); font-size: 13px; transition: background-color 160ms ease, color 160ms ease, transform 180ms cubic-bezier(.23,1,.32,1); }
+.pathSelector .selectedPath { background: var(--lavender); color: var(--graphite); font-weight: 550; }
+.pathSelector button:active:not(:focus-visible) { transform: scale(.97); transition-duration: 100ms; }
+.pathPurpose { padding: 0 2px 23px; }
+.recommendationReason { margin: 18px 0 22px; border-top: 1px solid var(--line-soft); padding-top: 17px; }
+.recommendationReason > span { font-size: 12px; color: var(--muted); font-weight: 550; }
+.recommendationReason > p { font-size: 14px; margin: 6px 0 9px; color: var(--graphite); }
+.recommendationReason > small { color: var(--muted); font-size: 12px; }
+.pathPurpose > strong { display: block; font-size: 19px; margin-bottom: 6px; }
+.pathPurpose > p { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+.foundationNote { color: var(--muted); font-size: 13px; margin: -4px 0 18px; max-width: 70ch; }
+.activityMilestones { display: flex; flex-wrap: wrap; gap: 14px 28px; padding: 18px 0 0; }
+.activityMilestones > span { font-size: 12px; color: var(--muted); }
+.activityMilestones strong { display: block; font-size: 14px; color: var(--graphite); font-weight: 550; margin-bottom: 3px; }
+.lessonMaterial { text-align: left; background: #ffffff; color: #222124; border-radius: 24px; padding: 24px; margin: 22px 0; }
+.lessonMaterial :global(.eyebrow), .lessonMaterial > small { color: #6a6672; }
+.lessonMaterial > p { margin: 15px 0; font-size: 17px; line-height: 1.8; white-space: pre-line; }
+.lessonMaterial .materialInstruction { border-top: 1px solid #2221241a; padding-top: 18px; font-size: 15px; font-weight: 550; }
+.lessonMaterial > small { font-size: 12px; }
+.materialStage :global(.voice-orb) { width: 120px; height: 128px; }
+.materialStage :global(.orb-body) { width: 92px; height: 92px; }
+.materialStage :global(.voice-caption) { display: none; }
+.textActivityAction { margin: 18px 0; }
+.textActivityAction > p { font-size: 13px; color: #c2bfc8; margin-bottom: 14px; }
+.textActivityAction :global(.button) { white-space: normal; }
+@media (max-width: 500px) { .pathSelector { gap: 7px; } .pathSelector button { font-size: 12px; padding-inline: 13px; } .lessonMaterial { padding: 20px; } .lessonMaterial > p { font-size: 16px; } .textActivityAction :global(.button) { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .pathSelector button { transition: none; } .pathSelector button:active { transform: none; } }
+:global(html[data-input='keyboard']) .pathSelector button { transition: none; transform: none; }
+
 /* Solid reading surfaces; the floating navigation is the one glass layer. */
 .motionShell :global(.daily-panel),
 .motionShell :global(.conversation-inspector),

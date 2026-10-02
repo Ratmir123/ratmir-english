@@ -19,6 +19,7 @@ struct TrainingState: Decodable {
     let completed: Int
     let audioUsage: AudioUsage?
     let onboarding: OnboardingState?
+    let progression: ProgressionState?
 }
 struct OnboardingState: Decodable {
     let version: Int
@@ -65,11 +66,15 @@ struct BaselineReport: Decodable {
 }
 struct AudioUsage: Decodable { let usedUsd: Double; let estimated: Bool; let budgetUsd: Double; let recordedMinutes: Double; let spokenCharacters: Int }
 struct Lesson: Decodable {
+    struct Material: Decodable { let type: String; let text: String; let instruction: String; let source: String }
     let title: String
     let goal: String
     let why: String
     let minutes: Int
     let context: String?
+    let track: String?
+    let activity: String?
+    let material: Material?
 }
 struct Turn: Decodable, Identifiable {
     let id: String
