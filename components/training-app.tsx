@@ -488,7 +488,7 @@ export function TrainingApp() {
               </div>
               <div className="lesson-copy">
                 <h2>{active?.lesson.title || (calibration < 3 ? 'Узнаем, как ты говоришь' : recommendation?.title || state.reviews[0]?.focus || 'Новый разговор на английском')}</h2>
-                <p>{active?.lesson.goal || (calibration < 3 ? 'Знакомая тема и живой диалог. Найдём твои сильные стороны и то, что стоит потренировать первым.' : 'Следующая практика учтёт твои последние попытки и ближайшие цели.')}</p>
+                <p>{active?.lesson.goal || (calibration < 3 ? 'Знакомая тема и живой диалог. Найдём твои сильные стороны и то, что стоит потренировать первым.' : 'Следующее занятие учтёт твои последние попытки и ближайшие цели.')}</p>
               </div>
               <div className="daily-controls lesson-meta">
                 <span className="duration"><History size={16} /> {active?.lesson.minutes || state.profile.dailyMinutes} минут</span>
