@@ -224,7 +224,8 @@ struct MeasuredVoiceOrb: View {
     @ObservedObject var meter: VoiceMeter
     let mode: VoiceOrbMode
     var mood: VoiceOrbMood? = nil
-    var body: some View { VoiceOrb(mode: mode, level: meter.level, mood: mood) }
+    var statusDescription: String? = nil
+    var body: some View { VoiceOrb(mode: mode, level: meter.level, mood: mood, statusDescription: statusDescription) }
 }
 
 /// Keep the timeline in this leaf; it never recomputes the transcript or composer.
@@ -233,6 +234,7 @@ struct VoiceOrb: View {
     let mode: VoiceOrbMode
     let level: Double
     var mood: VoiceOrbMood? = nil
+    var statusDescription: String? = nil
     @State private var winking = false
     @State private var lastInteraction = Date.distantPast
     @State private var interaction = 0
@@ -283,7 +285,7 @@ struct VoiceOrb: View {
                             .offset(x: size * 0.30, y: size * 0.31)
                         shape.fill(LinearGradient(colors: [Color.white.opacity(0.40), Color.white.opacity(0.015), Theme.charcoal.opacity(0.09)], startPoint: .topLeading, endPoint: .bottomTrailing))
                         HStack(spacing: size * 0.2) {
-                            OrbEye(size: size, side: 0, mood: expression, blink: blink, wink: false)
+                            OrbEye(size: size, side: 0, mood: winking && expression == .pleased ? .friendly : expression, blink: blink, wink: false)
                             OrbEye(size: size, side: 1, mood: expression, blink: blink, wink: winking)
                         }
                             .offset(y: -size * 0.005 + (mode == .listening ? -energy * size * 0.012 : 0))
@@ -306,6 +308,7 @@ struct VoiceOrb: View {
         interaction += 1
     }
     private var accessibilityText: String {
+        if let statusDescription { return statusDescription }
         switch mode { case .ready: return "Собеседник ждёт твоего ответа"; case .listening: return "Собеседник слушает, микрофон включён"; case .speaking: return "Собеседник говорит"; case .thinking: return "Собеседник готовит ответ" }
     }
 }

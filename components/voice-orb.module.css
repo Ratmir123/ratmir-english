@@ -158,6 +158,8 @@
 .orb[data-wink='true'] .eye:last-child .pillEye { opacity: 0; }
 .orb[data-emotion='pleased'] .arcEye,
 .orb[data-wink='true'] .eye:last-child .arcEye { opacity: 1; }
+.orb[data-emotion='pleased'][data-wink='true'] .eye:first-child .pillEye { opacity: 1; }
+.orb[data-emotion='pleased'][data-wink='true'] .eye:first-child .arcEye { opacity: 0; }
 .orb[data-wink='true'] .eye:last-child { transform: none; }
 .orb[data-bounce='true'] .body { animation: greeting 280ms var(--orb-ease) paused; }
 .orb[data-awake='true'][data-bounce='true'] .body { animation-play-state: running; }

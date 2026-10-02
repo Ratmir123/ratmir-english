@@ -40,12 +40,13 @@ struct Priority: Decodable, Identifiable {
     let retryInstruction: String
 }
 struct Review: Decodable {
+    let version: Int?
     let summary: String
     let strengths: [String]
     let priorities: [Priority]
     let limitations: [String]
 }
-struct Retry: Decodable { let text: String; let feedback: String; let improved: Bool? }
+struct Retry: Decodable { let text: String; let feedback: String; let improved: Bool?; let analysisVersion: Int? }
 struct Conversation: Decodable, Identifiable {
     let id: String
     let lesson: Lesson

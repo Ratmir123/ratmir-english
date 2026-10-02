@@ -190,7 +190,14 @@ struct ConversationView: View {
     private var hasReview: Bool { conversation?.analysis != nil }
     private var mayComplete: Bool {
         guard let value = conversation, let analysis = value.analysis else { return false }
-        return value.completion?.canComplete ?? (analysis.priorities.isEmpty || value.retries.last?.improved == true)
+        return value.completion?.canComplete ?? (analysis.priorities.isEmpty || hasConfirmedImprovement(value))
+    }
+    private func hasConfirmedImprovement(_ value: Conversation) -> Bool {
+        guard let analysis = value.analysis else { return false }
+        if let completion = value.completion, !completion.canComplete || completion.needsRetry { return false }
+        return value.retries.contains {
+            $0.improved == true && ($0.analysisVersion == nil || $0.analysisVersion == analysis.version)
+        }
     }
     private var orbMode: VoiceOrbMode {
         if client.recording { return .listening }
@@ -292,7 +299,7 @@ struct ConversationView: View {
                 } label: { Text("Твоя задача").font(.footnote.weight(.medium)) }
             }
             VStack(spacing: 8) {
-                MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode, mood: orbMood).frame(width: 214, height: 214)
+                MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode, mood: orbMood, statusDescription: voiceLabel).frame(width: 214, height: 214)
                 HStack(spacing: 7) {
                     Circle().fill(client.recording ? Theme.lime : client.playing ? Theme.lavender : Theme.charcoal.opacity(0.45)).frame(width: 6, height: 6)
                     Text(voiceLabel).font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary)
@@ -337,12 +344,13 @@ struct ConversationView: View {
         if client.playing { return client.playingLearnerRecording ? "Слушаем твою запись" : "Собеседник говорит" }
         if client.voiceLoading { return "Готовим голос" }
         if client.busy { return client.operationStage ?? "Готовим ответ" }
+        if conversation?.status == "analysing" { return "Разбираем разговор" }
         if conversation?.processing != nil { return "Собеседник готовит ответ" }
         return "Твой ход"
     }
     private var analysisWaiting: some View {
         VStack(spacing: 22) {
-            MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode, mood: orbMood).frame(width: 200, height: 200)
+            MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode, mood: orbMood, statusDescription: voiceLabel).frame(width: 200, height: 200)
             ActivityPanel(title: conversation?.processing?.stage == "waiting-retry" ? "Сервис задержал разбор" : "Разбираем разговор", detail: "Проверяем смысл, английский и то, как ты использовал ответы собеседника.", startedAt: analysisStartedAt)
             if let turn = conversation?.turns.last(where: { $0.role == "assistant" }) {
                 SurfaceCard {
@@ -373,15 +381,17 @@ struct ConversationView: View {
         }.frame(maxWidth: .infinity).padding(.vertical, 20)
     }
     private func reviewHeader(_ value: Conversation) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let improved = hasConfirmedImprovement(value)
+        let orbStatus = improved ? "Твоя улучшенная попытка подтверждена" : value.retryDeferred == true ? "Улучшенная попытка отложена" : "Разбор готов"
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                VoiceOrb(mode: .ready, level: 0, mood: value.retries.last?.improved == true ? .pleased : .calm)
+                VoiceOrb(mode: .ready, level: 0, mood: improved ? .pleased : .calm, statusDescription: orbStatus)
                     .frame(width: 78, height: 78)
                 Spacer()
-                Text(value.retryDeferred == true ? "ПОПЫТКА НА ПОТОМ" : value.status == "completed" ? "ЗАВЕРШЕНО" : value.retries.last?.improved == true ? "ЕСТЬ УЛУЧШЕНИЕ" : "СЛЕДУЮЩИЙ ШАГ")
+                Text(value.retryDeferred == true ? "ПОПЫТКА НА ПОТОМ" : value.status == "completed" ? "ЗАВЕРШЕНО" : improved ? "ЕСТЬ УЛУЧШЕНИЕ" : "СЛЕДУЮЩИЙ ШАГ")
                     .font(.caption2.weight(.semibold)).tracking(1).foregroundStyle(Theme.secondary)
             }
-            Text(value.retryDeferred == true ? "Осталась одна попытка." : value.retries.last?.improved == true ? "Вот, уже сильнее." : value.status == "completed" ? "Практика сохранена." : "Одна реплика.\nСделаем её сильнее.")
+            Text(value.retryDeferred == true ? "Осталась одна попытка." : improved ? "Вот, уже сильнее." : value.status == "completed" ? "Практика сохранена." : "Одна реплика.\nСделаем её сильнее.")
                 .font(.system(.title, design: .rounded).weight(.semibold)).tracking(-0.5)
             Text(value.lesson.title).font(.subheadline).foregroundStyle(Theme.secondary)
             if value.retryDeferred == true { Text("К улучшенной попытке вернёмся позже. Навык пока не считается закреплённым.").font(.footnote).foregroundStyle(Theme.secondary) }
