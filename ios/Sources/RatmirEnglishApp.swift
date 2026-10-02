@@ -194,58 +194,78 @@ struct ConversationView: View {
     private var orbMode: VoiceOrbMode {
         if client.recording { return .listening }
         if client.playing { return .speaking }
-        if client.voiceLoading || client.busy || conversation?.status == "analysing" { return .thinking }
+        if client.voiceLoading || client.busy || conversation?.processing != nil || conversation?.status == "analysing" { return .thinking }
         return .ready
     }
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        if let value = conversation {
-                            if hasReview { reviewHeader(value) }
-                            else if value.status == "analysing" { analysisWaiting }
-                            else { liveConversation(value) }
-                            if let analysis = value.analysis { reviewContent(analysis, conversation: value) }
-                            if client.busy && !client.recording && value.status != "analysing" {
-                                ActivityPanel(title: client.operationStage ?? "Готовим ответ", detail: "Твой ответ сохранён. Можно немного выдохнуть.", startedAt: client.operationStartedAt)
-                            }
-                            Color.clear.frame(height: 1).id("end")
-                        }
-                    }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
-                }.background(Theme.surface).scrollDismissesKeyboard(.interactively)
-                    .onChange(of: conversation?.turns.count) { _, _ in
-                        draftFocused = false
-                        if showConversation { proxy.scrollTo("end", anchor: .bottom) }
-                    }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if let value = conversation {
-                    if active { composer }
-                    else if hasReview && value.status != "completed" { reviewDock }
+            decoratedConversation
+                .toolbar { conversationToolbar }
+                .task(id: pollingKey) {
+                    if conversation?.status == "analysing" { analysisStartedAt = processingStart ?? client.operationStartedAt ?? Date() }
+                    await client.pollReview()
                 }
-            }
-            .navigationTitle(hasReview ? "Твой разбор" : "Разговор").navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.surface, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Text(conversation?.mode == "call" ? "СОЗВОН" : "С ОПОРАМИ")
-                        .font(.caption2.weight(.semibold)).tracking(0.8).foregroundStyle(Theme.secondary)
+                .alert("Не получилось", isPresented: errorPresented) {
+                    Button("Понятно", role: .cancel) { client.error = nil }
+                } message: { Text(client.error ?? "") }
+        }
+    }
+    private var pollingKey: String { (conversation?.status ?? "") + "|" + (conversation?.processing?.stage ?? "") }
+    private var errorPresented: Binding<Bool> {
+        Binding(get: { client.error != nil }, set: { if !$0 { client.error = nil } })
+    }
+    private var decoratedConversation: some View {
+        conversationScroll
+            .safeAreaInset(edge: .bottom, spacing: 0) { bottomDock }
+            .navigationTitle(hasReview ? "Твой разбор" : "Разговор")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.surface, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+    }
+    private var conversationScroll: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                conversationContent.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
+            }.background(Theme.surface).scrollDismissesKeyboard(.interactively)
+                .onChange(of: conversation?.turns.count) { _, _ in
+                    draftFocused = false
+                    if showConversation { proxy.scrollTo("end", anchor: .bottom) }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { draftFocused = false; client.minimizeConversation() } label: {
-                        Image(systemName: "chevron.down").font(.subheadline.weight(.semibold))
-                            .frame(width: 36, height: 36).background(Color.white.opacity(0.7), in: Circle())
-                    }.accessibilityLabel("Свернуть занятие").disabled(client.recording)
+        }
+    }
+    private var conversationContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            if let value = conversation {
+                conversationHeader(value)
+                if let analysis = value.analysis { reviewContent(analysis, conversation: value) }
+                if (client.busy || value.processing != nil) && !client.recording && value.status != "analysing" {
+                    ActivityPanel(title: client.operationStage ?? "Собеседник готовит ответ", detail: "Твой ответ сохранён. Можно немного выдохнуть.", startedAt: client.operationStartedAt ?? processingStart)
                 }
+                Color.clear.frame(height: 1).id("end")
             }
-            .task(id: (conversation?.status ?? "") + "|" + (conversation?.processing?.stage ?? "")) {
-                if conversation?.status == "analysing" { analysisStartedAt = processingStart ?? client.operationStartedAt ?? Date() }
-                await client.pollReview()
-            }
-            .alert("Не получилось", isPresented: Binding(get: { client.error != nil }, set: { if !$0 { client.error = nil } })) {
-                Button("Понятно", role: .cancel) { client.error = nil }
-            } message: { Text(client.error ?? "") }
+        }
+    }
+    @ViewBuilder private func conversationHeader(_ value: Conversation) -> some View {
+        if hasReview { reviewHeader(value) }
+        else if value.status == "analysing" { analysisWaiting }
+        else { liveConversation(value) }
+    }
+    @ViewBuilder private var bottomDock: some View {
+        if let value = conversation {
+            if active { composer }
+            else if hasReview && value.status != "completed" { reviewDock }
+        }
+    }
+    @ToolbarContentBuilder private var conversationToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Text(conversation?.mode == "call" ? "СОЗВОН" : "С ОПОРАМИ")
+                .font(.caption2.weight(.semibold)).tracking(0.8).foregroundStyle(Theme.secondary)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button { draftFocused = false; client.minimizeConversation() } label: {
+                Image(systemName: "chevron.down").font(.subheadline.weight(.semibold))
+                    .frame(width: 36, height: 36).background(Color.white.opacity(0.7), in: Circle())
+            }.accessibilityLabel("Свернуть занятие").disabled(client.recording)
         }
     }
     private var processingStart: Date? {
@@ -264,7 +284,7 @@ struct ConversationView: View {
                 } label: { Text("Твоя задача").font(.footnote.weight(.medium)) }
             }
             VStack(spacing: 8) {
-                VoiceOrb(mode: orbMode, level: client.audioLevel).frame(width: 214, height: 214)
+                MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode).frame(width: 214, height: 214)
                 HStack(spacing: 7) {
                     Circle().fill(client.recording ? Theme.lime : client.playing ? Theme.lavender : Theme.charcoal.opacity(0.45)).frame(width: 6, height: 6)
                     Text(voiceLabel).font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary)
@@ -274,7 +294,7 @@ struct ConversationView: View {
             HStack(spacing: 10) {
                 Button {
                     if client.playing { client.stopSpeaking() } else { Task { await client.speak() } }
-                } label: { Label(client.playing ? "Пауза" : "Ещё раз", systemImage: client.playing ? "pause.fill" : "speaker.wave.2") }
+                } label: { Label(client.playing ? "Стоп" : "Ещё раз", systemImage: client.playing ? "stop.fill" : "speaker.wave.2") }
                     .buttonStyle(QuietButton()).disabled(client.busy || client.voiceLoading || client.recording)
                 if value.mode == "call" && !client.assistantTextShown {
                     Button { Task { await client.revealText() } } label: { Label("Текст", systemImage: "text.alignleft") }
@@ -306,14 +326,15 @@ struct ConversationView: View {
     }
     private var voiceLabel: String {
         if client.recording { return "Слушаю тебя" }
-        if client.playing { return "Собеседник говорит" }
+        if client.playing { return client.playingLearnerRecording ? "Слушаем твою запись" : "Собеседник говорит" }
         if client.voiceLoading { return "Готовим голос" }
         if client.busy { return client.operationStage ?? "Готовим ответ" }
+        if conversation?.processing != nil { return "Собеседник готовит ответ" }
         return "Твой ход"
     }
     private var analysisWaiting: some View {
         VStack(spacing: 22) {
-            VoiceOrb(mode: orbMode, level: client.audioLevel).frame(width: 200, height: 200)
+            MeasuredVoiceOrb(meter: client.voiceMeter, mode: orbMode).frame(width: 200, height: 200)
             ActivityPanel(title: conversation?.processing?.stage == "waiting-retry" ? "Сервис задержал разбор" : "Разбираем разговор", detail: "Проверяем смысл, английский и то, как ты использовал ответы собеседника.", startedAt: analysisStartedAt)
             if let turn = conversation?.turns.last(where: { $0.role == "assistant" }) {
                 SurfaceCard {
@@ -327,7 +348,7 @@ struct ConversationView: View {
                             }.buttonStyle(QuietButton())
                             Button {
                                 if client.playing { client.stopSpeaking() } else { Task { await client.speak() } }
-                            } label: { Image(systemName: client.playing ? "pause.fill" : "speaker.wave.2") }
+                            } label: { Image(systemName: client.playing ? "stop.fill" : "speaker.wave.2") }
                                 .buttonStyle(QuietButton()).disabled(client.busy || client.voiceLoading)
                                 .accessibilityLabel("Послушать ответ собеседника ещё раз")
                         }
@@ -439,17 +460,17 @@ struct ConversationView: View {
                 TextField(retry ? "Новая попытка на английском" : "Ответ на английском", text: $client.draft, axis: .vertical)
                     .lineLimit(1...3).focused($draftFocused).font(.subheadline).padding(14)
                     .background(.white, in: RoundedRectangle(cornerRadius: 18))
-                    .disabled(client.busy || client.pendingMessageID != nil)
+                    .disabled(client.busy || conversation?.processing != nil || client.pendingMessageID != nil)
             }
             HStack(spacing: 10) {
                 Button {
                     draftFocused = false
                     Task { if client.recording { await client.stopRecording() } else { await client.beginRecording() } }
                 } label: { HStack { Image(systemName: client.recording ? "stop.fill" : "mic.fill"); Text(client.recording ? "Готово" : client.microphoneStarting ? "Включаем" : "Говорить") } }
-                    .buttonStyle(PrimaryButton()).disabled((client.busy && !client.recording) || client.pendingMessageID != nil || client.hasUnuploadedRecording || client.microphoneStarting)
+                    .buttonStyle(PrimaryButton()).disabled(!client.recording && (client.busy || conversation?.processing != nil || client.pendingMessageID != nil || client.hasUnuploadedRecording || client.microphoneStarting))
                 Button { draftFocused = false; Task { await client.send(retry: retry) } } label: {
                     HStack { Text(client.pendingMessageID != nil ? "Повторить" : "Отправить"); if client.busy { ProgressView().tint(Theme.charcoal) } else { Image(systemName: "arrow.up") } }
-                }.buttonStyle(SecondaryButton()).disabled(client.busy || client.recording || client.hasUnuploadedRecording || client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }.buttonStyle(SecondaryButton()).disabled(client.busy || conversation?.processing != nil || client.recording || client.hasUnuploadedRecording || client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if !client.recording && (client.recordedFile != nil || client.hasUnuploadedRecording) {
                 HStack(spacing: 14) {
@@ -656,8 +677,14 @@ struct SettingsView: View {
                     Text("Уведомления отключены в настройках iPhone.").font(.subheadline).foregroundStyle(Theme.secondary)
                     Button { client.openSystemSettings() } label: { Label("Разрешить уведомления", systemImage: "arrow.up.right") }.buttonStyle(SecondaryButton())
                 } else if client.notificationState == "unavailable" || client.notificationState == "unsupported" {
-                    Text("iPhone не разрешил создать напоминание. В этой установке уведомления пока недоступны.").font(.subheadline).foregroundStyle(Theme.secondary)
+                    Text("Не удалось сохранить напоминание. Проверь разрешение на уведомления и попробуй ещё раз.")
+                        .font(.subheadline).foregroundStyle(Theme.secondary)
                     Button { client.openSystemSettings() } label: { Label("Проверить настройки iPhone", systemImage: "arrow.up.right") }.buttonStyle(QuietButton())
+                    Button {
+                        let parts = Calendar.current.dateComponents([.hour, .minute], from: reminderDate)
+                        Task { await client.scheduleReminder(hour: parts.hour ?? 19, minute: parts.minute ?? 0) }
+                    } label: { Label("Повторить включение", systemImage: "arrow.clockwise") }
+                        .buttonStyle(SecondaryButton()).disabled(client.reminderBusy)
                 } else {
                     Toggle("Ежедневное напоминание", isOn: Binding(get: { client.reminderEnabled }, set: { enabled in
                         Task {
@@ -680,6 +707,16 @@ struct SettingsView: View {
                     Text(client.reminderEnabled ? "Напоминание включено. Время местное для этого iPhone." : "Выбери время, когда тебе удобно начать разговор.")
                         .font(.footnote).foregroundStyle(Theme.secondary)
                 }
+                Divider().opacity(0.5)
+                Button { Task { await client.testReminder() } } label: {
+                    HStack {
+                        Label("Проверить уведомление", systemImage: "bell.badge")
+                        Spacer()
+                        if client.reminderBusy { ProgressView().tint(Theme.charcoal) }
+                    }
+                }.buttonStyle(QuietButton()).disabled(client.reminderBusy)
+                Text(client.reminderTestMessage ?? "Тест отправит одно уведомление через 10 секунд.")
+                    .font(.footnote).foregroundStyle(Theme.secondary)
             }
         }
     }

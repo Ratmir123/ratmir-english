@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "createdAt": "2026-10-02T00:49:25.235Z",
+  "createdAt": "2026-10-02T00:58:45.098Z",
   "reviewRequired": true,
   "published": false,
   "licenseCandidate": "MIT",
@@ -233,8 +233,8 @@
     },
     {
       "path": "ios/Sources/NativeDesign.swift",
-      "bytes": 15458,
-      "sha256": "636eb68c654d9e6878e5499675a65c72d7db8cfe8cc1d8789bbedd66ed89070a"
+      "bytes": 15717,
+      "sha256": "59e97fed2124c06c0507914c1f47772671902a923fd813f2a64ab41d9f167b38"
     },
     {
       "path": "ios/Sources/PreviewFixtures.swift",
@@ -243,13 +243,13 @@
     },
     {
       "path": "ios/Sources/RatmirEnglishApp.swift",
-      "bytes": 49192,
-      "sha256": "cd158e28bbcd82f6886e8cdb5d00efb8d171a1813315adc985be766128a8b728"
+      "bytes": 51166,
+      "sha256": "850b2c26be4c8c76015d46d19ce6065ea448b562ae25c40c90592afe4be86b20"
     },
     {
       "path": "ios/Sources/TrainingClient.swift",
-      "bytes": 34830,
-      "sha256": "a5976e9486e91d3c0e86ec9b16d7270451fb8dc9af1096a3ec8b3621af0198a7"
+      "bytes": 38728,
+      "sha256": "0afd4c3dff72d775aad718517ad8708eda49863b5bac621159d5cd45d94a78ac"
     },
     {
       "path": "ios/Sources/VoiceCapture.swift",
@@ -443,8 +443,8 @@
     },
     {
       "path": "scripts/host-server.mjs",
-      "bytes": 774,
-      "sha256": "39dbb6946412b07e1160fed154bda170e4f9fa7c51aeab2a5446ab6fcb569ed3"
+      "bytes": 1707,
+      "sha256": "9b8453e8b33378d64cf180df4849f5bc7667ccb66c5a0369f476ee586a1c0bd5"
     },
     {
       "path": "scripts/probe-codex.ts",
@@ -463,8 +463,8 @@
     },
     {
       "path": "scripts/voice-relay.mjs",
-      "bytes": 6063,
-      "sha256": "0b3a4d8c52d8d3d8f9e134043e6935fa25a84262a9277f90a5948451990da3a9"
+      "bytes": 6910,
+      "sha256": "6b2a0bbe2e1c4e13e1e5a7e52864d8b89e85af09f8cde3947ca6ad772c5fcf75"
     },
     {
       "path": "tsconfig.json",

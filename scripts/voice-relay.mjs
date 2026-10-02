@@ -107,6 +107,25 @@ export function startVoiceRelay({ port = 3001, code = process.env.TRAINING_ACCES
       client.on('close', () => close(1000));
     });
   });
+  let settleReady, rejectReady, fail;
+  let readySettled = false;
+  let closing = false;
+  const ready = new Promise((resolve, reject) => { settleReady = resolve; rejectReady = reject; });
+  const failed = new Promise(resolve => { fail = resolve; });
+  // Callers await ready before spawning the application. A handled listener error
+  // must not become an uncaught exception that leaves its child server behind.
+  void ready.catch(() => undefined);
+  server.once('listening', () => { readySettled = true; settleReady(server.address()); });
+  server.on('error', error => {
+    if (!readySettled) { readySettled = true; rejectReady(error); }
+    fail(error);
+  });
   server.listen(port, '0.0.0.0');
-  return { close() { for (const client of clients) client.close(1001, 'Server restarting'); websocketServer.close(); server.close(); } };
+  return { ready, failed, close() {
+    if (closing) return;
+    closing = true;
+    if (!readySettled) { readySettled = true; rejectReady(new Error('Voice relay stopped before listening')); }
+    for (const client of clients) client.close(1001, 'Server restarting');
+    websocketServer.close(); server.close();
+  } };
 }

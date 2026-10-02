@@ -218,6 +218,13 @@ struct ActivityPanel: View {
 
 enum VoiceOrbMode { case ready, listening, speaking, thinking }
 
+/// Meter updates invalidate only this small view rather than the whole conversation.
+struct MeasuredVoiceOrb: View {
+    @ObservedObject var meter: VoiceMeter
+    let mode: VoiceOrbMode
+    var body: some View { VoiceOrb(mode: mode, level: meter.level) }
+}
+
 /// Keep the timeline in this leaf; it never recomputes the transcript or composer.
 /// Expansion follows measured mic/playback power. Waiting has a separate quiet drift.
 struct VoiceOrb: View {

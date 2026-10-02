@@ -43,6 +43,10 @@ enum AccessKey {
     }
 }
 
+@MainActor final class VoiceMeter: ObservableObject {
+    @Published var level = 0.0
+}
+
 @MainActor final class TrainingClient: ObservableObject {
 #if DEBUG
     var previewMode = false
@@ -58,12 +62,17 @@ enum AccessKey {
     @Published var recording = false
     @Published var microphoneStarting = false
     @Published var playing = false
+    @Published var playingLearnerRecording = false
     @Published var draft = ""
     @Published var recordedFile: String?
     @Published var pendingMessageID: String?
     @Published var assistantTextShown = true
     @Published var conversationPresented = false
-    @Published var audioLevel = 0.0
+    let voiceMeter = VoiceMeter()
+    var audioLevel: Double {
+        get { voiceMeter.level }
+        set { voiceMeter.level = newValue }
+    }
     @Published var liveTranscript = ""
     @Published var liveTranscriptStatus = ""
     @Published var voiceLoading = false
@@ -75,6 +84,7 @@ enum AccessKey {
     @Published var reminderHour = 19
     @Published var reminderMinute = 0
     @Published var reminderBusy = false
+    @Published var reminderTestMessage: String?
     @Published var hasUnuploadedRecording = false
     @Published var originalTranscript = ""
     @Published var server = UserDefaults.standard.string(forKey: "training-server") ?? ""
@@ -120,10 +130,10 @@ enum AccessKey {
             object: nil, queue: .main) { [weak self] notification in
                 guard let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                       type == AVAudioSession.InterruptionType.began.rawValue else { return }
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.stopSpeaking()
-                    if self.recording { await self.stopRecording() }
+                guard let client = self else { return }
+                Task { @MainActor [client] in
+                    client.stopSpeaking()
+                    if client.recording { await client.stopRecording() }
                 }
             }
     }
@@ -349,21 +359,22 @@ enum AccessKey {
             player = try AVAudioPlayer(data: data)
             player?.isMeteringEnabled = true
             playbackDelegate = PlaybackDelegate { [weak self] completed in
-                Task { @MainActor in
-                    guard let self, generation == self.voiceGeneration else { return }
-                    self.playing = false; self.audioLevel = 0; self.pendingSpeechTurn = nil
-                    self.meterTask?.cancel(); self.meterTask = nil
-                    guard completed else { self.error = "Озвучка прервалась. Нажми «Слушать» ещё раз."; return }
-                    self.heardTurns.insert(turn.id)
+                guard let client = self else { return }
+                Task { @MainActor [client] in
+                    guard generation == client.voiceGeneration else { return }
+                    client.playing = false; client.playingLearnerRecording = false; client.audioLevel = 0; client.pendingSpeechTurn = nil
+                    client.meterTask?.cancel(); client.meterTask = nil
+                    guard completed else { client.error = "Озвучка прервалась. Нажми «Слушать» ещё раз."; return }
+                    client.heardTurns.insert(turn.id)
                     do {
-                        let _: Confirmation = try await self.request("sessions/\(conversation.id)/played", body: ["turnId": turn.id])
-                    } catch { self.error = "Реплика прозвучала, но отметка о прослушивании не сохранилась. Проверь соединение." }
+                        let _: Confirmation = try await client.request("sessions/\(conversation.id)/played", body: ["turnId": turn.id])
+                    } catch { client.error = "Реплика прозвучала, но отметка о прослушивании не сохранилась. Проверь соединение." }
                 }
             }
             player?.delegate = playbackDelegate
             player?.prepareToPlay()
             guard player?.play() == true else { throw ClientError.message("Не удалось начать озвучку. Проверь громкость и попробуй снова.") }
-            playing = true
+            playing = true; playingLearnerRecording = false
             startPlaybackMeter()
         } catch is CancellationError { }
         catch {
@@ -381,7 +392,7 @@ enum AccessKey {
         if cancelLoading { speechTask?.cancel(); speechTask = nil }
         meterTask?.cancel(); meterTask = nil
         player?.stop(); player = nil; playbackDelegate = nil
-        playing = false; voiceLoading = false; audioLevel = 0; pendingSpeechTurn = nil
+        playing = false; playingLearnerRecording = false; voiceLoading = false; audioLevel = 0; pendingSpeechTurn = nil
     }
     private func startPlaybackMeter() {
         meterTask?.cancel()
@@ -410,14 +421,15 @@ enum AccessKey {
             try audio.setCategory(.playback, mode: .spokenAudio); try audio.setActive(true)
             player = try AVAudioPlayer(data: data); player?.isMeteringEnabled = true
             playbackDelegate = PlaybackDelegate { [weak self] _ in
-                Task { @MainActor in
-                    guard let self, generation == self.voiceGeneration else { return }
-                    self.playing = false; self.audioLevel = 0; self.meterTask?.cancel()
+                guard let client = self else { return }
+                Task { @MainActor [client] in
+                    guard generation == client.voiceGeneration else { return }
+                    client.playing = false; client.playingLearnerRecording = false; client.audioLevel = 0; client.meterTask?.cancel()
                 }
             }
             player?.delegate = playbackDelegate
             guard player?.play() == true else { throw ClientError.message("Не удалось прослушать запись.") }
-            playing = true; startPlaybackMeter()
+            playing = true; playingLearnerRecording = true; startPlaybackMeter()
         } catch { if generation == voiceGeneration { self.error = error.localizedDescription } }
     }
 
@@ -450,16 +462,18 @@ enum AccessKey {
             }
             let capture = VoiceCapture()
             capture.onChunk = { [weak self, weak live] sequence, bytes, level in
-                Task { @MainActor in
-                    guard let self, self.recordingID == identifier else { return }
-                    if self.recording { self.audioLevel = self.audioLevel * 0.35 + level * 0.65 }
-                    live?.append(sequence: sequence, data: bytes)
+                guard let client = self, let transcriber = live else { return }
+                Task { @MainActor [client, transcriber] in
+                    guard client.recordingID == identifier else { return }
+                    if client.recording { client.audioLevel = client.audioLevel * 0.35 + level * 0.65 }
+                    transcriber.append(sequence: sequence, data: bytes)
                 }
             }
             capture.onFailure = { [weak self] message in
-                Task { @MainActor in
-                    guard let self, self.recordingID == identifier, self.recording else { return }
-                    await self.stopRecording(); self.error = message
+                guard let client = self else { return }
+                Task { @MainActor [client] in
+                    guard client.recordingID == identifier, client.recording else { return }
+                    await client.stopRecording(); client.error = message
                 }
             }
             try capture.start(at: url)
@@ -612,6 +626,45 @@ enum AccessKey {
     func disableReminder() async {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["daily-practice"])
         await refreshReminderStatus()
+    }
+    func testReminder() async {
+        guard !reminderBusy else { return }
+        reminderBusy = true; error = nil; reminderTestMessage = nil
+        defer { reminderBusy = false }
+        let center = UNUserNotificationCenter.current()
+        do {
+            var settings = await center.notificationSettings()
+            if settings.authorizationStatus == .notDetermined {
+                _ = try await center.requestAuthorization(options: [.alert, .sound])
+                settings = await center.notificationSettings()
+            }
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+                await refreshReminderStatus()
+                reminderTestMessage = "Уведомления не разрешены. Открой настройки Ratmir English и включи «Допуск уведомлений»."
+                return
+            }
+            let content = UNMutableNotificationContent()
+            content.title = "Проверка напоминания"
+            content.body = "Если видишь это сообщение, уведомления Ratmir English доходят до iPhone."
+            content.sound = .default
+            let identifier = "practice-reminder-test"
+            try await center.add(UNNotificationRequest(identifier: identifier, content: content,
+                trigger: UNTimeIntervalNotificationTrigger(timeInterval: 10, repeats: false)))
+            let pending = await center.pendingNotificationRequests()
+            await refreshReminderStatus()
+            guard pending.contains(where: { $0.identifier == identifier }) else {
+                notificationState = "unavailable"
+                reminderTestMessage = "iPhone не сохранил проверочное уведомление. Проверь разрешение в настройках приложения и повтори тест."
+                return
+            }
+            reminderTestMessage = settings.authorizationStatus == .provisional
+                ? "Проверка запланирована на 10 секунд. Сверни приложение и открой Центр уведомлений: при тихом разрешении баннер может не появиться."
+                : "Проверка запланирована на 10 секунд. Сверни приложение и проверь уведомление. Его показ зависит от настроек iPhone и режима фокусирования."
+        } catch {
+            await refreshReminderStatus()
+            notificationState = notificationState == "denied" ? "denied" : "unavailable"
+            reminderTestMessage = "iPhone не разрешил сохранить проверочное уведомление. Проверь «Уведомления» в настройках Ratmir English. Если этого пункта нет, нужно проверить подпись приложения в AltStore."
+        }
     }
     func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
