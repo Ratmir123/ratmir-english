@@ -50,6 +50,9 @@ struct RootView: View {
         .sheet(isPresented: $client.conversationPresented) {
             if let value = client.conversation {
                 ConversationView(id: value.id).environmentObject(client)
+#if DEBUG
+                    .modifier(PreviewAccessibility())
+#endif
                     .presentationDetents([.large]).presentationDragIndicator(.visible)
                     .interactiveDismissDisabled(client.recording)
             }
