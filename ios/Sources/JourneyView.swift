@@ -254,7 +254,7 @@ struct PracticeOutcomeView: View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 16) {
                 HStack { Text("Что осталось от практики").font(.headline); Spacer(); Text("+\(result.xp) XP").font(.caption.weight(.semibold)) }
-                Text("Целей с наблюдениями: \(result.quality.observedTargets)/\(result.quality.targetCount)").font(.subheadline.weight(.medium))
+                Text("Целевых навыков с наблюдениями: \(result.quality.observedTargets)/\(result.quality.targetCount)").font(.subheadline.weight(.medium))
                 Text("Это охват разбора, а не число успешно освоенных целей.").font(.caption).foregroundStyle(Theme.secondary)
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 14) { qualityCounts }

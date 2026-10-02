@@ -281,7 +281,7 @@ struct ConversationView: View {
         conversationScroll
             .safeAreaInset(edge: .bottom, spacing: 0) { bottomDock }
             .safeAreaInset(edge: .top, spacing: 0) { completionBanner }
-            .navigationTitle(hasReview ? "Твой разбор" : "Разговор")
+            .navigationTitle(hasReview ? "Твой разбор" : textActivity ? (readingActivity ? "Чтение" : "Письмо") : "Разговор")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.surface, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
