@@ -79,13 +79,35 @@ jobs:
           wait "$recorder" || true
       - name: Test native completion and audio policy
         run: |
-          xcodebuild -quiet -project ios/RatmirEnglish.xcodeproj -scheme RatmirEnglish -configuration Debug -destination "platform=iOS Simulator,id=$TRAINING_SIMULATOR" -derivedDataPath simulator-build -resultBundlePath native-tests.xcresult CODE_SIGNING_ALLOWED=NO test
+          device="$TRAINING_SIMULATOR"
+          xcodebuild -quiet -project ios/RatmirEnglish.xcodeproj -scheme RatmirEnglish -configuration Debug -destination "platform=iOS Simulator,id=$device" -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 -collect-test-diagnostics never -derivedDataPath simulator-build -resultBundlePath native-tests.xcresult CODE_SIGNING_ALLOWED=NO test
+          xcrun xcresulttool get test-results summary --schema --path native-tests.xcresult > native-tests-summary-schema.json
+          xcrun xcresulttool get test-results summary --path native-tests.xcresult > native-tests-summary.json
+          python3 - <<'PY'
+          import json
+          summary = json.load(open('native-tests-summary.json'))
+          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 18, summary
+          assert type(summary['passedTests']) is int and summary['passedTests'] == 18, summary
+          assert summary['failedTests'] == 0 and summary['skippedTests'] == 0, summary
+          assert not summary['testFailures'] and summary.get('expectedFailures', 0) == 0, summary
+          print('Verified native tests: 18 passed, none failed or skipped')
+          PY
           for screen in achievements completed preview-timing; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen" --large-type
             sleep 3
             xcrun simctl io "$device" screenshot "iPhone11-$screen-large.png"
           done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-test-results
+          path: |
+            native-tests.xcresult
+            native-tests-summary.json
+            native-tests-summary-schema.json
+          retention-days: 7
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: RatmirEnglish-unsigned-IPA
