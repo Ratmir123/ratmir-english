@@ -1,4 +1,5 @@
 import { SKILLS, type AppState, type Context, type SkillId } from './types';
+import { BASELINE_STEPS } from './onboarding';
 
 export interface ScenarioFamily {
   id: string;
@@ -27,13 +28,16 @@ export const FAMILIES: ScenarioFamily[] = [
   { id: 'relocation-interview', title: 'Интервью о поездке', context: 'relocation', description: 'Последовательно объяснить настоящие обстоятельства и понять уточнения; языковая практика без выдуманных визовых требований.', skills: ['coherence', 'grammar', 'repair', 'reciprocity'] },
 ];
 
-export const CALIBRATION_OPTIONS: ScenarioFamily[] = [
-  { id: 'calibration-expression', title: 'Своя мысль на английском', context: 'life', description: 'Знакомая интересная тема и новое уточнение: что получается выразить самостоятельно.', skills: ['vocabulary', 'grammar', 'coherence'] },
-  { id: 'calibration-project', title: 'Опыт и задача клиента', context: 'work', description: 'Реальный опыт, неполный запрос и выбор подхода: отделить формулировку от коммуникационного решения.', skills: ['coherence', 'initiative', 'reciprocity', 'repair'] },
-  { id: 'calibration-adaptation', title: 'Совместное решение', context: 'life', description: 'Согласовать интересный план с собеседником и отреагировать на изменение условия.', skills: ['reciprocity', 'initiative', 'repair', 'grammar'] },
-];
+export const CALIBRATION_OPTIONS: ScenarioFamily[] = BASELINE_STEPS.map(step => ({
+  id: step.familyId, title: step.title, context: step.id === 'interaction' ? 'work' : 'life',
+  description: step.focus, skills: [...step.skills],
+}));
 
 export function nextCalibrationIndex(state: AppState): number {
+  if (state.onboarding) {
+    if (state.onboarding.status === 'ready') return -1;
+    return state.onboarding.steps.findIndex(step => step.status !== 'ready');
+  }
   const count = Math.max(0, Math.floor(state.calibrationCompleted));
   return count >= CALIBRATION_OPTIONS.length ? -1 : count;
 }
@@ -53,7 +57,10 @@ export function summaryContext(state: AppState) {
       dailyMinutes: state.profile.dailyMinutes,
       feedback: shorten(state.profile.feedback, 1200),
     },
-    calibration: { completed: state.calibrationCompleted, nextIndex: nextCalibrationIndex(state) },
+    calibration: { completed: state.onboarding?.completedStages ?? state.calibrationCompleted,
+      nextIndex: nextCalibrationIndex(state), status: state.onboarding?.status ?? 'legacy',
+      // This is an uncertain initial observation, not a mastery certificate.
+      baseline: state.onboarding?.report ?? null },
     skills: SKILLS.map(skill => {
       const observed = state.skills.find(item => item.id === skill.id);
       return {

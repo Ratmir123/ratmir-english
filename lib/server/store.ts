@@ -5,6 +5,9 @@ import { DatabaseSync } from 'node:sqlite';
 import type { AppState, LessonPlan, Mode, Profile, Session } from '../types';
 import { calculateXP, deriveReviews, deriveSkillStates } from './adaptation';
 import { initialProfile } from './profile';
+import { baselineReportFingerprint, emptyOnboardingRecord, presentOnboarding, type OnboardingRecord } from './onboarding-data';
+import type { BaselineReport } from '../types';
+import { unassistedSpokenTurns } from '../onboarding';
 
 const MAX_JOB_ATTEMPTS = 3;
 const JOB_LEASE_MS = 5 * 60_000;
@@ -87,7 +90,7 @@ function writeSession(db: DatabaseSync, session: Session): void {
 }
 
 function sourceSignature(session: Session): string {
-  return JSON.stringify({ lesson: session.lesson, mode: session.mode, support: session.support, turns: session.turns.map((turn) => ({
+  return JSON.stringify({ lesson: session.lesson, mode: session.mode, baseline: session.baseline, support: session.support, turns: session.turns.map((turn) => ({
     id: turn.id, role: turn.role, text: turn.text, source: turn.source, support: turn.support,
     disputed: !!turn.disputed, audioFile: turn.audioFile, originalTranscript: turn.originalTranscript, transcriptEdited: !!turn.transcriptEdited,
   })) });
@@ -97,19 +100,33 @@ export function getSession(id: string): Session | null {
   return readSession(connection().db, id);
 }
 
-export function createSession(lesson: LessonPlan, mode: Mode, clientRequestId?: string): Session {
-  if (clientRequestId) {
-    const previous = getSessionByRequestId(clientRequestId);
-    if (previous) return previous;
-  }
-  const now = new Date().toISOString();
-  const session: Session = {
-    id: randomUUID(), lesson: structuredClone(lesson), mode, status: 'active',
-    createdAt: now, updatedAt: now, turns: [], analysis: null, retries: [], support: 0,
-    ...(clientRequestId ? { clientRequestId } : {}),
-  };
-  writeSession(connection().db, session);
-  return session;
+function readLearningGeneration(db: DatabaseSync): number {
+  const row = db.prepare('SELECT data FROM settings WHERE key=?').get('learning-generation') as JsonRow | undefined;
+  const value = row ? JSON.parse(row.data) as unknown : 0;
+  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error('Не удалось проверить версию учебной истории.');
+  return value as number;
+}
+export function getLearningGeneration(): number { return readLearningGeneration(connection().db); }
+export function createSession(lesson: LessonPlan, mode: Mode, clientRequestId?: string, expectedGeneration?: number): Session {
+  const { db } = connection();
+  return transaction(db, () => {
+    if (expectedGeneration !== undefined && readLearningGeneration(db) !== expectedGeneration) {
+      throw new Error('Учебная история была сброшена во время подготовки. Начни новую пробу.');
+    }
+    if (clientRequestId) {
+      const row = db.prepare("SELECT data FROM sessions WHERE json_extract(data,'$.clientRequestId')=? LIMIT 1")
+        .get(clientRequestId) as JsonRow | undefined;
+      if (row) return JSON.parse(row.data) as Session;
+    }
+    const now = new Date().toISOString();
+    const session: Session = {
+      id: randomUUID(), lesson: structuredClone(lesson), mode, status: 'active',
+      createdAt: now, updatedAt: now, turns: [], analysis: null, retries: [], support: 0,
+      ...(clientRequestId ? { clientRequestId } : {}),
+    };
+    writeSession(db, session);
+    return session;
+  });
 }
 
 export function getSessionByRequestId(id: string): Session | null {
@@ -123,6 +140,9 @@ export function finishConversation(id: string, reanalyse = false): Session {
   const session = getSession(id);
   if (!session) throw new Error('Занятие не найдено.');
   if (!reanalyse && (session.analysis || session.status === 'analysing' || session.status === 'completed')) return session;
+  if (session.baseline && unassistedSpokenTurns(session).length < 2) {
+    throw new Error('Для стартового разбора нужны хотя бы два своих ответа голосом без подсказок и изменения расшифровки. Оценка может быть любой.');
+  }
   if (!session.turns.some(turn => turn.role === 'user' && !turn.disputed && turn.text.trim())) {
     throw new Error('Для разбора нужна хотя бы одна твоя подтверждённая попытка.');
   }
@@ -177,6 +197,46 @@ export function updateProfile(profile: Profile): void {
   connection().db.prepare('UPDATE settings SET data = ? WHERE key = ?').run(JSON.stringify(profile), 'profile');
 }
 
+function readOnboardingRecord(db: DatabaseSync): OnboardingRecord {
+  const row = db.prepare('SELECT data FROM settings WHERE key=?').get('onboarding') as JsonRow | undefined;
+  if (!row) return emptyOnboardingRecord();
+  const record = JSON.parse(row.data) as OnboardingRecord;
+  if (record.version !== 1 || (record.introCompletedAt !== null && !Number.isFinite(Date.parse(record.introCompletedAt)))
+    || (record.russianControl !== null && (typeof record.russianControl !== 'string' || record.russianControl.length > 2000))) {
+    throw new Error('Стартовый профиль повреждён. Исходные занятия сохранены.');
+  }
+  return record;
+}
+function writeOnboardingRecord(db: DatabaseSync, record: OnboardingRecord): void {
+  db.prepare('INSERT INTO settings(key,data) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data')
+    .run('onboarding', JSON.stringify(record));
+}
+export function getOnboardingRecord(): OnboardingRecord { return readOnboardingRecord(connection().db); }
+export function completeOnboardingIntro(russianControl: string): void {
+  const text = russianControl.trim();
+  if (text.length < 20 || text.length > 2000) throw new Error('Напиши свою короткую реплику по-русски, от 20 до 2000 символов.');
+  const { db } = connection();
+  transaction(db, () => {
+    const current = readOnboardingRecord(db);
+    if (current.introCompletedAt && current.russianControl === text) return;
+    writeOnboardingRecord(db, { version: 1, introCompletedAt: new Date().toISOString(), russianControl: text });
+  });
+}
+export function saveBaselineReport(fingerprint: string, report: BaselineReport): void {
+  const { db } = connection();
+  transaction(db, () => {
+    const current = readOnboardingRecord(db);
+    if (!current.introCompletedAt) throw new Error('Сначала пройди знакомство с тренингом.');
+    const sessions = (db.prepare('SELECT data FROM sessions').all() as JsonRow[]).map(row => JSON.parse(row.data) as Session);
+    const profile = JSON.parse((db.prepare('SELECT data FROM settings WHERE key=?').get('profile') as JsonRow).data) as Profile;
+    if (presentOnboarding(current, sessions, profile).status !== 'ready'
+      || fingerprint !== baselineReportFingerprint(current, sessions, profile)) {
+      throw new Error('Исходные пробы или профиль изменились во время составления результата. Загрузите свежие данные.');
+    }
+    writeOnboardingRecord(db, { ...current, reportCache: { fingerprint, report } });
+  });
+}
+
 export function deleteSession(id: string): void {
   const { db, claims } = connection();
   db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
@@ -186,7 +246,12 @@ export function deleteSession(id: string): void {
 /** Training deletion keeps financial usage and profile: deleting history must not bypass the API budget. */
 export function deleteAllTraining(): void {
   const { db, claims } = connection();
-  transaction(db, () => db.exec('DELETE FROM sessions;'));
+  transaction(db, () => {
+    const nextGeneration = readLearningGeneration(db) + 1;
+    db.exec("DELETE FROM sessions; DELETE FROM settings WHERE key='onboarding';");
+    db.prepare('INSERT INTO settings(key,data) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data')
+      .run('learning-generation', JSON.stringify(nextGeneration));
+  });
   claims.clear();
 }
 
@@ -320,10 +385,13 @@ export function getAppState(): AppState {
     const usage = (db.prepare('SELECT kind,amount,cost_usd,created_at FROM audio_usage').all() as { kind: string; amount: number; cost_usd: number; created_at: string }[])
       .filter((row) => moscowMonth(new Date(row.created_at)) === month);
     const completed = sessions.filter((session) => session.status === 'completed' && session.turns.some((turn) => turn.role === 'user' && turn.text.trim()));
+    const onboarding = presentOnboarding(readOnboardingRecord(db), sessions, profile);
     return {
       profile, sessions, skills: deriveSkillStates(sessions), reviews: deriveReviews(sessions), xp: calculateXP(sessions),
+      onboarding,
       completed: completed.length,
-      calibrationCompleted: completed.filter((session) => session.lesson.kind === 'calibration').length,
+      calibrationCompleted: onboarding.introCompletedAt ? onboarding.completedStages
+        : completed.filter((session) => session.lesson.kind === 'calibration').length,
       audioUsage: {
         usedUsd: usage.reduce((sum, row) => sum + row.cost_usd, 0), estimated: true, budgetUsd: profile.budgetUsd,
         recordedMinutes: usage.filter((row) => row.kind === 'transcription').reduce((sum, row) => sum + row.amount, 0),

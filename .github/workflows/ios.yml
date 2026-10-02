@@ -35,7 +35,7 @@ jobs:
           xcrun simctl launch "$device" app.ratmirenglish.personal
           sleep 3
           xcrun simctl io "$device" screenshot iPhone11-login.png
-          for screen in home practice listening analysing review celebrate settings; do
+          for screen in intro baseline baseline-report home practice listening analysing review celebrate progress settings; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3

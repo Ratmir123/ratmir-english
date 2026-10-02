@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getBrainStatus, getSubscriptionUsage } from '@/lib/server/codex';
-import { getAppState, getSession, getSessionByRequestId, createSession, saveSession, updateProfile, deleteSession, deleteAllTraining, enqueueAnalysis, finishConversation } from '@/lib/server/store';
+import { getAppState, getSession, getSessionByRequestId, createSession, saveSession, updateProfile, deleteSession, deleteAllTraining, enqueueAnalysis, finishConversation,
+  completeOnboardingIntro, getOnboardingRecord, saveBaselineReport, getLearningGeneration } from '@/lib/server/store';
 import { completionRequirement } from '@/lib/server/session-lifecycle';
 import { messageInputSchema, retryInputSchema, transcriptIntegrity } from '@/lib/server/transcript-integrity';
 import { planLesson, respond, hint, reviewRetryAssessment } from '@/lib/server/teacher';
@@ -11,6 +12,9 @@ import { checkAccess, checkOrigin, validAccessCode, accessCookie, requestIsSecur
 import { ensureWorker, processAnalysisQueue } from '@/lib/server/worker';
 import { assessQuickCoachRetry, explainQuickCoach, quickCoachInputSchema, quickCoachRetryInputSchema } from '@/lib/server/quick-coach';
 import { FAMILIES, CALIBRATION_OPTIONS } from '@/lib/training';
+import { baselineStartDecision, baselineStep, ONBOARDING_VERSION, unassistedSpokenTurns } from '@/lib/onboarding';
+import { baselineReportFingerprint } from '@/lib/server/onboarding-data';
+import { generateBaselineReport } from '@/lib/server/baseline-report';
 import type { AppState, Session, Profile } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -59,6 +63,30 @@ async function handle(req: NextRequest, route: Route) {
   // Reading subscription statistics must never start an analysis job.
   if (req.method === 'GET' && path.length === 1 && path[0] === 'usage') {
     return json(await getSubscriptionUsage(req.nextUrl.searchParams.get('refresh') === '1'));
+  }
+  if (path[0] === 'onboarding') {
+    // Introduction and cached results never start unrelated analysis or make an AI call.
+    if (req.method === 'GET' && path.length === 1) return json(getAppState().onboarding);
+    if (req.method === 'POST' && path.length === 2 && path[1] === 'intro') {
+      const data = z.object({ confirmed: z.literal(true), russianControl: z.string().trim().min(20).max(2000) }).parse(await body(req));
+      completeOnboardingIntro(data.russianControl);
+      return json(getAppState().onboarding);
+    }
+    if (req.method === 'POST' && path.length === 2 && path[1] === 'report') {
+      await body(req);
+      return locked('baseline-report', async () => {
+        const state = getAppState();
+        if (state.onboarding?.status !== 'ready') throw new ApiError('Сначала нужны три разобранные стартовые пробы с исходными ответами.', 409);
+        if (state.onboarding.report) return json(state.onboarding);
+        const record = getOnboardingRecord();
+        const fingerprint = baselineReportFingerprint(record, state.sessions, state.profile);
+        const report = await generateBaselineReport(state, record.russianControl!);
+        // Atomic source check also rejects a result after reset, deletion, or a profile/ASR edit.
+        saveBaselineReport(fingerprint, report);
+        return json(getAppState().onboarding);
+      });
+    }
+    throw new ApiError('Действие не найдено.', 404);
   }
   if (path[0] === 'quick-coach') {
     if (req.method !== 'POST') throw new ApiError('Действие не найдено.', 404);
@@ -124,7 +152,8 @@ async function handle(req: NextRequest, route: Route) {
   }
   if (path[0] === 'sessions' && !path[1]) {
     const data = z.object({ mode: z.enum(['learning', 'call']), context: z.enum(['work', 'life', 'relocation']).optional(), familyId: z.string().max(100).optional(), topic: z.string().max(300).optional(), minutes: z.number().int().min(5).max(30).optional(),
-      intent: z.enum(['new', 'resume']).default('new'), sessionId: z.string().uuid().optional(), requestId: z.string().uuid().optional() }).parse(await body(req));
+      intent: z.enum(['new', 'resume']).default('new'), sessionId: z.string().uuid().optional(), requestId: z.string().uuid().optional(),
+      baselineStepId: z.enum(['expression', 'listening', 'interaction']).optional() }).parse(await body(req));
     return locked('planning', async () => {
       if (data.intent === 'resume') {
         if (!data.sessionId) throw new ApiError('Выбери разговор, который хочешь продолжить.');
@@ -132,8 +161,17 @@ async function handle(req: NextRequest, route: Route) {
       }
       const existing = data.requestId ? getSessionByRequestId(data.requestId) : null;
       if (existing) return json(safeSession(existing));
-      const plan = await planLesson(getAppState(), data);
-      const value = createSession({ ...plan, id: randomUUID() }, data.mode, data.requestId);
+      const state = getAppState();
+      const generation = getLearningGeneration();
+      const decision = baselineStartDecision(state.onboarding!, state.sessions, data.baselineStepId);
+      if (decision.kind === 'blocked') throw new ApiError(decision.reason, 409);
+      if (decision.kind === 'baseline' && decision.resumeSessionId) return json(safeSession(session(decision.resumeSessionId)));
+      const step = decision.kind === 'baseline' ? baselineStep(decision.stepId) : null;
+      const options = step ? { ...data, mode: 'call' as const, familyId: step.familyId,
+        context: step.id === 'interaction' ? 'work' as const : 'life' as const, minutes: step.minutes } : data;
+      const plan = await planLesson(state, options);
+      const value = createSession({ ...plan, id: randomUUID() }, options.mode, data.requestId, generation);
+      if (step) value.baseline = { version: ONBOARDING_VERSION, stepId: step.id };
       value.turns.push({ id: randomUUID(), role: 'assistant', text: plan.opening, createdAt: new Date().toISOString(), source: 'text', support: 0 });
       saveSession(value); return json(safeSession(value));
     });
@@ -175,6 +213,9 @@ async function handle(req: NextRequest, route: Route) {
         return json({ text, support: value.support });
       }
       if (action === 'show-text') {
+        if (value.baseline && ['active', 'error'].includes(value.status)) {
+          throw new ApiError('В стартовой пробе сначала слушаем реплику. После разбора её текст будет доступен.', 409);
+        }
         if (value.status === 'active') {
           const turn = [...value.turns].reverse().find(t => t.role === 'assistant');
           if (turn) turn.support = Math.max(turn.support, 1) as 1 | 2 | 3;
@@ -199,6 +240,10 @@ async function handle(req: NextRequest, route: Route) {
         turn.source = 'audio'; saveSession(value); return json({ ok: true });
       }
       if (action === 'finish' || action === 'reanalyse') {
+        if (value.baseline && unassistedSpokenTurns(value).length < 2
+          && (action === 'reanalyse' || (!value.analysis && value.status !== 'analysing'))) {
+          throw new ApiError('Для стартового разбора нужны хотя бы два своих ответа голосом без подсказок и изменения расшифровки. Оценка может быть любой.', 400);
+        }
         const queued = finishConversation(id, action === 'reanalyse');
         if (queued.status === 'analysing') void processAnalysisQueue();
         return json(safeSession(queued));

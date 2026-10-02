@@ -20,14 +20,10 @@
 .current-prompt { text-align: left; margin: 0 auto 23px; padding: 23px; border-radius: 22px; background: var(--surface); }
 .current-prompt span { color: var(--lavender); font-size: 11px; }
 .current-prompt p { margin: 10px 0 0; font-size: 20px; line-height: 1.65; }
-.conversation-stage.text-mode .voice-orb { display: none; }
-.text-mode .voice-state { font-size: 14px; margin: 8px 0; color: var(--muted); }
-.text-mode .voice-caption { display: none; }
-.text-mode .voice-controls { margin: 14px 0; }
-.text-mode .voice-control:not(:last-child) { display: none; }
-.text-mode .voice-control:last-child { flex-direction: row; gap: 9px; width: auto; min-height: 44px; padding: 8px 18px; border: 1px solid var(--line); border-radius: 12px; }
-.text-mode .voice-control:last-child > svg { padding: 0; border: 0; border-radius: 0; background: transparent; }
-.text-mode .voice-control:last-child:disabled { display: none; }
+.conversation-stage.text-mode .voice-orb { width: 190px; height: 200px; }
+.conversation-stage.text-mode .orb-body { width: 164px; height: 164px; }
+.text-mode .voice-state { font-size: 19px; margin: 8px 0; }
+.text-mode .voice-controls { margin: 22px 0; }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-interface), 'Segoe UI', sans-serif; font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
 button, input, select, textarea { font: inherit; }
 button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
@@ -268,9 +264,50 @@ label input, label select, label textarea { margin-top: 7px; }
 .inspector-note { display: flex; gap: 12px; margin-top: 27px; color: var(--faint); }
 .inspector-note svg { flex-shrink: 0; }
 .inspector-note p { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.baseline-session-note { padding: 18px; border-radius: 20px; background: var(--raised); margin-top: 22px; }
+.baseline-session-note strong { font-size: 14px; }
+.baseline-session-note p { font-size: 13px; color: var(--muted); line-height: 1.75; margin: 9px 0 0; }
+.baseline-profile-link { margin-bottom: 18px; }
+.baseline-build-status { margin-top: 14px; }
+.baseline-build-status p { margin-bottom: 8px; font-size: 13px; }
 .analysis-loading { padding: 35px 25px 45px; text-align: center; background: var(--graphite); border-radius: 32px; }
 .analysis-loading h2 { margin: 22px 0 12px; }
 .analysis-loading p { color: var(--muted); font-size: 13px; margin: 0 auto 24px; max-width: 52ch; }
+.preparation-panel { display: flex; align-items: center; gap: 22px; padding: 24px 32px; margin-bottom: 26px; border-radius: 28px; background: var(--surface); }
+.preparation-panel .voice-orb { flex: 0 0 140px; width: 140px; height: 150px; margin: 0; }
+.preparation-panel .orb-body { width: 118px; height: 118px; }
+.preparation-panel h2 { font-size: 22px; margin: 8px 0; }
+.preparation-panel p { color: var(--muted); font-size: 14px; max-width: 52ch; }
+.operation-time { display: inline-block; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; padding: 5px 12px; border-radius: 16px; background: var(--raised); }
+.preparation-panel .operation-time { margin-top: 12px; }
+.conversation-progress { margin: 16px auto; color: var(--muted); font-size: 13px; }
+.conversation-progress p { margin: 8px 0; }
+.live-caption { text-align: left; padding: 18px 20px; margin-top: 22px; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; }
+.live-caption > .eyebrow { color: var(--lavender); }
+.live-caption p { margin: 12px 0; min-height: 3.2em; font-size: 18px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.live-caption small { display: block; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.recording-evidence, .unuploaded-recording { text-align: left; padding: 18px 20px; margin: 18px 0; border: 1px solid var(--line); border-radius: 22px; background: var(--surface); }
+.recording-evidence p, .unuploaded-recording p { margin: 10px 0 15px; font-size: 13px; color: var(--muted); }
+.recording-evidence-heading, .recording-evidence-actions { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.recording-evidence-heading .quiet-tag { color: var(--text); background: var(--raised); }
+.recording-evidence-actions audio { width: min(100%, 300px); height: 36px; }
+.recording-evidence details { margin-top: 16px; }
+.recording-evidence details p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.draft-label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 9px; }
+.autoplay-notice { padding: 16px; background: var(--surface); border-radius: 20px; }
+.autoplay-notice p { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.listening-recall { text-align: left; margin: 24px auto; padding: 20px; border-radius: 22px; max-width: 460px; background: var(--surface); }
+.analysis-loading .listening-recall p { margin: 10px 0 16px; }
+.listening-recall > strong { font-size: 14px; }
+.listening-recall .button { margin-bottom: 8px; }
+.analysis-loading > .operation-time { margin-bottom: 14px; }
+.review-orb-heading { display: flex; gap: 18px; align-items: center; }
+.review-orb-heading .voice-orb { flex: 0 0 90px; width: 90px; height: 98px; margin: 0; }
+.review-orb-heading .orb-body { width: 76px; height: 76px; }
+.review-orb-heading h2 { margin: 8px 0 0; }
+.retry-section > .voice-orb { width: 120px; height: 130px; margin: 12px 0; }
+.retry-section > .voice-orb .orb-body { width: 100px; height: 100px; }
+.retry-progress { display: flex; align-items: center; gap: 15px; justify-content: space-between; margin: 20px 0; font-size: 14px; }
 .analysis-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, .55fr); gap: 22px; align-items: start; }
 .analysis-intro { padding: 12px 0 25px; border-bottom: 1px solid var(--line); }
 .analysis-intro h2 { font-size: 22px; margin-top: 16px; line-height: 1.5; }
@@ -338,6 +375,10 @@ svg { flex-shrink: 0; }
 .profile-overview .quiet-tag { background: #ffffff80; color: var(--graphite); }
 .skill-group-label { display: block; font-size: 12px; color: var(--muted); margin: 24px 0 8px; }
 .skill-row:last-child { border-bottom: 0; }
+.skill-limitation { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+.new-session-link { margin-top: 13px; }
+.actionable-review .text-button { font-size: 12px; margin-top: 8px; }
+.review-list > .button { margin-top: 18px; width: 100%; }
 .activity-value { font-size: 36px; line-height: 1.15; letter-spacing: -1.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .activity-stat > span { display: block; color: var(--muted); font-size: 13px; margin-top: 7px; }
 .activity-empty { color: var(--muted); font-size: 13px; line-height: 1.65; margin-top: 9px; }
@@ -555,6 +596,17 @@ html[data-input="keyboard"] .comfort-choice button:active, html[data-input="keyb
   .page-footer { font-size: 12px; flex-direction: column; align-items: flex-start; gap: 8px; }
 }
 @media (max-width: 480px) {
+  .preparation-panel { gap: 12px; padding: 20px; align-items: flex-start; }
+  .preparation-panel .voice-orb { flex-basis: 76px; width: 76px; height: 86px; }
+  .preparation-panel .orb-body { width: 64px; height: 64px; }
+  .preparation-panel h2 { font-size: 19px; }
+  .preparation-panel p { font-size: 13px; }
+  .live-caption, .recording-evidence, .unuploaded-recording { padding: 16px; }
+  .live-caption p { font-size: 17px; }
+  .recording-evidence-heading { align-items: flex-start; }
+  .recording-evidence-actions .button { flex: 1; min-width: 130px; }
+  .review-orb-heading { gap: 10px; }
+  .review-orb-heading h2 { font-size: 21px; }
   .workspace { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
   .topbar .eyebrow { font-size: 10px; letter-spacing: 1px; }
   .page-heading h1 { font-size: 30px; }

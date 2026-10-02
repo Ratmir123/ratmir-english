@@ -23,7 +23,8 @@ export function deriveStartupWelcome(
   const newest = [...state.sessions].sort((left, right) =>
     validTimestamp(right.updatedAt) - validTimestamp(left.updatedAt)
     || validTimestamp(right.createdAt) - validTimestamp(left.createdAt));
-  const resumable = newest.find(session => session.status !== 'completed') ?? null;
+  const resumable = newest.find(session => session.status !== 'completed'
+    && !(session.baseline && state.onboarding?.status === 'ready')) ?? null;
   const completedToday = newest.find(session => {
     const time = validTimestamp(session.updatedAt);
     return session.status === 'completed' && time !== -Infinity && time <= now.getTime()
@@ -35,7 +36,9 @@ export function deriveStartupWelcome(
   return {
     resumable,
     completedToday,
-    calibrationStep: completedCalibrations < 3 ? completedCalibrations + 1 : null,
+    calibrationStep: state.onboarding
+      ? state.onboarding.status === 'baseline' ? state.onboarding.completedStages + 1 : null
+      : completedCalibrations < 3 ? completedCalibrations + 1 : null,
     fullMinutes: Number.isFinite(state.profile.dailyMinutes)
       ? Math.min(30, Math.max(5, Math.floor(state.profile.dailyMinutes))) : 15,
   };

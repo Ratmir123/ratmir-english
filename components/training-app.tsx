@@ -9,16 +9,17 @@ import {
   CaretRightIcon as ChevronRight, QuestionIcon as CircleHelp,
   DownloadSimpleIcon as Download, EarIcon as Ear, GraduationCapIcon as GraduationCap,
   ClockCounterClockwiseIcon as History, HouseIcon as Home, LightbulbIcon as Lightbulb,
-  MicrophoneIcon as Mic, PauseIcon as Pause, PlayIcon as Play,
+  MicrophoneIcon as Mic, PlayIcon as Play,
   ArrowsClockwiseIcon as RefreshCw, PaperPlaneRightIcon as Send, GearIcon as Settings,
   ShieldCheckIcon as ShieldCheck, SparkleIcon as Sparkles, SquareIcon as Square,
   TargetIcon as Target, TrashIcon as Trash2, TrendUpIcon as TrendingUp, XIcon as X,
 } from '@phosphor-icons/react';
-import { SKILLS, type AppState, type BrainStatus, type Context, type Mode, type Profile, type Session, type SubscriptionUsage, type Turn } from '@/lib/types';
+import { SKILLS, type AppState, type BaselineStepId, type BrainStatus, type Context, type Mode, type OnboardingState, type Profile, type Session, type SubscriptionUsage } from '@/lib/types';
 import { FAMILIES, type ScenarioFamily } from '@/lib/training';
 import { VoiceOrb } from './voice-orb';
-import { useVoice } from './use-voice';
+import { useVoice, type RecordingDraft } from './use-voice';
 import { SubscriptionLimits } from './subscription-limits';
+import { BaselineProfile, OnboardingFlow } from './onboarding-flow';
 import { PracticeModeSwitch as ModeSwitch } from './practice-mode-switch';
 import { useContentEntrance, useInputModality, useNavigationHighlight } from './use-interface-motion';
 
@@ -28,12 +29,37 @@ const NAV = [{ id: 'today', name: 'Сегодня', icon: Home }, { id: 'practic
 const contextNames = { work: 'Работа', life: 'Обычная жизнь', relocation: 'Релокация' };
 const stateNames = { unknown: 'Не проверено', supported: 'С опорой', provisional: 'Предварительно', independent: 'Самостоятельно', recheck: 'Перепроверим' };
 const voiceNames = { idle: 'Готов к разговору', listening: 'Слушаю тебя', transcribing: 'Распознаю речь', thinking: 'Обдумываю ответ', speaking: 'Собеседник говорит', paused: 'Разговор на паузе' };
+type SessionDraft = { text: string; intent: 'message' | 'retry'; id: string; audioFile?: string; originalTranscript?: string };
+const DRAFT_STORAGE = 'ratmir:session-drafts:v1';
+
+function ElapsedTime({ startedAt }: { startedAt: number | null }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (startedAt === null) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
+  if (startedAt === null) return null;
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  return <span className="operation-time" aria-label="Прошло времени">{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</span>;
+}
+
+function PreparationPanel({ startedAt, stage }: { startedAt: number | null; stage: string }) {
+  return <section className="preparation-panel" aria-label="Подготовка разговора">
+    <VoiceOrb state="thinking" statusDescription="Готовим твой разговор" />
+    <div><span className="eyebrow">СЕЙЧАС</span><h2>{stage || 'Готовим твой разговор'}</h2>
+      <p>Выбираем ситуацию под твой уровень и последний прогресс. Первый ответ появится здесь.</p>
+      <ElapsedTime startedAt={startedAt} />
+    </div>
+  </section>;
+}
 async function request<T>(path: string, body?: unknown, method?: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`/api/${path}`, { method: method || (body === undefined ? 'GET' : 'POST'), headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal });
   const data = await res.json(); if (!res.ok) throw Object.assign(new Error(data.error || 'Не удалось выполнить действие.'), { status: res.status });
   return data;
 }
-function date(value: string) { return new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short', timeZone: 'Europe/Moscow' }).format(new Date(value)); }
+function date(value: string) { return new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short' }).format(new Date(value)); }
 
 function SkillRows({ state, compact = false }: { state: AppState; compact?: boolean }) {
   const skills = SKILLS.filter(skill => !compact || ['grammar', 'coherence', 'reciprocity', 'initiative'].includes(skill.id));
@@ -42,15 +68,15 @@ function SkillRows({ state, compact = false }: { state: AppState; compact?: bool
       <h3 className="skill-group-label">{group === 'language' ? 'Английский' : 'Разговор'}</h3>
       {skills.filter(skill => skill.group === group).map(skill => {
         const value = state.skills.find(item => item.id === skill.id);
-        const label = stateNames[value?.state || 'unknown'];
+        const label = skill.id === 'clarity' ? 'Акустическая оценка пока недоступна' : stateNames[value?.state || 'unknown'];
         return <div className="skill-row" key={skill.id}>
           <div><span>{skill.label}</span><small>{label}</small></div>
-          <div className="skill-steps" aria-label={skill.label + ': ' + label}>
+          {skill.id === 'clarity' ? <p className="skill-limitation">По расшифровке нельзя надёжно оценить произношение. Этот навык пока не получает баллы.</p> : <div className="skill-steps" aria-label={skill.label + ': ' + label}>
             <i className={value?.state === 'supported' || value?.independentSuccesses ? 'lit' : ''} title="Опора или успешная попытка" />
             <i className={value?.state === 'independent' ? 'lit' : ''} title="Самостоятельно" />
             <i className={value?.transfer ? 'lit' : ''} title="Новый контекст" />
             <i className={value?.retention ? 'lit' : ''} title="Проверено спустя время" />
-          </div>
+          </div>}
         </div>;
       })}
     </section>)}
@@ -80,6 +106,7 @@ function ScenarioPreview({ family, mode, minutes, topic, busy, onStart, inline =
 }
 
 function sessionStatus(value: Session) {
+  if (value.retryDeferred) return 'Улучшенная попытка на потом';
   if (value.status === 'completed') return 'Завершено';
   if (value.status === 'analysing') return 'Готовится разбор';
   if (value.status === 'review') return 'Своя улучшенная попытка';
@@ -88,7 +115,7 @@ function sessionStatus(value: Session) {
 }
 
 function dayKey(value: Date | string) {
-  return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Europe/Moscow' }).format(new Date(value));
+  return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
 }
 
 export function TrainingApp() {
@@ -104,12 +131,15 @@ export function TrainingApp() {
   const [mode, setMode] = useState<Mode>('learning');
   const [session, setSession] = useState<Session | null>(null);
   const [busy, setBusy] = useState('');
+  const [busySince, setBusySince] = useState<number | null>(null);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [needLogin, setNeedLogin] = useState(false);
   const [code, setCode] = useState('');
   const [input, setInput] = useState('');
-  const [retryAudioFile, setRetryAudioFile] = useState<string>();
+  const [drafts, setDrafts] = useState<Record<string, SessionDraft>>({});
+  const draftsRef = useRef(drafts); draftsRef.current = drafts;
   const [hintText, setHintText] = useState('');
   const [transcript, setTranscript] = useState(false);
   const [textMode, setTextMode] = useState(true);
@@ -123,9 +153,9 @@ export function TrainingApp() {
   const [comfort, setComfort] = useState(3);
   const [editing, setEditing] = useState('');
   const [editText, setEditText] = useState('');
-  const lastSent = useRef<{ id: string; text: string; source: 'text' | 'audio'; audioFile?: string } | null>(null);
+  const lastSent = useRef<{ sessionId: string; id: string; text: string; source: 'text' | 'audio'; audioFile?: string; originalTranscript?: string } | null>(null);
   const lessonStart = useRef<{ optionsKey: string; requestId: string; pending: boolean } | null>(null);
-  const speechRef = useRef<(s: Session, turn: Turn) => Promise<void>>(() => Promise.resolve());
+  const lastAutoplay = useRef<string | null>(null);
   const tabRef = useRef(tab); tabRef.current = tab;
   const screenRef = useContentEntrance<HTMLDivElement>(startupVisible ? 'startup' : tab);
   const desktopNavigation = useNavigationHighlight(tab);
@@ -136,12 +166,47 @@ export function TrainingApp() {
     setStartupVisible(entry === 'startup');
     setQuickVisible(entry === 'quick');
   }, []);
+  useEffect(() => {
+    try {
+      const stored: unknown = JSON.parse(localStorage.getItem(DRAFT_STORAGE) || '{}');
+      if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return;
+      const valid = Object.fromEntries(Object.entries(stored).filter(([id, draft]) => {
+        const value = draft as Partial<SessionDraft> | null;
+        return /^[\da-f-]{36}$/i.test(id) && value && typeof value.text === 'string' && value.text.length <= 7000
+          && typeof value.id === 'string' && (value.intent === 'message' || value.intent === 'retry')
+          && (value.audioFile === undefined || typeof value.audioFile === 'string')
+          && (value.originalTranscript === undefined || typeof value.originalTranscript === 'string');
+      })) as Record<string, SessionDraft>;
+      draftsRef.current = valid; setDrafts(valid);
+    } catch { /* A private draft is optional when browser storage is unavailable. */ }
+  }, []);
+  function saveDraft(sessionId: string, value: SessionDraft | null) {
+    const next = { ...draftsRef.current };
+    if (value) next[sessionId] = value; else delete next[sessionId];
+    draftsRef.current = next; setDrafts(next);
+    try { localStorage.setItem(DRAFT_STORAGE, JSON.stringify(next)); } catch { /* Keep the in-memory draft. */ }
+  }
+  function changeInput(text: string) {
+    setInput(text);
+    const current = sessionRef.current; if (!current) return;
+    const previous = draftsRef.current[current.id];
+    saveDraft(current.id, {
+      ...previous, text, id: previous?.id || crypto.randomUUID(),
+      intent: previous?.intent || (current.analysis && (current.status === 'review' || current.retryDeferred) ? 'retry' : 'message'),
+    });
+  }
+  function restoreDraft(value: Session) { setInput(draftsRef.current[value.id]?.text || ''); }
+  function clearDrafts() {
+    draftsRef.current = {}; setDrafts({}); setInput(''); lastSent.current = null;
+    try { localStorage.removeItem(DRAFT_STORAGE); } catch { /* In-memory drafts are still cleared. */ }
+    voice.discardRecording();
+  }
   const sessionRef = useRef(session); sessionRef.current = session;
   const textModeRef = useRef(textMode); textModeRef.current = textMode;
   const transcriptRef = useRef(transcript); transcriptRef.current = transcript;
   const action = useCallback(async <T,>(name: string, task: () => Promise<T>, propagate = false): Promise<T | undefined> => {
-    setBusy(name); setError(''); setNotice('');
-    try { return await task(); } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось выполнить действие.'); if (propagate) throw e; } finally { setBusy(''); }
+    setBusy(name); setBusySince(Date.now()); setError(''); setNotice('');
+    try { return await task(); } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось выполнить действие.'); if (propagate) throw e; } finally { setBusy(''); setBusySince(null); }
   }, []);
   const refresh = useCallback(async () => {
     try {
@@ -179,31 +244,71 @@ export function TrainingApp() {
     return () => { clearInterval(timer); window.removeEventListener('focus', update); document.removeEventListener('visibilitychange', update); };
   }, [refreshUsage]);
   useEffect(() => {
-    if (!session || session.status !== 'analysing') return;
-    const timer = setInterval(() => { void request<Session>(`sessions/${session.id}`).then(next => { setSession(next); if (next.status !== 'analysing') void refresh(); }).catch(e => setError(e.message)); }, 2500);
-    return () => clearInterval(timer);
-  }, [session?.id, session?.status, refresh]);
+    if (!session || (session.status !== 'analysing' && !session.processing)) return;
+    const sessionId = session.id;
+    let disposed = false, fetching = false;
+    const poll = async () => {
+      if (fetching || disposed) return;
+      fetching = true;
+      try {
+        const next = await request<Session>(`sessions/${sessionId}`);
+        if (disposed || sessionRef.current?.id !== sessionId) return;
+        setSession(next);
+        if (next.status !== 'analysing' && !next.processing) void refresh();
+      } catch (e) { if (!disposed && sessionRef.current?.id === sessionId) setError(e instanceof Error ? e.message : 'Не удалось обновить разговор.'); }
+      finally { fetching = false; }
+    };
+    const timer = setInterval(() => void poll(), 2500);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [session?.id, session?.status, session?.processing?.stage, refresh]);
 
-  async function send(text: string, audioFile?: string, propagate = false) {
+  async function send(text: string, audioFile?: string, propagate = false, originalTranscript?: string) {
     const current = sessionRef.current; if (!current || !text.trim()) return;
-    const packet = lastSent.current?.text === text.trim() && lastSent.current.audioFile === audioFile ? lastSent.current : { id: crypto.randomUUID(), text: text.trim(), source: audioFile ? 'audio' as const : 'text' as const, audioFile };
+    const draft = draftsRef.current[current.id];
+    if (!audioFile && draft?.intent === 'message') { audioFile = draft.audioFile; originalTranscript = draft.originalTranscript; }
+    const packet = lastSent.current?.sessionId === current.id && lastSent.current.text === text.trim() && lastSent.current.audioFile === audioFile
+      ? lastSent.current : { sessionId: current.id, id: draft?.id || crypto.randomUUID(), text: text.trim(), source: audioFile ? 'audio' as const : 'text' as const, audioFile, originalTranscript };
     lastSent.current = packet;
     const result = await action('Ответ собеседника', async () => {
-      try { return await request<Session>(`sessions/${current.id}/message`, { ...packet, textVisible: textModeRef.current || transcriptRef.current }); }
+      const { sessionId: ignoredSessionId, ...payload } = packet;
+      void ignoredSessionId;
+      try { return await request<Session>(`sessions/${current.id}/message`, { ...payload, textVisible: current.baseline ? false : textModeRef.current || transcriptRef.current }); }
       catch (error) {
         const saved = await request<Session>(`sessions/${current.id}`).catch(() => null);
+        if (saved?.turns.some(turn => turn.role === 'user' && turn.id === packet.id)) {
+          saveDraft(current.id, null);
+          if (voice.recordingDraft?.contextKey === current.id + ':message') voice.markSubmitted();
+          if (sessionRef.current?.id === current.id) setInput('');
+        }
         if (saved && sessionRef.current?.id === current.id) setSession(saved);
         throw error;
       }
     }, propagate);
-    if (result) { if (sessionRef.current?.id !== current.id) return; setSession(result); setInput(''); setHintText(''); lastSent.current = null; void refresh(); if (!textModeRef.current && tabRef.current === 'session') { const turn = result.turns.at(-1); if (turn?.role === 'assistant') void speechRef.current(result, turn); } }
+    if (result) {
+      saveDraft(current.id, null);
+      if (voice.recordingDraft?.contextKey === current.id + ':message') voice.markSubmitted();
+      if (sessionRef.current?.id !== current.id) { void refresh(); return; }
+      setSession(result); setInput(''); setHintText(''); lastSent.current = null; void refresh();
+    }
   }
-  const voice = useVoice(async (text, audioFile) => {
-    if (tabRef.current !== 'session') return;
-    if (sessionRef.current?.status === 'review') { setInput(text); setRetryAudioFile(audioFile); setNotice('Речь распознана. Проверь текст и отправь свою попытку на разбор.'); return; }
-    await send(text, audioFile, true);
+  const voice = useVoice(async (text, audioFile, recording: RecordingDraft) => {
+    const [sessionId, intent] = (recording.contextKey || '').split(':');
+    if (!sessionId || (intent !== 'message' && intent !== 'retry')) { setError('Не удалось связать запись с разговором. Исходная запись сохранена.'); return; }
+    saveDraft(sessionId, { text, audioFile, originalTranscript: recording.originalTranscript, intent, id: crypto.randomUUID() });
+    if (sessionRef.current?.id === sessionId) setInput(text);
+    setNotice('Запись готова. Проверь расшифровку и отправь, когда будешь готов.');
   }, setError);
-  speechRef.current = voice.speak;
+  useEffect(() => {
+    const current = sessionRef.current;
+    const turn = current?.turns.at(-1);
+    if (tab !== 'session' || !status?.audio.configured || !current || current.processing || current.analysis
+      || turn?.role !== 'assistant' || !['idle', 'paused'].includes(voice.state)
+      || voice.hasUnuploadedRecording || draftsRef.current[current.id]?.audioFile) return;
+    const key = current.id + ':' + turn.id;
+    if (lastAutoplay.current === key) return;
+    lastAutoplay.current = key;
+    void voice.speak(current, turn, { autoplay: true });
+  }, [tab, session?.id, session?.turns.at(-1)?.id, session?.processing?.stage, status?.audio.configured, voice.state, voice.hasUnuploadedRecording, voice.speak]);
   useEffect(() => {
     const pauseHiddenWindow = () => {
       if (window.ratmirDesktop && document.hidden) voice.stop();
@@ -225,28 +330,63 @@ export function TrainingApp() {
     if (window.ratmirDesktop) void window.ratmirDesktop.openQuick().catch(() => setError('Не удалось открыть быстрый разбор.'));
     else setQuickVisible(true);
   }
-  async function start(familyId?: string, context?: Context, minutes?: number) {
+  async function completeIntro(russianControl: string) {
+    const next = await action('Сохраняем точку сравнения', () => request<OnboardingState>('onboarding/intro', { confirmed: true, russianControl }));
+    if (next) { setState(previous => previous ? { ...previous, onboarding: next } : previous); dismissStartup(); await refresh(); }
+  }
+  async function buildBaselineReport() {
+    if (busy) return;
+    const next = await action('Собираем стартовый профиль', () => request<OnboardingState>('onboarding/report', {}));
+    if (next) { setState(previous => previous ? { ...previous, onboarding: next } : previous); await refresh(); }
+  }
+  async function start(familyId?: string, context?: Context, minutes?: number, baselineStepId?: BaselineStepId) {
     if (busy || lessonStart.current?.pending) return;
-    const options = { mode, familyId, context, topic, minutes };
+    if (!baselineStepId && state?.onboarding && state.onboarding.status !== 'ready') { dismissStartup(); setTab('today'); return; }
+    if (voice.state === 'listening' || voice.state === 'transcribing' || voice.hasUnuploadedRecording) {
+      setError('Сначала закончи запись и распознавание. Потом можно начать отдельный разговор.');
+      if (session) setTab('session'); return;
+    }
+    const options = { mode: baselineStepId ? 'call' as const : mode, familyId, context, topic, minutes, baselineStepId };
     const optionsKey = JSON.stringify(options);
     const attempt = lessonStart.current?.optionsKey === optionsKey
       ? lessonStart.current
       : { optionsKey, requestId: crypto.randomUUID(), pending: false };
     lessonStart.current = attempt;
     attempt.pending = true;
+    setStarting(true);
     voice.stop();
     try {
       const result = await action('Готовлю твоё занятие', async () => request<Session>('sessions', { ...options, intent: 'new', requestId: attempt.requestId }));
-      if (result) { lessonStart.current = null; dismissStartup(); setSession(result); setTab('session'); setInput(''); setRetryAudioFile(undefined); setHintText(''); setTranscript(!status?.audio.configured); setTextMode(!status?.audio.configured); voice.setState('idle'); void refresh(); }
-    } finally { attempt.pending = false; }
+      if (result) { lessonStart.current = null; lastAutoplay.current = null; dismissStartup(); setSession(result); setTab('session'); restoreDraft(result); setHintText(''); setTranscript(result.mode === 'learning' || !status?.audio.configured); setTextMode(result.mode === 'learning' || !status?.audio.configured); voice.setState('idle'); void refresh(); }
+    } finally { attempt.pending = false; setStarting(false); }
   }
-  function open(value: Session) { voice.stop(); setSession(value); setTab('session'); setInput(''); setRetryAudioFile(undefined); setHintText(''); setTranscript(true); setTextMode(!status?.audio.configured); setError(''); voice.setState('idle'); }
+  function open(value: Session) {
+    if (busy) return;
+    if (sessionRef.current?.id !== value.id && (voice.state === 'listening' || voice.state === 'transcribing' || voice.hasUnuploadedRecording)) {
+      setError('Сначала закончи текущую запись. Она останется в своём разговоре.'); return;
+    }
+    voice.stop(); lastAutoplay.current = null; setSession(value); setTab('session'); restoreDraft(value); setHintText('');
+    setTranscript(value.mode === 'learning' || !status?.audio.configured); setTextMode(value.mode === 'learning' || !status?.audio.configured); setError(''); voice.setState('idle');
+  }
   async function sessionAction(name: string, data: unknown = {}) {
-    if (!session) return;
+    if (!session || busy) return;
+    const sessionId = session.id;
+    if (voice.state === 'listening' || voice.state === 'transcribing' || voice.hasUnuploadedRecording) {
+      setError('Сначала закончи запись. Можно распознать её повторно или удалить явно.'); return;
+    }
+    if ((name === 'finish' || name === 'complete') && draftsRef.current[sessionId]?.text.trim()) {
+      setError('У тебя есть неотправленный черновик. Отправь его или удали перед завершением.'); return;
+    }
     if (name === 'finish' || name === 'complete' || name === 'edit') voice.stop();
-    const payload = name === 'retry' ? { ...(data as Record<string, unknown>), audioFile: retryAudioFile } : data;
-    const next = await action(name === 'finish' ? 'Готовлю разбор' : 'Сохраняю результат', () => request<Session>(`sessions/${session.id}/${name}`, payload));
-    if (next) { setSession(next); setInput(''); setRetryAudioFile(undefined); void refresh(); }
+    const draft = draftsRef.current[sessionId];
+    const payload = name === 'retry' ? { ...(data as Record<string, unknown>), id: draft?.id || crypto.randomUUID(),
+      audioFile: draft?.intent === 'retry' ? draft.audioFile : undefined, originalTranscript: draft?.intent === 'retry' ? draft.originalTranscript : undefined } : data;
+    const next = await action(name === 'finish' ? 'Готовлю разбор' : name === 'retry' ? 'Сравниваем твою попытку' : 'Сохраняю результат', () => request<Session>(`sessions/${sessionId}/${name}`, payload));
+    if (next) {
+      if (name === 'retry') { saveDraft(sessionId, null); if (voice.recordingDraft?.contextKey === sessionId + ':retry') voice.markSubmitted(); }
+      if (sessionRef.current?.id === sessionId) { setSession(next); if (name === 'retry') setInput(''); }
+      void refresh();
+    }
   }
   async function showTranscript() {
     if (!session) return;
@@ -254,17 +394,18 @@ export function TrainingApp() {
     if (next) { setSession(next); setTranscript(true); }
   }
   function resend() {
+    if (!session) return;
     const last = session?.turns.at(-1); if (last?.role !== 'user') return;
-    lastSent.current = { id: last.id, text: last.text, source: last.source, audioFile: last.audioFile };
-    void send(last.text, last.audioFile);
+    lastSent.current = { sessionId: session.id, id: last.id, text: last.text, source: last.source, audioFile: last.audioFile, originalTranscript: last.originalTranscript };
+    void send(last.text, last.audioFile, false, last.originalTranscript);
   }
-  const active = state?.sessions.find(s => s.status === 'active' || s.status === 'analysing' || s.status === 'review');
-  const day = new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', timeZone: 'Europe/Moscow' }).format(new Date());
+  const active = state?.sessions.find(s => (!s.baseline || state.onboarding?.status !== 'ready') && (s.status === 'active' || s.status === 'analysing' || s.status === 'review' || s.retryDeferred));
+  const day = new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long' }).format(new Date());
   const pending = !!busy;
   const navigation = (next: Tab) => { voice.stop(); dismissStartup(); setTab(next); setError(''); };
   const chosenFamily = FAMILIES.find(family => family.id === selectedFamily);
   const visibleSessions = state?.sessions.filter(value => (value.lesson.title + ' ' + value.lesson.goal).toLowerCase().includes(search.toLowerCase())) || [];
-  const calibration = Math.min(3, state?.calibrationCompleted || 0);
+  const calibration = Math.min(3, state?.onboarding?.completedStages ?? state?.calibrationCompleted ?? 0);
   const independent = state?.skills.filter(skill => skill.state === 'independent').length || 0;
 
   if (needLogin) return (
@@ -286,7 +427,7 @@ export function TrainingApp() {
   );
 
   if (state && quickVisible) return <QuickCoach onDismiss={dismissStartup} />;
-  if (state && startupVisible) return <StartupWelcome state={state} busy={busy} error={error} onStart={minutes => void start(undefined, undefined, minutes)} onResume={value => { dismissStartup(); open(value); }} onDismiss={dismissStartup} />;
+  if (state && startupVisible && (!state.onboarding || state.onboarding.status === 'ready')) return <StartupWelcome state={state} busy={busy} error={error} onStart={minutes => void start(undefined, undefined, minutes)} onResume={value => { dismissStartup(); open(value); }} onDismiss={dismissStartup} />;
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -316,7 +457,11 @@ export function TrainingApp() {
       {notice && <div className="message-banner success" role="status"><Check size={18} /><span>{notice}</span><button onClick={() => setNotice('')} aria-label="Закрыть сообщение"><X size={18} /></button></div>}
       <div ref={screenRef} className="screen-content" data-screen={startupVisible ? 'startup' : tab}>
       {!state ? <div className="page-loading"><div className="skeleton title-skeleton" /><div className="skeleton panel-skeleton" /><p>Открываю твой тренинг…</p>{error && <button className="button secondary" onClick={() => void refresh()}>Повторить загрузку</button>}</div> : <>
-      {tab === 'today' && <>
+      {starting && <PreparationPanel startedAt={busySince} stage={busy} />}
+      {state.onboarding && state.onboarding.status !== 'ready' && ['today', 'practice', 'progress'].includes(tab) && <OnboardingFlow state={state} onboarding={state.onboarding} busy={busy} audioReady={!!status?.audio.configured} onIntro={text => void completeIntro(text)} onStart={stepId => void start(undefined, undefined, undefined, stepId)} onResume={open} onSettings={() => navigation('settings')} />}
+      {tab === 'today' && (!state.onboarding || state.onboarding.status === 'ready') && <>
+        {state.onboarding?.status === 'ready' && !state.onboarding.report && <BaselineProfile report={null} busy={busy === 'Собираем стартовый профиль' ? busy : ''} disabled={pending} activity={busy === 'Собираем стартовый профиль' ? <div className="baseline-build-status" role="status"><p>Сравниваем три разговора и выбираем, что тренировать первым.</p><ElapsedTime startedAt={busySince} /></div> : undefined} onBuild={() => void buildBaselineReport()} onOpenEvidence={() => {}} />}
+        {state.onboarding?.report && <button className="text-button baseline-profile-link" onClick={() => navigation('progress')}>Твой стартовый профиль<ArrowUpRight size={16} /></button>}
         <div className="page-heading">
           <div><h1>Сегодня</h1><p>Короткая практика. Конкретный следующий шаг.</p></div>
           <span className="quiet-tag">{calibration < 3 ? 'Знакомимся с твоим уровнем' : 'Личная программа'}</span>
@@ -331,7 +476,7 @@ export function TrainingApp() {
               </div>
               <div className="lesson-copy">
                 <h2>{active?.lesson.title || (calibration < 3 ? 'Узнаем, как ты говоришь' : state.reviews[0]?.focus || 'Новый разговор на английском')}</h2>
-                <p>{active?.lesson.goal || (calibration < 3 ? 'Знакомая тема и живой диалог. Найдём твои сильные стороны и то, что стоит потренировать первым.' : 'Sol учтёт твои попытки, повторения и ближайшие цели — и подберёт новую ситуацию.')}</p>
+                <p>{active?.lesson.goal || (calibration < 3 ? 'Знакомая тема и живой диалог. Найдём твои сильные стороны и то, что стоит потренировать первым.' : 'Следующий разговор учтёт твои последние попытки и ближайшие цели.')}</p>
               </div>
               <div className="lesson-steps" aria-label="Как проходит занятие">
                 <span><small>01</small> Разговор</span><span><small>02</small> Разбор</span><span><small>03</small> Своя версия</span>
@@ -343,6 +488,7 @@ export function TrainingApp() {
               <button className="button primary large" disabled={pending} onClick={() => active ? open(active) : void start()}>
                 <Play size={18} /><span>{pending ? busy : active ? 'Продолжить занятие' : calibration < 3 ? 'Начать калибровку' : 'Начать практику'}</span><ArrowRight size={21} />
               </button>
+              {active && <button className="text-button new-session-link" disabled={pending} onClick={() => navigation('practice')}>Начать другой разговор<ArrowRight size={16} /></button>}
               <small className="daily-note">{status?.audio.configured ? 'Можно говорить или писать. Разбор по-русски.' : 'Начни текстом. Голос можно подключить в настройках.'}</small>
               <button type="button" className="text-button" onClick={launchQuick}><BookOpen size={16} />Быстрый разбор фразы</button>
             </section>
@@ -364,7 +510,7 @@ export function TrainingApp() {
               <div className="section-title"><h3>Твой профиль</h3><Sparkles size={18} /></div>
               <div className="profile-summary">
                 <div className="calibration-ring">
-                  <svg viewBox="0 0 100 100" role="img" aria-label={'Калибровка: ' + calibration + ' из 3 завершённых занятий'}>
+                  <svg viewBox="0 0 100 100" role="img" aria-label={'Стартовая проверка: ' + calibration + ' из 3 этапов с наблюдениями'}>
                     <circle className="ring-track" cx="50" cy="50" r="42" fill="none" />
                     <circle className="ring-value" cx="50" cy="50" r="42" fill="none" strokeDasharray="263.9" strokeDashoffset={263.9 * (1 - calibration / 3)} transform="rotate(-90 50 50)" />
                   </svg>
@@ -387,7 +533,7 @@ export function TrainingApp() {
           </aside>
         </div>
       </>}
-      {tab === 'practice' && <>
+      {tab === 'practice' && (!state.onboarding || state.onboarding.status === 'ready') && <>
         <div className="page-heading"><div><h1>Выбери разговор</h1><p>Ситуация твоя. Задачу и сложность подберёт Sol.</p></div><ModeSwitch mode={mode} setMode={setMode} /></div>
         <div className="topic-bar">
           <Lightbulb size={18} />
@@ -415,8 +561,9 @@ export function TrainingApp() {
         </div>
         <p className="caption">Работа и обычная жизнь примерно поровну. Ближайшие интервью могут временно менять акцент.</p>
       </>}
-      {tab === 'progress' && <>
+      {tab === 'progress' && (!state.onboarding || state.onboarding.status === 'ready') && <>
         <div className="page-heading"><div><h1>Твой прогресс</h1><p>Что получается самому и на каких попытках это основано.</p></div><span className="quiet-tag">{calibration < 3 ? 'Калибровка ' + calibration + '/3' : 'Профиль по твоим данным'}</span></div>
+        {state.onboarding?.status === 'ready' && <BaselineProfile report={state.onboarding.report} busy={busy === 'Собираем стартовый профиль' ? busy : ''} disabled={pending} activity={busy === 'Собираем стартовый профиль' ? <div className="baseline-build-status" role="status"><p>Сравниваем три разговора и выбираем, что тренировать первым.</p><ElapsedTime startedAt={busySince} /></div> : undefined} onBuild={() => void buildBaselineReport()} onOpenEvidence={sessionId => { const source = state.sessions.find(value => value.id === sessionId); if (source) open(source); }} />}
         <div className="progress-summary progress-metrics">
           <div><strong>{state.completed}</strong><span>завершённых занятий</span></div>
           <div><strong>{state.xp}<small> XP</small></strong><span>за практику и свои попытки</span></div>
@@ -444,11 +591,15 @@ export function TrainingApp() {
             <section className="review-list">
               <div className="section-title"><h3>Вернуться к навыку</h3><RefreshCw size={18} /></div>
               <p className="caption">Повторения появляются из твоих разборов.</p>
-              {state.reviews.length ? state.reviews.slice(0, 8).map(review => <div className="review-row" key={review.id}>
-                <span><strong>{review.focus}</strong><small>{SKILLS.find(skill => skill.id === review.skill)?.label}</small></span><time>{date(review.dueAt)}</time>
-              </div>) : <div className="review-empty"><Target size={27} /><h3>Сначала найдём цель</h3><p>После первых разговоров здесь появятся подходящие повторения.</p></div>}
+              {state.reviews.length ? <>{state.reviews.slice(0, 8).map(review => {
+                const source = state.sessions.find(value => value.id === review.sourceSessionId);
+                return <div className="review-row actionable-review" key={review.id}>
+                  <span><strong>{review.focus}</strong><small>{SKILLS.find(skill => skill.id === review.skill)?.label}</small>{source && <button className="text-button" disabled={pending} onClick={() => open(source)}>Посмотреть свою попытку<ArrowUpRight size={14} /></button>}</span>
+                  <time>{date(review.dueAt)}</time>
+                </div>;
+              })}<button className="button secondary" disabled={pending} onClick={() => void start()}>Подобрать повторение<RefreshCw size={16} /></button></> : <div className="review-empty"><Target size={27} /><h3>Сначала найдём цель</h3><p>После первых разговоров здесь появятся подходящие повторения.</p></div>}
             </section>
-            <div className="learning-note"><GraduationCap size={23} /><h3>Рост — в твоих ответах</h3><p>XP показывает практику. Самостоятельность подтверждают новые ситуации и повторная проверка.</p></div>
+            <div className="learning-note"><GraduationCap size={23} /><h3>Рост видно по ответам</h3><p>XP показывает практику. Самостоятельность подтверждают новые ситуации и повторная проверка.</p></div>
           </aside>
         </div>
       </>}
@@ -463,7 +614,11 @@ export function TrainingApp() {
             </button>
             <button className={deleting === value.id ? 'text-button danger' : 'icon-button'} aria-label={deleting === value.id ? 'Подтвердить удаление занятия' : 'Удалить занятие'} onClick={() => {
               if (deleting !== value.id) { setDeleting(value.id); return; }
-              void action('Удаляю занятие', async () => { await request('sessions/' + value.id, undefined, 'DELETE'); setDeleting(''); await refresh(); });
+              void action('Удаляю занятие', async () => {
+                await request('sessions/' + value.id, undefined, 'DELETE'); saveDraft(value.id, null);
+                if (sessionRef.current?.id === value.id) { voice.discardRecording(); setSession(null); setInput(''); }
+                setDeleting(''); await refresh();
+              });
             }}>{deleting === value.id ? 'Удалить?' : <Trash2 size={16} />}</button>
           </div>)}
           {!state.sessions.length && <div className="large-empty"><History size={32} /><h2>Начнём с первого разговора</h2><p>Он станет отправной точкой твоей программы.</p><button className="button primary" onClick={() => void start()} disabled={pending}>Начать калибровку <ArrowRight size={17} /></button></div>}
@@ -541,12 +696,12 @@ export function TrainingApp() {
             <details className="delete-details">
               <summary>Удалить историю тренировок</summary><p>Удалятся занятия, аудио, разборы и основанный на них прогресс. Личный профиль останется.</p>
               <label>Введи DELETE<input value={reset} onChange={event => setReset(event.target.value)} autoComplete="off" /></label>
-              <button className="button danger-button" disabled={pending || reset !== 'DELETE'} onClick={() => void action('Удаляю историю', async () => { const next = await request<AppState>('reset', { confirmation: reset }); setState(next); setReset(''); setSession(null); setNotice('История удалена. Можно начать новую калибровку.'); })}>Удалить историю</button>
+              <button className="button danger-button" disabled={pending || reset !== 'DELETE'} onClick={() => void action('Удаляю историю', async () => { const next = await request<AppState>('reset', { confirmation: reset }); clearDrafts(); setState(next); setReset(''); setSession(null); setNotice('История удалена. Можно начать новую стартовую проверку.'); })}>Удалить историю</button>
             </details>
           </section>
         </div>
       </>}
-      {tab === 'session' && session && <SessionView session={session} setSession={setSession} busy={busy} input={input} setInput={setInput} textMode={textMode} setTextMode={setTextMode} transcript={transcript} showTranscript={showTranscript} hintText={hintText} comfort={comfort} setComfort={setComfort} voice={voice} audioReady={!!status?.audio.configured} onSend={() => void send(input)} onResend={resend} onAction={sessionAction} onHint={level => void action('Подбираю опору', async () => { const result = await request<{ text: string }>(`sessions/${session.id}/hint`, { level }); setHintText(result.text); })} onBack={() => navigation('today')} onSettings={() => navigation('settings')} editing={editing} setEditing={setEditing} editText={editText} setEditText={setEditText} />}
+      {tab === 'session' && session && <SessionView session={session} setSession={setSession} busy={busy} busySince={busySince} input={input} setInput={changeInput} draft={drafts[session.id]} onDiscardDraft={() => { saveDraft(session.id, null); setInput(''); if (voice.recordingDraft?.contextKey?.startsWith(session.id + ':')) voice.discardRecording(); }} textMode={textMode} setTextMode={setTextMode} transcript={transcript} showTranscript={showTranscript} hintText={hintText} comfort={comfort} setComfort={setComfort} voice={voice} audioReady={!!status?.audio.configured} onSend={() => void send(input)} onResend={resend} onAction={sessionAction} onHint={level => void action('Подбираю опору', async () => { const result = await request<{ text: string }>(`sessions/${session.id}/hint`, { level }); setHintText(result.text); })} onBack={() => navigation('today')} onSettings={() => navigation('settings')} editing={editing} setEditing={setEditing} editText={editText} setEditText={setEditText} />}
       </>}
       </div><footer className="page-footer"><span>Своя попытка → разбор → новый разговор</span><span>Личный тренинг · v0.1</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
   </div>;
@@ -582,42 +737,167 @@ function Activity({ state }: { state: AppState }) {
 }
 
 type SessionProps = {
-  session: Session; setSession: (s: Session) => void; busy: string; input: string; setInput: (s: string) => void;
+  session: Session; setSession: (s: Session) => void; busy: string; busySince: number | null;
+  input: string; setInput: (s: string) => void; draft?: SessionDraft; onDiscardDraft: () => void;
   textMode: boolean; setTextMode: (v: boolean) => void; transcript: boolean; showTranscript: () => Promise<void>;
   hintText: string; comfort: number; setComfort: (n: number) => void; voice: ReturnType<typeof useVoice>; audioReady: boolean;
   onSend: () => void; onResend: () => void; onAction: (name: string, data?: unknown) => Promise<void>; onHint: (level: 1 | 2 | 3) => void;
   onBack: () => void; onSettings: () => void; editing: string; setEditing: (s: string) => void; editText: string; setEditText: (s: string) => void;
 };
+
+function LiveCaptions({ voice }: { voice: ReturnType<typeof useVoice> }) {
+  if (voice.state !== 'listening' && voice.state !== 'transcribing') return null;
+  return <section className="live-caption" data-testid="live-caption" aria-label="Живая расшифровка">
+    <span className="eyebrow">{voice.liveTranscriptStatus || 'Живые субтитры'}</span>
+    <p lang="en">{voice.liveTranscript || (voice.state === 'listening' ? 'Начни говорить. Твои слова появятся здесь.' : 'Проверяем запись целиком…')}</p>
+    <small>Это предварительная расшифровка. После записи можно проверить текст и послушать оригинал.</small>
+  </section>;
+}
+
+function RecordingEvidence({ p, intent }: { p: SessionProps; intent: 'message' | 'retry' }) {
+  const draft = p.draft;
+  if (!draft?.audioFile || draft.intent !== intent) return null;
+  const edited = draft.originalTranscript !== undefined && draft.originalTranscript.trim() !== p.input.trim();
+  return <div className="recording-evidence" data-testid="recording-draft">
+    <div className="recording-evidence-heading"><span className="eyebrow">ТВОЯ ЗАПИСЬ</span><span className="quiet-tag">{edited ? 'Текст исправлен' : 'Можно отправлять'}</span></div>
+    <p>Послушай оригинал и проверь слова. Правки расшифровки учитываются отдельно от твоей речи.</p>
+    <div className="recording-evidence-actions">
+      <button type="button" className="button secondary" data-testid="replay-recording" onClick={() => p.voice.playingLearnerRecording ? p.voice.stop() : void p.voice.playRecording(draft.audioFile)} disabled={p.voice.state === 'listening' || !!p.busy}>
+        {p.voice.playingLearnerRecording ? <Square size={16} /> : <Play size={16} />}{p.voice.playingLearnerRecording ? 'Стоп' : 'Моя запись'}
+      </button>
+      <button type="button" className="text-button" onClick={p.onDiscardDraft} disabled={!!p.busy}>Удалить черновик</button>
+    </div>
+    {edited && <details><summary>Исходная расшифровка</summary><p lang="en">{draft.originalTranscript}</p></details>}
+  </div>;
+}
+
+function UnuploadedRecording({ p }: { p: SessionProps }) {
+  if (!p.voice.hasUnuploadedRecording || p.voice.state === 'listening' || p.voice.state === 'transcribing') return null;
+  return <div className="unuploaded-recording" role="status">
+    <strong>Исходная запись сохранена</strong><p>Распознавание не завершилось. Её можно послушать и попробовать снова.</p><p>Запись пока только в этом окне. Не закрывай приложение до сохранения.</p>
+    <div className="recording-evidence-actions">
+      <button className="button secondary" data-testid="replay-recording" disabled={!!p.busy} onClick={() => p.voice.playingLearnerRecording ? p.voice.stop() : void p.voice.playRecording()}>
+        {p.voice.playingLearnerRecording ? <Square size={16} /> : <Play size={16} />}{p.voice.playingLearnerRecording ? 'Стоп' : 'Моя запись'}
+      </button>
+      <button className="button secondary" disabled={!!p.busy || p.voice.state === 'thinking'} onClick={() => void p.voice.retry()}><RefreshCw size={16} />Распознать ещё раз</button>
+      <button className="text-button" disabled={!!p.busy} onClick={() => { p.voice.discardRecording(); p.onDiscardDraft(); }}>Удалить запись</button>
+    </div>
+  </div>;
+}
+
+function DraftComposer({ p, intent, pending }: { p: SessionProps; intent: 'message' | 'retry'; pending: boolean }) {
+  const listening = p.voice.state === 'listening';
+  const last = p.session.turns.at(-1);
+  const canSend = !pending && !listening && !p.voice.hasUnuploadedRecording && !!p.input.trim()
+    && (intent === 'retry' || last?.role !== 'user') && (!p.session.baseline || intent === 'retry' || !!p.draft?.audioFile);
+  const submit = () => { if (canSend) { p.voice.stop(); if (intent === 'retry') void p.onAction('retry', { text: p.input }); else p.onSend(); } };
+  return <form className="reply-form" onSubmit={e => { e.preventDefault(); submit(); }}>
+    <RecordingEvidence p={p} intent={intent} />
+    <label className="draft-label" htmlFor={'draft-' + p.session.id}>{intent === 'retry' ? 'Твоя улучшенная попытка' : p.draft?.audioFile ? 'Проверь расшифровку' : 'Твой ответ'}</label>
+    <textarea id={'draft-' + p.session.id} aria-label={intent === 'retry' ? 'Улучшенная попытка' : 'Твой ответ по-английски'} lang="en" placeholder={intent === 'retry' ? 'My improved reply…' : 'Your reply…'} rows={3} value={p.input} onChange={e => p.setInput(e.target.value)} disabled={pending || listening || (intent === 'message' && last?.role === 'user')}
+      onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } }} />
+    <div><small>Черновик сохраняется.<br />Ctrl + Enter, чтобы отправить</small>
+      <button className="button primary" data-testid="send-draft" disabled={!canSend}>{intent === 'retry' ? 'Проверить попытку' : 'Отправить'}<Send size={17} /></button>
+    </div>
+  </form>;
+}
+
 function SessionView(p: SessionProps) {
   const { session: s, voice, busy } = p;
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    if (s.status !== 'analysing') return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [s.id, s.status, s.processing?.startedAt]);
-  const active = s.status === 'active' || s.status === 'error';
+  const [showListeningCheck, setShowListeningCheck] = useState(false);
+  const active = s.status === 'active' || (s.status === 'error' && !s.analysis);
+  const baseline = !!s.baseline;
+  const baselineReplies = s.turns.filter(turn => turn.role === 'user' && turn.source === 'audio' && turn.audioFile && turn.support === 0 && !turn.transcriptEdited && !turn.disputed).length;
+  const retryAllowed = s.status === 'review' || (s.status === 'completed' && !!s.retryDeferred);
   const last = s.turns.at(-1);
-  const pending = !!busy || voice.state === 'thinking' || voice.state === 'transcribing';
-  const hasImprovedRetry = s.retries.some(retry => retry.improved === true
-    && (retry.analysisVersion === undefined || retry.analysisVersion === s.analysis?.version));
+  const lastPartner = s.turns.findLast(turn => turn.role === 'assistant');
+  const listening = voice.state === 'listening';
+  const pending = !!busy || !!s.processing || voice.state === 'thinking' || voice.state === 'transcribing';
+  const unresolvedRecording = voice.hasUnuploadedRecording || !!p.draft?.text.trim();
+  const hasImprovedRetry = !!s.analysis && s.retries.some(retry => retry.improved === true
+    && (retry.analysisVersion === undefined || retry.analysisVersion === s.analysis?.version))
+    && (!s.completion || (s.completion.canComplete && !s.completion.needsRetry));
   const completion = s.completion ?? {
     canComplete: !!s.analysis && (!s.analysis.priorities.length || hasImprovedRetry),
     needsRetry: !!s.analysis?.priorities.length && !hasImprovedRetry,
     reason: 'Попробуй выразить мысль заново или сохрани правку на потом.',
   };
-  const analysisStage = s.processing?.stage === 'queued' ? 'Разбор в очереди на сервере.'
-    : s.processing?.stage === 'evaluating' ? 'Сравниваю реплики и выбираю ближайшую правку.'
-      : s.processing?.stage === 'waiting-retry' ? 'Первая попытка не прошла. Сервер повторит запрос.'
-        : 'Разбор выполняется на сервере.';
-  const startedAt = Date.parse(s.processing?.startedAt || '');
-  const elapsedSeconds = Number.isFinite(startedAt) ? Math.max(0, Math.floor((now - startedAt) / 1000)) : null;
-  const elapsed = elapsedSeconds === null ? null : `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
-  return <div className="session-page"><div className="session-heading"><button className="text-button" onClick={p.onBack}><ChevronRight className="back-icon" size={17} /> Сегодня</button><span className="quiet-tag">{s.mode === 'call' ? 'Созвон без опор' : 'Учебный режим'}</span></div><div className="page-heading"><div><h1>{s.lesson.title}</h1><p>{s.lesson.role}</p></div></div>
-    {active && <div className="conversation-layout"><section className={`conversation-stage ${p.textMode ? 'text-mode' : ''}`}>{p.textMode && last?.role === 'assistant' && <div className="current-prompt"><span>Собеседник</span><p lang="en">{last.text}</p></div>}<VoiceOrb state={busy ? 'thinking' : voice.state} volume={voice.volume} emotion={s.error ? 'supportive' : hasImprovedRetry ? 'pleased' : undefined} /><h2 className="voice-state" aria-live="polite">{busy || voiceNames[voice.state]}</h2><p className="voice-caption">{p.textMode ? 'Ответь по-английски, собеседник продолжит разговор.' : 'Голос AI. Нажми микрофон, скажи реплику и нажми ещё раз, чтобы отправить.'}</p>{last?.role === 'user' && <div className="pending-reply"><p>Твоя реплика сохранена. Повтори получение ответа собеседника.</p><button className="button secondary" disabled={pending} onClick={p.onResend}><RefreshCw size={17} />Повторить ответ собеседника</button></div>}<div className="voice-controls"><button className="voice-control" onClick={() => voice.stop()} aria-label="Пауза"><Pause size={22} /><span>Пауза</span></button><button className={`voice-control main ${voice.state === 'listening' ? 'recording' : ''}`} disabled={pending || !p.audioReady || last?.role === 'user'} onClick={() => void voice.record()} aria-label={voice.state === 'listening' ? 'Отправить запись' : 'Говорить'}>{voice.state === 'listening' ? <Square size={23} /> : <Mic size={27} />}<span>{voice.state === 'listening' ? 'Отправить' : 'Говорить'}</span></button><button className="voice-control" disabled={pending || !s.turns.some(t => t.role === 'user')} onClick={() => { voice.stop(); void p.onAction('finish'); }} aria-label="Завершить и получить разбор"><Check size={23} /><span>Разбор</span></button></div>{!p.audioReady && <button className="text-button audio-setup" onClick={p.onSettings}>Подключить качественный голос <ArrowUpRight size={15} /></button>}{voice.canRetry && <button className="button secondary voice-retry" disabled={pending} onClick={() => void voice.retry()}><RefreshCw size={16} />{voice.retryLabel || 'Повторить'}</button>}<div className="conversation-mode"><button className={p.textMode ? 'selected' : ''} onClick={() => { p.setTextMode(true); void p.showTranscript(); }}>Текст</button><button className={!p.textMode ? 'selected' : ''} disabled={!p.audioReady} onClick={() => p.setTextMode(false)}>Голос</button>{last?.role === 'assistant' && p.audioReady && <button disabled={pending} onClick={() => void voice.speak(s, last)}><Play size={14} /> Послушать</button>}</div>{p.textMode && <form className="reply-form" onSubmit={e => { e.preventDefault(); p.onSend(); }}><textarea aria-label="Твой ответ по-английски" lang="en" placeholder="Your reply…" rows={3} value={p.input} onChange={e => p.setInput(e.target.value)} disabled={pending} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); p.onSend(); } }} /><div><small>Ctrl + Enter, чтобы отправить</small><button className="button primary" disabled={pending || !p.input.trim() || last?.role === 'user'}><Send size={17} /> Отправить</button></div></form>}</section><aside className="conversation-inspector"><div className="goal-block"><span className="eyebrow">ЦЕЛЬ ЭТОГО РАЗГОВОРА</span><h3>{s.lesson.goal}</h3><p>{s.lesson.why}</p></div>{s.mode === 'learning' && <section className="support-section"><h3><Lightbulb size={17} /> Поддержка</h3><p>Сначала попробуй сам. Опора учитывается в разборе.</p><div className="support-buttons"><button disabled={pending} onClick={() => p.onHint(1)}>Намёк</button><button disabled={pending} onClick={() => p.onHint(2)}>Конструкция</button><button disabled={pending} onClick={() => p.onHint(3)}>Пример</button></div>{p.hintText && <div className="hint-text">{p.hintText}</div>}</section>}<details className="transcript" open={p.transcript} onToggle={e => { if (e.currentTarget.open && !p.transcript) void p.showTranscript(); }}><summary>Текст разговора <BookOpen size={17} /></summary><div className="turn-list">{s.turns.map(t => <div className={`turn ${t.role}`} key={t.id}><span>{t.role === 'user' ? 'Ты' : 'Собеседник'}</span><p lang="en">{t.text}</p></div>)}</div></details><div className="inspector-note"><GraduationCap size={18} /><p>Подробный разбор после разговора. {(p.textMode || p.transcript) && 'Текст помогает ответить; понимание на слух проверим без текста. '}Произношение по одному тексту не оценивается.</p></div></aside></div>}
-    {s.status === 'analysing' && <div className="analysis-loading"><VoiceOrb state="thinking" emotion={s.error ? 'supportive' : undefined} /><h2>Разбираю твою попытку</h2><p aria-live="polite">{analysisStage} Можно закрыть экран, результат сохранится.</p>{elapsed && <p>Время на этом этапе: {elapsed}</p>}<button className="button secondary" onClick={p.onBack}>Вернуться на главную</button></div>}
-    {s.status === 'error' && s.error && <div className="message-banner error"><p>{s.error}</p><button className="button secondary" onClick={() => void p.onAction('reanalyse')}>Повторить разбор</button></div>}
-    {s.analysis && <div className="analysis-layout"><div><section className="analysis-intro"><span className="eyebrow">РАЗБОР ТВОЕЙ ПОПЫТКИ</span><p className="analysis-summary">{s.analysis.summary}</p>{s.analysis.strengths.length > 0 && <div className="strengths">{s.analysis.strengths.map((v, i) => <p key={i}><Check size={17} />{v}</p>)}</div>}</section>{s.analysis.priorities.map((priority, i) => <section className="priority" key={i}><div className="priority-heading"><span className="priority-number">0{i + 1}</span><span className="quiet-tag">{priority.type === 'language' ? 'Английский' : 'Диалог'}</span></div><h3>{priority.title}</h3><blockquote lang="en">{priority.quote}</blockquote><p>{priority.explanation}</p><details><summary>Возможная формулировка</summary><p className="example" lang="en">{priority.example}</p><small>Один из вариантов. Свою попытку формулируй своими словами.</small></details><div className="retry-prompt"><Target size={17} /><span>{priority.retryInstruction}</span></div></section>)}{(s.status === 'review' || (s.status === 'completed' && s.retryDeferred)) && <section className="retry-section"><h2>Теперь твоя версия</h2><p>Повтори важный эпизод своими словами. Sol сравнит его с исходной попыткой.</p>{p.audioReady && <div className="retry-voice"><button className="button secondary" disabled={pending} onClick={() => void voice.record()}>{voice.state === 'listening' ? <Square size={17} /> : <Mic size={17} />}{voice.state === 'listening' ? 'Закончить запись' : 'Сказать голосом'}</button><span aria-live="polite">{voiceNames[voice.state]}</span></div>}{voice.canRetry && <button className="text-button" disabled={pending} onClick={() => void voice.retry()}>{voice.retryLabel || 'Повторить'}</button>}<form onSubmit={e => { e.preventDefault(); void p.onAction('retry', { text: p.input }); }}><textarea lang="en" aria-label="Улучшенная попытка" rows={4} placeholder="My improved reply…" value={p.input} onChange={e => p.setInput(e.target.value)} /><button className="button primary" disabled={pending || voice.state === 'listening' || !p.input.trim()}>Проверить свою попытку <ArrowRight size={18} /></button></form></section>}{s.retries.map((retry, i) => <section className="retry-result" key={i}><span className="eyebrow">СОБСТВЕННАЯ ПОПЫТКА {i + 1} · {retry.improved === true ? 'Есть улучшение' : 'Продолжаем работу'}</span><blockquote lang="en">{retry.text}</blockquote>{retry.audioFile && <audio controls preload="none" src={`/api/audio/${retry.audioFile}`} />}<p>{retry.feedback}</p></section>)}{s.status !== 'completed' && <section className="finish-section"><h3>Как ощущался разговор?</h3><div className="comfort-choice" aria-label="Комфорт от 1 до 5">{[1, 2, 3, 4, 5].map(n => <button key={n} aria-pressed={p.comfort === n} className={p.comfort === n ? 'selected' : ''} onClick={() => p.setComfort(n)}>{n}</button>)}<span>Сложно → комфортно</span></div><button className="button primary" disabled={pending || voice.state === 'listening' || s.status !== 'review' || !completion.canComplete} onClick={() => void p.onAction('complete', { comfort: p.comfort })}>Завершить занятие <Check size={18} /></button>{s.status === 'review' && completion.needsRetry && <><p>{completion.reason}</p><button className="button secondary" disabled={pending || voice.state === 'listening'} onClick={() => void p.onAction('complete', { comfort: p.comfort, deferRetry: true })}>На сегодня всё, правку оставлю на потом</button></>}</section>}{s.status === 'completed' && <div className="completed-note"><Check size={22} /><span>{s.retryDeferred ? 'Разговор сохранён. К улучшенной попытке можно вернуться из истории.' : 'Занятие завершено. Свой повтор сохранён отдельно от независимой проверки.'}</span></div>}</div><aside className="analysis-aside"><section><h3>Следующий шаг</h3><p>{s.analysis.nextFocus}</p><span className="caption">GPT‑6.1 Sol · {date(s.analysis.createdAt)}</span></section><details><summary>Наблюдения по навыкам</summary>{s.analysis.evidence.map((e, i) => <div className="observation" key={i}><strong>{SKILLS.find(k => k.id === e.skill)?.label}</strong><span>{e.result === 'success' ? 'Получилось' : e.result === 'partial' ? 'Частично' : e.result === 'difficulty' ? 'Есть трудность' : e.result === 'disputed' ? 'Спорно' : 'Не проверено'}</span><p>{e.reason}</p></div>)}</details><details><summary>Ограничения оценки</summary>{s.analysis.limitations.map((v, i) => <p key={i}>{v}</p>)}</details><details><summary>Исходный разговор</summary>{s.turns.map(t => <div className="turn" key={t.id}><span>{t.role === 'user' ? 'Ты' : 'Собеседник'}</span><p lang="en">{t.text}</p>{t.audioFile && <audio controls preload="none" src={`/api/audio/${t.audioFile}`} />}{t.role === 'user' && <button className="text-button" onClick={() => { p.setEditing(t.id); p.setEditText(t.text); }}>Исправить расшифровку</button>}{p.editing === t.id && <div className="edit-turn"><textarea value={p.editText} onChange={e => p.setEditText(e.target.value)} aria-label="Исправленный транскрипт" /><button className="button secondary" onClick={() => { void p.onAction('edit', { turnId: t.id, text: p.editText, disputed: false }); p.setEditing(''); }}>Сохранить и пересчитать</button><button className="text-button" onClick={() => { void p.onAction('edit', { turnId: t.id, text: p.editText, disputed: true }); p.setEditing(''); }}>Исключить как спорное</button></div>}</div>)}</details></aside></div>}
+  const stage = s.processing?.stage;
+  const analysisStage = stage === 'queued' ? 'Разбор в очереди. Твои ответы сохранены.'
+    : stage === 'evaluating' ? 'Сравниваем реплики и выбираем ближайшую правку.'
+      : stage === 'waiting-retry' ? 'Сервис задержал разбор. Попробуем ещё раз.'
+        : 'Проверяем смысл, английский и то, как ты использовал ответы собеседника.';
+  const parsedStart = Date.parse(s.processing?.startedAt || '');
+  const startedAt = Number.isFinite(parsedStart) ? parsedStart : p.busySince;
+  const voiceLabel = listening ? 'Слушаю тебя' : voice.playingLearnerRecording ? 'Слушаем твою запись'
+    : busy || (s.processing ? 'Собеседник готовит ответ' : voiceNames[voice.state]);
+  const orbState = listening ? 'listening' : busy || s.processing ? 'thinking' : voice.state;
+  const emotion = s.error ? 'supportive' : voice.playingLearnerRecording ? 'attentive' : hasImprovedRetry ? 'pleased' : undefined;
+  const recordDisabled = !listening && (pending || !p.audioReady || voice.hasUnuploadedRecording || !!p.draft?.audioFile || last?.role === 'user');
+
+  return <div className="session-page">
+    <div className="session-heading"><button className="text-button" onClick={p.onBack}><ChevronRight className="back-icon" size={17} />{baseline ? 'Стартовая проверка' : 'Сегодня'}</button><span className="quiet-tag">{baseline ? 'Без подсказок' : s.mode === 'call' ? 'Созвон без опор' : 'Учебный режим'}</span></div>
+    <div className="page-heading"><div><h1>{s.lesson.title}</h1><p>{baseline ? 'Сначала твои ответы голосом. Оценка будет после разговора.' : contextNames[s.lesson.context]}</p></div></div>
+    {active && <div className="conversation-layout">
+      <section className={`conversation-stage ${p.textMode ? 'text-mode' : ''}`}>
+        <VoiceOrb state={orbState} meterStore={voice.meterStore} emotion={emotion} statusDescription={voiceLabel} />
+        <h2 className="voice-state" aria-live="polite">{voiceLabel}</h2>
+        <p className="voice-caption">{listening ? 'Я не перебиваю. Закончи мысль и нажми «Стоп».' : p.draft?.audioFile ? 'Твоя запись готова. Проверь её перед отправкой.' : 'Скажи реплику, проверь расшифровку и отправь. Твой ход.'}</p>
+        {(busy || s.processing) && <div className="conversation-progress"><ElapsedTime startedAt={startedAt} /><p>Твоя реплика сохранена. Ответ появится здесь.</p></div>}
+        {p.textMode && !baseline && last?.role === 'assistant' && <div className="current-prompt"><span>Собеседник</span><p lang="en">{last.text}</p></div>}
+        <LiveCaptions voice={voice} />
+        <UnuploadedRecording p={p} />
+        {last?.role === 'user' && !busy && !s.processing && <div className="pending-reply"><p>Твоя реплика сохранена. Можно повторить получение ответа.</p><button className="button secondary" disabled={pending} onClick={p.onResend}><RefreshCw size={17} />Повторить ответ собеседника</button></div>}
+        <div className="voice-controls">
+          <button className="voice-control" disabled={listening || !['speaking', 'thinking'].includes(voice.state)} onClick={() => voice.stop()} aria-label="Остановить голос"><Square size={22} /><span>Стоп голоса</span></button>
+          <button className={`voice-control main ${listening ? 'recording' : ''}`} data-testid="record-toggle" disabled={recordDisabled} onClick={() => void voice.record(s.id + ':message')} aria-label={listening ? 'Закончить запись' : 'Говорить'}>
+            {listening ? <Square size={23} /> : <Mic size={27} />}<span>{listening ? 'Стоп' : 'Говорить'}</span>
+          </button>
+          <button className="voice-control" disabled={pending || listening || unresolvedRecording || !s.turns.some(t => t.role === 'user') || (baseline && baselineReplies < 2)} onClick={() => void p.onAction('finish')} aria-label="Завершить разговор и получить разбор"><Check size={23} /><span>Разбор</span></button>
+        </div>
+        {!p.audioReady && <button className="text-button audio-setup" onClick={p.onSettings}>Подключить голос <ArrowUpRight size={15} /></button>}
+        {voice.autoplayBlocked && last?.role === 'assistant' && <div className="autoplay-notice"><p>Браузер ждёт твоего нажатия, чтобы включить звук.</p><button className="button secondary" disabled={pending || listening} onClick={() => void voice.speak(s, last)}><Play size={16} />Включить голос</button></div>}
+        {voice.canRetry && !voice.hasUnuploadedRecording && <button className="button secondary voice-retry" disabled={pending || listening} onClick={() => void voice.retry()}><RefreshCw size={16} />{voice.retryLabel || 'Повторить'}</button>}
+        <div className="conversation-mode">
+          {!baseline && <><button className={p.textMode ? 'selected' : ''} aria-pressed={p.textMode} disabled={pending || listening} onClick={() => { p.setTextMode(true); void p.showTranscript(); }}>С текстом</button>
+          <button className={!p.textMode ? 'selected' : ''} aria-pressed={!p.textMode} disabled={!p.audioReady || pending || listening} onClick={() => p.setTextMode(false)}>Без текста</button></>}
+          {last?.role === 'assistant' && p.audioReady && <button disabled={pending || listening} onClick={() => voice.state === 'speaking' ? voice.stop() : void voice.speak(s, last)}>{voice.state === 'speaking' ? <Square size={14} /> : <Play size={14} />}{voice.state === 'speaking' ? 'Стоп' : 'Ещё раз'}</button>}
+        </div>
+        {((p.textMode && !baseline) || p.input.trim() || p.draft?.audioFile) && <DraftComposer p={p} intent="message" pending={pending} />}
+      </section>
+      <aside className="conversation-inspector">
+        <div className="goal-block"><span className="eyebrow">ТВОЯ ЗАДАЧА</span><h3>{s.lesson.goal}</h3><p>{s.lesson.why}</p></div>
+        {!baseline && s.mode === 'learning' && <section className="support-section"><h3><Lightbulb size={17} />Поддержка</h3><p>Сначала попробуй сам. Опора учитывается в разборе.</p><div className="support-buttons"><button disabled={pending || listening} onClick={() => p.onHint(1)}>Намёк</button><button disabled={pending || listening} onClick={() => p.onHint(2)}>Конструкция</button><button disabled={pending || listening} onClick={() => p.onHint(3)}>Пример</button></div>{p.hintText && <div className="hint-text">{p.hintText}</div>}</section>}
+        {!baseline && <details className="transcript" open={p.transcript} onToggle={e => { if (e.currentTarget.open && !p.transcript && !pending && !listening) void p.showTranscript(); }}><summary>Текст разговора<BookOpen size={17} /></summary><div className="turn-list">{s.turns.map(turn => <div className={`turn ${turn.role}`} key={turn.id}><span>{turn.role === 'user' ? 'Ты' : 'Собеседник'}</span><p lang="en">{turn.text}</p></div>)}</div></details>}
+        {baseline && <div className="baseline-session-note"><strong>Проверяем настоящую речь</strong><p>Нужны хотя бы два своих ответа голосом. Попросить повторить или пояснить сказанное можно. Текст собеседника и готовые формулировки появятся после разбора.</p><span className="caption">Своих ответов без опоры: {baselineReplies}/2</span></div>}
+        <div className="inspector-note"><GraduationCap size={18} /><p>Подробный разбор будет после разговора. {(p.textMode || p.transcript) && 'Текст помогает ответить. Понимание на слух проверим без текста. '}Произношение по одному тексту не оценивается.</p></div>
+      </aside>
+    </div>}
+    {s.status === 'analysing' && <section className="analysis-loading">
+      <VoiceOrb state="thinking" emotion={s.error ? 'supportive' : undefined} statusDescription="Готовим разбор" />
+      <h2>Разбираем твою попытку</h2><p aria-live="polite">{analysisStage}</p><ElapsedTime startedAt={startedAt} />
+      {lastPartner && <div className="listening-recall"><strong>Пока ждём</strong><p>Что было важно собеседнику? Вспомни одну конкретную деталь.</p><button className="button secondary" onClick={() => setShowListeningCheck(!showListeningCheck)}>{showListeningCheck ? 'Скрыть ответ' : 'Проверить себя'}</button>{showListeningCheck && <p lang="en">{lastPartner.text}</p>}</div>}
+      <p>Можно свернуть занятие. Готовый разбор останется в истории.</p><button className="button secondary" onClick={p.onBack}>Вернусь чуть позже</button>
+    </section>}
+    {s.status === 'error' && s.error && <div className="message-banner error"><p>{s.error}</p>{s.analysis && <button className="button secondary" disabled={pending} onClick={() => void p.onAction('reanalyse')}>Повторить разбор</button>}</div>}
+    {s.analysis && <div className="analysis-layout"><div>
+      <section className="analysis-intro"><div className="review-orb-heading"><VoiceOrb state="idle" emotion={hasImprovedRetry ? 'pleased' : 'calm'} statusDescription={hasImprovedRetry ? 'Твоя улучшенная попытка подтверждена' : 'Разбор готов'} /><div><span className="eyebrow">{s.retryDeferred ? 'ПОПЫТКА НА ПОТОМ' : hasImprovedRetry ? 'ЕСТЬ УЛУЧШЕНИЕ' : 'ТВОЙ РАЗБОР'}</span><h2>{hasImprovedRetry ? 'Вот, уже сильнее.' : s.retryDeferred ? 'Осталась одна попытка.' : 'Сделаем одну реплику сильнее.'}</h2></div></div><p className="analysis-summary">{s.analysis.summary}</p>{s.analysis.strengths.length > 0 && <div className="strengths">{s.analysis.strengths.map((value, i) => <p key={i}><Check size={17} />{value}</p>)}</div>}</section>
+      {s.analysis.priorities.map((priority, i) => <section className="priority" key={i}><div className="priority-heading"><span className="priority-number">0{i + 1}</span><span className="quiet-tag">{priority.type === 'language' ? 'Английский' : 'Диалог'}</span></div><h3>{priority.title}</h3><blockquote lang="en">{priority.quote}</blockquote><p>{priority.explanation}</p><details><summary>Возможная формулировка</summary><p className="example" lang="en">{priority.example}</p><small>Один из вариантов. Свою попытку формулируй своими словами.</small></details><div className="retry-prompt"><Target size={17} /><span>{priority.retryInstruction}</span></div></section>)}
+      {retryAllowed && <section className="retry-section"><h2>Теперь твоя версия</h2><p>Повтори важный эпизод своими словами. Сравним его с исходной попыткой.</p>
+        {p.audioReady && <><VoiceOrb state={orbState} meterStore={voice.meterStore} emotion={emotion} statusDescription={voiceLabel} /><div className="retry-voice"><button className="button secondary" data-testid="record-toggle" disabled={!listening && (pending || voice.hasUnuploadedRecording || !!p.draft?.audioFile)} onClick={() => void voice.record(s.id + ':retry')}>{listening ? <Square size={17} /> : <Mic size={17} />}{listening ? 'Стоп' : 'Сказать голосом'}</button><span aria-live="polite">{voiceLabel}</span></div></>}
+        <LiveCaptions voice={voice} /><UnuploadedRecording p={p} />
+        {voice.canRetry && !voice.hasUnuploadedRecording && <button className="text-button" disabled={pending || listening} onClick={() => void voice.retry()}>{voice.retryLabel || 'Повторить'}</button>}
+        {busy && <div className="retry-progress" role="status"><strong>{busy}</strong><ElapsedTime startedAt={p.busySince} /></div>}
+        <DraftComposer p={p} intent="retry" pending={pending} />
+      </section>}
+      {s.retries.map((retry, i) => <section className="retry-result" key={retry.id || i}><span className="eyebrow">СОБСТВЕННАЯ ПОПЫТКА {i + 1} · {retry.improved === true ? 'Есть улучшение' : 'Продолжаем работу'}</span><blockquote lang="en">{retry.text}</blockquote>{retry.audioFile && <audio controls preload="none" src={'/api/audio/' + encodeURIComponent(retry.audioFile)} />}<p>{retry.feedback}</p></section>)}
+      {s.status !== 'completed' && <section className="finish-section"><h3>Как ощущался разговор?</h3><div className="comfort-choice" aria-label="Комфорт от 1 до 5">{[1, 2, 3, 4, 5].map(n => <button key={n} aria-pressed={p.comfort === n} className={p.comfort === n ? 'selected' : ''} onClick={() => p.setComfort(n)}>{n}</button>)}<span>Сложно → комфортно</span></div><button className="button primary" disabled={pending || listening || unresolvedRecording || s.status !== 'review' || !completion.canComplete} onClick={() => void p.onAction('complete', { comfort: p.comfort })}>Завершить занятие<Check size={18} /></button>{s.status === 'review' && completion.needsRetry && <><p>{completion.reason}</p><button className="button secondary" disabled={pending || listening || unresolvedRecording} onClick={() => void p.onAction('complete', { comfort: p.comfort, deferRetry: true })}>На сегодня всё. К попытке вернусь позже</button></>}</section>}
+      {s.status === 'completed' && <div className="completed-note"><Check size={22} /><span>{s.retryDeferred ? 'Разговор сохранён. К улучшенной попытке можно вернуться из истории.' : 'Занятие завершено. Свой повтор сохранён отдельно от независимой проверки.'}</span></div>}
+    </div><aside className="analysis-aside">
+      <section><h3>Следующий шаг</h3><p>{s.analysis.nextFocus}</p><span className="caption">{date(s.analysis.createdAt)}</span></section>
+      <details><summary>Наблюдения по навыкам</summary>{s.analysis.evidence.map((evidence, i) => <div className="observation" key={i}><strong>{SKILLS.find(skill => skill.id === evidence.skill)?.label}</strong><span>{evidence.result === 'success' ? 'Получилось' : evidence.result === 'partial' ? 'Частично' : evidence.result === 'difficulty' ? 'Есть трудность' : evidence.result === 'disputed' ? 'Спорно' : 'Не проверено'}</span><p>{evidence.reason}</p></div>)}</details>
+      <details><summary>Ограничения оценки</summary>{s.analysis.limitations.map((value, i) => <p key={i}>{value}</p>)}</details>
+      <details><summary>Исходный разговор</summary>{s.turns.map(turn => <div className="turn" key={turn.id}><span>{turn.role === 'user' ? 'Ты' : 'Собеседник'}</span><p lang="en">{turn.text}</p>{turn.audioFile && <audio controls preload="none" src={'/api/audio/' + encodeURIComponent(turn.audioFile)} />}{turn.role === 'user' && <button className="text-button" disabled={pending || listening} onClick={() => { p.setEditing(turn.id); p.setEditText(turn.text); }}>Исправить расшифровку</button>}{p.editing === turn.id && <div className="edit-turn"><textarea value={p.editText} onChange={e => p.setEditText(e.target.value)} aria-label="Исправленный транскрипт" /><button className="button secondary" disabled={pending} onClick={() => { void p.onAction('edit', { turnId: turn.id, text: p.editText, disputed: false }); p.setEditing(''); }}>Сохранить и пересчитать</button><button className="text-button" disabled={pending} onClick={() => { void p.onAction('edit', { turnId: turn.id, text: p.editText, disputed: true }); p.setEditing(''); }}>Исключить как спорное</button></div>}</div>)}</details>
+    </aside></div>}
   </div>;
 }

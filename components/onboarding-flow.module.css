@@ -1,0 +1,112 @@
+.intro { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 1.05fr); gap: 34px; align-items: start; }
+.welcome { min-width: 0; padding: 4px 8px; }
+.welcome :global(.voice-orb) { width: 160px; height: 172px; margin: 0 0 22px; }
+.welcome :global(.orb-body) { width: 136px; height: 136px; }
+.welcome h1, .baselineHeading h1 { font-size: clamp(30px, 3vw, 44px); line-height: 1.15; letter-spacing: -1.2px; margin: 16px 0; font-weight: 550; max-width: 13ch; }
+.welcome > p { color: var(--muted); font-size: 16px; line-height: 1.8; max-width: 45ch; }
+.features { display: flex; flex-direction: column; gap: 17px; margin: 26px 0; }
+.features > span { display: flex; align-items: center; gap: 11px; font-size: 14px; }
+.features svg { color: var(--accent-ink); }
+.note { display: flex; gap: 13px; align-items: flex-start; padding: 18px; margin: 26px 0; border-radius: 22px; background: var(--lavender); }
+.note strong { font-size: 14px; }
+.note p { font-size: 13px; line-height: 1.7; margin: 6px 0 0; }
+.control { background: var(--surface); border-radius: 30px; padding: 30px; }
+.control h2 { font-size: 25px; line-height: 1.25; letter-spacing: -0.6px; margin: 16px 0 20px; }
+.prompt { padding: 20px; background: var(--raised); border-radius: 20px; font-size: 15px; line-height: 1.8; margin-bottom: 24px; }
+.control > label:not(.confirmation) { display: block; margin-bottom: 9px; font-size: 13px; color: var(--muted); }
+.control textarea { min-height: 160px; }
+.control > small { display: block; margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.75; }
+.confirmation { display: flex; align-items: flex-start; gap: 11px; margin: 25px 0; padding: 0; cursor: pointer; font-size: 13px; line-height: 1.7; }
+.confirmation input { width: 19px; height: 19px; margin: 2px 0 0; accent-color: var(--accent-ink); flex: 0 0 19px; }
+.control > button { width: 100%; justify-content: space-between; }
+.baselineHeading { display: flex; justify-content: space-between; align-items: center; gap: 25px; margin-bottom: 28px; }
+.baselineHeading h1 { max-width: 20ch; }
+.baselineHeading p { font-size: 15px; color: var(--muted); max-width: 56ch; }
+.stageCount { flex: 0 0 150px; padding: 20px 24px; border-radius: 27px; background: var(--lavender); }
+.stageCount strong { display: block; font-size: 38px; font-weight: 550; letter-spacing: -1px; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.stageCount small { font-size: 20px; font-weight: 400; }
+.stageCount span { font-size: 12px; display: block; margin-top: 6px; }
+.audioNotice { display: flex; align-items: center; gap: 18px; padding: 22px; background: var(--lavender); border-radius: 25px; margin-bottom: 22px; }
+.audioNotice strong { font-size: 16px; }
+.audioNotice p { font-size: 13px; line-height: 1.7; margin: 5px 0 0; }
+.audioNotice > :global(.button) { flex-shrink: 0; }
+.steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 17px; }
+.step { display: flex; align-items: flex-start; gap: 22px; padding: 26px; border-radius: 28px; background: var(--surface); }
+.stepNumber { width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; background: var(--raised); border-radius: 16px; font-size: 16px; font-variant-numeric: tabular-nums; }
+.step[data-ready='true'] .stepNumber { background: var(--lime); }
+.stepCopy { flex: 1; min-width: 0; }
+.stepCopy h2 { font-size: 22px; line-height: 1.4; letter-spacing: -0.4px; margin: 10px 0; }
+.stepCopy > p { margin: 0; font-size: 14px; line-height: 1.75; color: var(--muted); }
+.stepCopy > button { margin-top: 12px; font-size: 13px; }
+.stepCopy .missingEvidence { padding: 14px 16px; background: var(--raised); border-radius: 17px; margin-top: 15px; }
+.stepAction { display: flex; align-items: flex-end; flex-direction: column; gap: 15px; min-width: 136px; }
+.stepAction > span { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; }
+.baselineNote { color: var(--muted); font-size: 13px; line-height: 1.8; margin: 20px 0; max-width: 84ch; }
+.reportInvitation { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 28px; margin-bottom: 24px; background: var(--surface); border-radius: 28px; }
+.reportInvitation h2 { font-size: 23px; margin: 10px 0; }
+.reportInvitation p { color: var(--muted); font-size: 14px; max-width: 62ch; }
+.reportInvitation > button { flex-shrink: 0; }
+.report { padding: 30px; background: var(--surface); border-radius: 28px; margin-bottom: 24px; }
+.reportHeading { display: flex; align-items: center; justify-content: space-between; gap: 15px; flex-wrap: wrap; }
+.report > h2 { font-size: 28px; letter-spacing: -0.7px; margin: 18px 0; }
+.reportSummary { font-size: 16px; line-height: 1.85; white-space: pre-line; }
+.cefr { display: flex; align-items: flex-start; gap: 22px; padding: 22px; background: var(--lavender); border-radius: 24px; margin: 24px 0; }
+.cefr > strong { font-size: 29px; line-height: 1.25; letter-spacing: -1px; white-space: nowrap; font-weight: 550; }
+.cefr span { font-size: 13px; font-weight: 550; }
+.cefr p { font-size: 14px; margin: 6px 0; }
+.cefr small { font-size: 12px; line-height: 1.75; }
+.reportLimitation { padding: 18px; border-radius: 20px; background: var(--raised); color: var(--muted); font-size: 14px; margin: 24px 0; }
+.reportPriorities { padding: 6px 0 20px; }
+.reportPriorities h3 { font-size: 17px; margin-bottom: 12px; }
+.reportPriorities ol { padding-left: 23px; margin: 0; color: var(--muted); font-size: 14px; }
+.reportPriorities li + li { margin-top: 9px; }
+.report details { border-top: 1px solid var(--line-soft); }
+.report details > summary { padding: 17px 0; }
+.report details > p, .report details > small { display: block; font-size: 14px; color: var(--muted); line-height: 1.85; margin: 10px 0; }
+.skillEvidence { padding: 20px 0; border-top: 1px solid var(--line-soft); }
+.skillEvidence h3 { font-size: 16px; margin-bottom: 4px; }
+.skillEvidence p { font-size: 14px; color: var(--muted); line-height: 1.8; }
+.evidence { display: block; width: 100%; padding: 17px 19px; border: 0; background: var(--raised); border-radius: 18px; text-align: left; margin-top: 12px; transition: transform 140ms var(--ease); }
+.evidence q { display: block; font-size: 15px; line-height: 1.75; }
+.evidence span { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; margin-top: 9px; }
+.evidence:active { transform: scale(0.985); }
+.nextFocus { padding: 18px 20px; margin-top: 20px; background: var(--lime); border-radius: 22px; }
+.nextFocus strong { font-size: 15px; }
+.nextFocus p { font-size: 14px; margin: 8px 0 0; line-height: 1.8; }
+@media (max-width: 1000px) {
+  .intro { grid-template-columns: 1fr; gap: 22px; }
+  .welcome :global(.voice-orb) { float: right; margin: 0 0 12px 20px; width: 130px; height: 140px; }
+  .welcome :global(.orb-body) { width: 112px; height: 112px; }
+  .welcome h1 { max-width: 16ch; }
+  .features { gap: 12px; margin: 20px 0; }
+  .note { clear: both; }
+  .step { gap: 16px; padding: 22px; flex-wrap: wrap; }
+  .stepAction { flex: 1 1 100%; flex-direction: row; align-items: center; justify-content: space-between; margin-left: 60px; }
+  .audioNotice, .reportInvitation { flex-wrap: wrap; }
+}
+@media (max-width: 520px) {
+  .welcome { padding: 0; }
+  .welcome h1 { font-size: 31px; }
+  .welcome > p { font-size: 14px; }
+  .welcome :global(.voice-orb) { width: 94px; height: 102px; margin-left: 12px; }
+  .welcome :global(.orb-body) { width: 80px; height: 80px; }
+  .control, .report { padding: 22px; border-radius: 26px; }
+  .control h2 { font-size: 23px; }
+  .prompt { padding: 16px; font-size: 14px; }
+  .baselineHeading { align-items: flex-start; gap: 15px; }
+  .baselineHeading h1 { font-size: 29px; letter-spacing: -0.7px; }
+  .baselineHeading p { font-size: 14px; }
+  .stageCount { flex-basis: 87px; padding: 15px; border-radius: 22px; }
+  .stageCount strong { font-size: 29px; }
+  .stageCount span { font-size: 11px; }
+  .step { gap: 12px; padding: 20px; }
+  .stepNumber { width: 36px; height: 36px; flex-basis: 36px; border-radius: 13px; }
+  .stepCopy h2 { font-size: 19px; }
+  .stepCopy > p { font-size: 13px; }
+  .stepAction { margin-left: 48px; min-width: 0; }
+  .stepAction :global(.button) { padding-inline: 13px; font-size: 13px; }
+  .reportInvitation { padding: 22px; }
+  .reportInvitation > button, .audioNotice > button { width: 100%; }
+  .cefr { flex-direction: column; gap: 12px; padding: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { .evidence { transition: none; } .evidence:active { transform: none; } }

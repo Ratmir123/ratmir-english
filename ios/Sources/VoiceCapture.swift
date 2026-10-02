@@ -122,6 +122,7 @@ struct LiveSpeechCredential: Decodable {
     private var failed = false
     private var committing = false
     private var closed = false
+    var isClosed: Bool { closed }
     private var finalTranscript: String?
     private var transcript = ""
     var onTranscript: ((String) -> Void)?

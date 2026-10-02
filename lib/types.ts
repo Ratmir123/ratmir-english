@@ -51,6 +51,7 @@ export interface Session {
   retries: { id?: string; text: string; feedback: string; createdAt: string; audioFile?: string; improved?: boolean; analysisVersion?: number; originalTranscript?: string; transcriptEdited?: boolean }[];
   support: Support; error?: string; comfort?: number;
   clientRequestId?: string; retryDeferred?: boolean;
+  baseline?: { version: 1; stepId: BaselineStepId };
   processing?: { stage: 'queued' | 'evaluating' | 'waiting-retry' | 'responding'; startedAt: string; attempt?: number; nextAttemptAt?: string };
   completion?: { canComplete: boolean; needsRetry: boolean; reason: string | null };
 }
@@ -71,6 +72,24 @@ export interface AppState {
   profile: Profile; sessions: Session[]; skills: SkillState[]; reviews: ReviewItem[];
   xp: number; completed: number; calibrationCompleted: number;
   audioUsage: AudioUsage;
+  onboarding?: OnboardingState;
+}
+export type BaselineStepId = 'expression' | 'listening' | 'interaction';
+export type CEFRBand = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
+export interface BaselineReport {
+  version: 1; model: string; createdAt: string; provisional: true; summary: string;
+  cefr: { from: CEFRBand; to: CEFRBand; confidence: 'low'; scope: string; reason: string } | null;
+  skills: { skill: SkillId; observation: string; confidence: 'unobserved' | 'limited' | 'consistent';
+    evidence: { sessionId: string; turnId: string; quote: string; result: EvidenceResult }[] }[];
+  languageVsCommunication: { observation: string; russianQuote: string; limitation: string };
+  priorities: string[]; limitations: string[]; nextFocus: string;
+}
+export interface OnboardingState {
+  version: 1; status: 'intro' | 'baseline' | 'ready'; introCompletedAt: string | null;
+  russianPrompt: string; russianControl: string | null; completedStages: number;
+  steps: { id: BaselineStepId; familyId: string; title: string; focus: string; minutes: number;
+    status: 'pending' | 'in_progress' | 'analysing' | 'ready'; sessionId: string | null; missingEvidence: string | null }[];
+  report: BaselineReport | null;
 }
 export interface BrainStatus {
   mode?: 'codex' | 'siwc';

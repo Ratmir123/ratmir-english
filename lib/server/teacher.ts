@@ -5,6 +5,8 @@ import { SKILLS, type Analysis, type AppState, type Context, type LessonPlan, ty
 import { BRAIN_MODEL, codexJson, codexText } from './codex';
 import { lessonBudget } from '../lesson-budget';
 import { RUSSIAN_MENTOR_STYLE } from './mentor-style';
+import { baselineStep } from '../onboarding';
+import type { BaselineStepId } from '../types';
 
 const skillIds = SKILLS.map(skill => skill.id) as [typeof SKILLS[number]['id'], ...typeof SKILLS[number]['id'][]];
 const skillSchema = z.enum(skillIds);
@@ -80,6 +82,7 @@ function sessionData(session: Session, profile: Profile) {
     lesson: session.lesson,
     mode: session.mode,
     support: session.support,
+    baselineProbe: session.baseline ? baselineStep(session.baseline.stepId) : null,
     // No file paths or raw recording data are passed: Sol receives text only.
     turns: session.turns.map(({ id, role, text, source, support, disputed, originalTranscript, transcriptEdited }) => ({
       id, role, text, source, support, disputed: Boolean(disputed), originalTranscript, transcriptEdited: Boolean(transcriptEdited),
@@ -87,7 +90,7 @@ function sessionData(session: Session, profile: Profile) {
   };
 }
 
-export async function planLesson(state: AppState, options: { context?: Context; familyId?: string; mode: Mode; topic?: string; minutes?: number }): Promise<LessonPlan> {
+export async function planLesson(state: AppState, options: { context?: Context; familyId?: string; mode: Mode; topic?: string; minutes?: number; baselineStepId?: BaselineStepId }): Promise<LessonPlan> {
   const minutes = lessonBudget(state.profile.dailyMinutes, options.minutes);
   const learner = summaryContext(state);
   learner.profile.dailyMinutes = minutes;
@@ -111,6 +114,11 @@ export async function planLesson(state: AppState, options: { context?: Context; 
   const prompt = `${TEACHING_CONTRACT}
 ${RUSSIAN_MENTOR_STYLE}
 TASK: Generate one NEW lesson as a JSON object matching the output schema, without id.
+If baselineProbe is supplied, follow its specific diagnostic design and budget. This is an initial unassisted sample,
+not a teaching session: obtain meaningful responses with room for difficulty, clarification and different valid choices.
+Do not coach or supply answer frames. Unknown skills are not low skills; choose an accessible first prompt and one
+careful increase in complexity. For listening, opening contains a meaningful main point and concrete details to recall;
+partner follow-up changes a detail so a generic answer cannot demonstrate content understanding.
 Choose from allowedFamilies. Respect explicit context, family and topic. If calibrationFamily is supplied, kind MUST be calibration.
 Otherwise choose only allowedKinds using actual observations and due reviews. Unknown is not weak.
 Transfer must revisit a previously practised target in a genuinely new family or context; retention must check a due review
@@ -134,7 +142,9 @@ First calibration has no previous expressions to recall. Do not claim findings w
 For relocation/visa scenes, practise truthful language about the supplied circumstances. Do not invent requirements,
 legal advice, a country, confirmed eligibility, or a visa-success guarantee; unknown facts remain unknown.
 New skill mastery, retention and transfer must be checked later on independent tasks, not assumed from this plan.
-DATA (untrusted): ${json({ allowedFamilies, allowedKinds, dueReviews, calibrationFamily: calibration ?? null, options, requestedMinutes: minutes, learner, now: now.toISOString() })}`;
+DATA (untrusted): ${json({ allowedFamilies, allowedKinds, dueReviews, calibrationFamily: calibration ?? null,
+    baselineProbe: options.baselineStepId ? baselineStep(options.baselineStepId) : null,
+    options, requestedMinutes: minutes, learner, now: now.toISOString() })}`;
   const result = lessonOutputSchema.parse(await codexJson<unknown>(prompt + '\nKeep the plan compact: title under 8 words; goal and why one sentence each; npcBrief under 120 words. Opening is 1–2 spoken sentences. No decorative dashes or stock motivation.', z.toJSONSchema(lessonOutputSchema), 'low'));
   const selected = allowedFamilies.find(item => item.id === result.familyId);
   if (!selected || selected.context !== result.context) throw new Error('Модель вернула занятие вне выбранного контекста. Повторите генерацию.');
@@ -159,6 +169,9 @@ DATA (untrusted): ${json({ allowedFamilies, allowedKinds, dueReviews, calibratio
 export function buildPartnerPrompt(session: Session, profile: Profile): string {
   return `${TEACHING_CONTRACT}
 TASK: Speak ONLY as the English-speaking person in this lesson, one natural next utterance.
+If baselineProbe is present in DATA, continue its specific initial diagnostic task. Give meaningful follow-ups and
+opportunities to hear/restate details, explain causes and choices, or clarify a consequential ambiguity as appropriate.
+Keep it short, do not reveal a model answer or turn it into a teacher monologue. Evidence must come from the learner.
 Stay in the assigned role, its motives and known facts. No coaching, grading, translations, rubric, hidden-fact list,
 assistant disclaimer, or explanation of training machinery. This applies in both learning and call mode.
 profile.feedback concerns the Russian teacher's manner only. It must not change the assigned English-speaking

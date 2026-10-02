@@ -1,11 +1,11 @@
 'use client';
 
 import { memo, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react';
-import type { VoiceState } from './use-voice';
+import type { VoiceState, VoiceMeterStore } from './use-voice';
 import styles from './voice-orb.module.css';
 
 export type OrbEmotion = 'calm' | 'attentive' | 'curious' | 'friendly' | 'pleased' | 'supportive';
-type VoiceOrbProps = { state: VoiceState; volume?: number; emotion?: OrbEmotion };
+type VoiceOrbProps = { state: VoiceState; volume?: number; meterStore?: VoiceMeterStore; emotion?: OrbEmotion; statusDescription?: string };
 const expressions: Record<VoiceState, OrbEmotion> = {
   idle: 'calm', listening: 'attentive', speaking: 'friendly', transcribing: 'curious', thinking: 'curious', paused: 'calm',
 };
@@ -25,9 +25,12 @@ function isPageVisible() {
 function serverVisibility() {
   return true;
 }
+function noMeterSubscription() { return () => {}; }
+function silentMeter() { return 0; }
 
-export const VoiceOrb = memo(function VoiceOrb({ state, volume = 0, emotion }: VoiceOrbProps) {
+export const VoiceOrb = memo(function VoiceOrb({ state, volume = 0, meterStore, emotion, statusDescription }: VoiceOrbProps) {
   const visible = useSyncExternalStore(subscribeToVisibility, isPageVisible, serverVisibility);
+  const measuredLevel = useSyncExternalStore(meterStore?.subscribe ?? noMeterSubscription, meterStore?.getSnapshot ?? silentMeter, silentMeter);
   const element = useRef<HTMLButtonElement>(null);
   const [inView, setInView] = useState(true);
   const [winking, setWinking] = useState(false);
@@ -52,9 +55,9 @@ export const VoiceOrb = memo(function VoiceOrb({ state, volume = 0, emotion }: V
   }
   const live = state === 'listening' || state === 'speaking';
   const active = live || state === 'transcribing' || state === 'thinking';
-  // Playback has no RMS feed yet; its activity pose must not imply measured loudness.
-  const level = visible && inView && state === 'listening' && Number.isFinite(volume)
-    ? Math.min(1, Math.max(0, volume)) : 0;
+  const volumeLevel = meterStore ? measuredLevel : volume;
+  const level = visible && inView && live && Number.isFinite(volumeLevel)
+    ? Math.min(1, Math.max(0, volumeLevel)) : 0;
   const motion = {
     '--voice-scale': 1 + level * 0.08,
     '--orb-shift': `${level * 4}px`,
@@ -72,7 +75,7 @@ export const VoiceOrb = memo(function VoiceOrb({ state, volume = 0, emotion }: V
       data-keyboard-greeting={winking && !pointerGreeting}
       data-awake={visible && inView && (active || winking)}
       data-page-hidden={!visible || !inView}
-      aria-label={`Твой собеседник. ${descriptions[state]}. Поздороваться: подмигнёт.`}
+      aria-label={`Твой собеседник. ${statusDescription ?? descriptions[state]}. Поздороваться: подмигнёт.`}
       title="Коснись, и я подмигну"
       onClick={greet}
       style={motion}

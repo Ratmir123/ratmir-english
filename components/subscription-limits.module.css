@@ -49,6 +49,15 @@
 .unavailableTitle { display: block; font-size: 17px; font-weight: 500; letter-spacing: -.4px; }
 .unavailable p { margin-top: 9px; color: #65636a; font-size: 13px; line-height: 1.7; max-width: 58ch; }
 .footer { margin-top: 20px; padding-top: 15px; border-top: 1px solid #ecebed; }
+.activity { margin-top: 22px; padding-top: 18px; border-top: 1px solid #ecebed; }
+.activityHeading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.activityHeading h4 { margin: 0; font-size: 13px; font-weight: 550; }
+.activityHeading > span, .activity p { font-size: 11px; color: #65636a; line-height: 1.65; }
+.activityNumbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.activityNumbers div { display: flex; flex-direction: column-reverse; gap: 5px; }
+.activityNumbers dt { font-size: 11px; color: #65636a; overflow-wrap: anywhere; }
+.activityNumbers dd { margin: 0; font-size: 26px; font-weight: 550; letter-spacing: -.7px; font-variant-numeric: tabular-nums; }
+.activity .retryNotice { color: #222124; padding: 10px 12px; border-radius: 12px; background: #bbb2f5; }
 .footer p { color: #65636a; font-size: 11px; line-height: 1.7; }
 .footer a { display: inline-flex; align-items: center; gap: 5px; min-height: 44px; padding: 7px 0; color: #575075; font-size: 12px; line-height: 1.5; }
 .footer a svg { flex-shrink: 0; transition: transform 160ms cubic-bezier(.23, 1, .32, 1); }

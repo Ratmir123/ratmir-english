@@ -76,6 +76,7 @@ enum AccessKey {
     @Published var liveTranscript = ""
     @Published var liveTranscriptStatus = ""
     @Published var voiceLoading = false
+    @Published private(set) var playbackAcknowledgementTurn: String?
     @Published var operationStage: String?
     @Published var operationStartedAt: Date?
     @Published var reviewStartedAt: Date?
@@ -87,6 +88,7 @@ enum AccessKey {
     @Published var reminderTestMessage: String?
     @Published var reminderDiagnostic: String?
     @Published var hasUnuploadedRecording = false
+    @Published var orphanedRecording = false
     @Published var originalTranscript = ""
     @Published var server = UserDefaults.standard.string(forKey: "training-server") ?? ""
     private var capture: VoiceCapture?
@@ -99,6 +101,7 @@ enum AccessKey {
     private var localRecording: URL?
     private var pendingSpeechTurn: String?
     private var heardTurns = Set<String>()
+    private var pendingPlaybackAcknowledgements: [String: String] = [:]
     private var voiceGeneration = UUID()
     private var speechTask: Task<Void, Never>?
     private var meterTask: Task<Void, Never>?
@@ -202,7 +205,10 @@ enum AccessKey {
         if let id = UserDefaults.standard.string(forKey: "pending-recording-session"), conversation == nil {
             conversation = state?.sessions.first { $0.id == id }
         }
-        liveTranscriptStatus = "На iPhone сохранилась предыдущая запись. Можно повторить распознавание."
+        orphanedRecording = conversation == nil
+        liveTranscriptStatus = orphanedRecording
+            ? "На iPhone осталась запись старого занятия. Она не попадёт в новую диагностику."
+            : "На iPhone сохранилась предыдущая запись. Можно повторить распознавание."
     }
     private func clearPendingRecording() {
         for key in ["pending-recording-path", "pending-recording-session", "pending-recording-minutes"] {
@@ -214,9 +220,21 @@ enum AccessKey {
         async let updatedStatus: ServerStatus = request("status")
         async let updatedUsage: SubscriptionUsage? = try? request("usage")
         (state, status, subscriptionUsage) = try await (updatedState, updatedStatus, updatedUsage)
-        if let id = conversation?.id { conversation = state?.sessions.first { $0.id == id } }
+        if let id = conversation?.id {
+            let updated = state?.sessions.first { $0.id == id }
+            if updated == nil {
+                stopSpeaking(); conversationPresented = false
+                savedDrafts.removeAll(); draft = ""; recordedFile = nil; pendingMessageID = nil
+                originalTranscript = ""; liveTranscript = ""
+                orphanedRecording = hasUnuploadedRecording
+            }
+            conversation = updated
+        }
     }
     func resume(_ value: Conversation) {
+        if hasUnuploadedRecording, orphanedRecording {
+            error = "Старая запись не связана с доступным занятием. Прослушай её и явно удали перед переходом к другому разговору."; return
+        }
         if hasUnuploadedRecording, let currentID = conversation?.id, currentID != value.id {
             error = "В текущем занятии есть несохранённая запись. Сначала повтори её распознавание или явно удали запись."; return
         }
@@ -226,6 +244,7 @@ enum AccessKey {
                 transcript: originalTranscript, liveText: liveTranscript)
         }
         conversation = value
+        playbackAcknowledgementTurn = pendingPlaybackAcknowledgements[value.id]
         conversationPresented = true
         assistantTextShown = value.mode == "learning"
         hint = nil
@@ -263,6 +282,36 @@ enum AccessKey {
             try await refresh()
         }
     }
+    func completeIntroduction(russianControl: String) async {
+        await perform(stage: "Сохраняю знакомство") {
+            let _: OnboardingState = try await request("onboarding/intro", body: ["confirmed": true, "russianControl": russianControl])
+            try await refresh()
+        }
+    }
+    func startBaseline(_ step: BaselineStep, retake: Bool = false) async {
+        guard !hasUnuploadedRecording else {
+            error = "На iPhone осталась несохранённая запись. Сначала прослушай и явно удали её, если она больше не нужна."; return
+        }
+        if !retake, let id = step.sessionId, let saved = state?.sessions.first(where: { $0.id == id }) {
+            resume(saved); return
+        }
+        await perform(stage: "Готовлю первую пробу") {
+            let intent = "baseline|\(step.id)|\(retake)"
+            if startRequestID == nil || startRequestIntent != intent {
+                startRequestID = UUID().uuidString.lowercased(); startRequestIntent = intent
+            }
+            let value: Conversation = try await request("sessions", body: ["baselineStepId": step.id, "mode": "call", "intent": "new", "requestId": startRequestID!])
+            startRequestID = nil; startRequestIntent = nil
+            resume(value)
+            try await refresh()
+        }
+    }
+    func buildBaselineReport() async {
+        await perform(stage: "Собираю твой стартовый профиль") {
+            let _: OnboardingState = try await request("onboarding/report", body: [:])
+            try await refresh()
+        }
+    }
     func send(retry: Bool = false) async {
         guard let conversation, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         stopSpeaking()
@@ -292,8 +341,13 @@ enum AccessKey {
     }
     func action(_ name: String, deferRetry: Bool = false) async {
         guard let conversation else { return }
-        if (name == "finish" || name == "complete"), hasUnuploadedRecording {
-            error = "Сначала сохрани последнюю запись: повтори распознавание или явно удали её, если она не нужна."; return
+        if name == "finish" || name == "complete" {
+            if hasUnuploadedRecording {
+                error = "Сначала сохрани последнюю запись: повтори распознавание или явно удали её, если она не нужна."; return
+            }
+            if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || recordedFile != nil {
+                error = "Последний ответ ещё не отправлен. Отправь его или явно удали черновик перед завершением."; return
+            }
         }
         stopSpeaking()
         await perform(stage: name == "complete" ? "Сохраняю результат" : name == "finish" ? "Передаю разговор на разбор" : "Обновляю занятие") {
@@ -335,7 +389,9 @@ enum AccessKey {
     private func autoSpeakLatest() {
         guard conversationPresented, let conversation, conversation.status == "active",
               let turn = conversation.turns.last, turn.role == "assistant",
-              !heardTurns.contains(turn.id), pendingSpeechTurn != turn.id, !recording else { return }
+              !heardTurns.contains(turn.id), pendingSpeechTurn != turn.id, !recording, !microphoneStarting,
+              !hasUnuploadedRecording, recordedFile == nil,
+              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         speechTask = Task { [weak self] in
             guard let self else { return }
             await self.speak()
@@ -344,7 +400,11 @@ enum AccessKey {
 
     /// Playback has its own loading state. Speech fetching never locks the record/finish buttons.
     func speak() async {
-        guard !recording, let conversation, let turn = conversation.turns.last(where: { $0.role == "assistant" }) else { return }
+        guard !recording, !microphoneStarting, !hasUnuploadedRecording,
+              let conversation, let turn = conversation.turns.last(where: { $0.role == "assistant" }) else { return }
+        if pendingPlaybackAcknowledgements[conversation.id] == turn.id {
+            await retryPlaybackAcknowledgement(); return
+        }
         if pendingSpeechTurn == turn.id, voiceLoading || playing { return }
         resetPlayback(cancelLoading: false)
         let generation = voiceGeneration
@@ -367,9 +427,7 @@ enum AccessKey {
                     client.meterTask?.cancel(); client.meterTask = nil
                     guard completed else { client.error = "Озвучка прервалась. Нажми «Слушать» ещё раз."; return }
                     client.heardTurns.insert(turn.id)
-                    do {
-                        let _: Confirmation = try await client.request("sessions/\(conversation.id)/played", body: ["turnId": turn.id])
-                    } catch { client.error = "Реплика прозвучала, но отметка о прослушивании не сохранилась. Проверь соединение." }
+                    await client.savePlaybackAcknowledgement(sessionID: conversation.id, turnID: turn.id)
                 }
             }
             player?.delegate = playbackDelegate
@@ -382,6 +440,33 @@ enum AccessKey {
             guard generation == voiceGeneration else { return }
             pendingSpeechTurn = nil
             self.error = "Не удалось озвучить реплику. Текст сохранён; можно повторить кнопкой «Слушать». " + error.localizedDescription
+        }
+    }
+
+    var needsPlaybackAcknowledgement: Bool {
+        guard let conversation, let turn = conversation.turns.last(where: { $0.role == "assistant" }) else { return false }
+        return pendingPlaybackAcknowledgements[conversation.id] == turn.id
+    }
+    func retryPlaybackAcknowledgement() async {
+        guard !recording, !microphoneStarting, !voiceLoading, let conversation,
+              let turnID = pendingPlaybackAcknowledgements[conversation.id] else { return }
+        let generation = voiceGeneration
+        voiceLoading = true
+        defer { if generation == voiceGeneration { voiceLoading = false } }
+        await savePlaybackAcknowledgement(sessionID: conversation.id, turnID: turnID)
+    }
+    private func savePlaybackAcknowledgement(sessionID: String, turnID: String) async {
+        do {
+            let response: Confirmation = try await request("sessions/\(sessionID)/played", body: ["turnId": turnID])
+            guard response.ok else { throw ClientError.message("Сервер не подтвердил прослушивание.") }
+            if pendingPlaybackAcknowledgements[sessionID] == turnID { pendingPlaybackAcknowledgements.removeValue(forKey: sessionID) }
+            if conversation?.id == sessionID { playbackAcknowledgementTurn = nil }
+        } catch {
+            pendingPlaybackAcknowledgements[sessionID] = turnID
+            if conversation?.id == sessionID {
+                playbackAcknowledgementTurn = turnID
+                self.error = "Реплика прозвучала, но отметка не сохранилась. Нажми «Сохранить прослушивание»: повторная озвучка не нужна."
+            }
         }
     }
 
@@ -439,6 +524,9 @@ enum AccessKey {
         guard localRecording == nil else {
             error = "Предыдущая запись ещё не сохранилась на сервере. Повтори распознавание или явно удали её перед новой записью."; return
         }
+        guard recordedFile == nil, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            error = "Последний ответ ещё не отправлен. Отправь его или явно очисти черновик перед новой записью."; return
+        }
         microphoneStarting = true
         let currentSession = conversation?.id
         defer { microphoneStarting = false }
@@ -489,7 +577,7 @@ enum AccessKey {
                 guard let self, let live else { return }
                 do {
                     let credential: LiveSpeechCredential = try await self.request("audio/live-session", body: [:])
-                    guard self.recordingID == identifier, !Task.isCancelled else {
+                    guard self.recordingID == identifier, !Task.isCancelled, !live.isClosed else {
                         if let ticket = credential.ticket {
                             let _: Confirmation? = try? await self.request("audio/live-session-close", body: ["ticket": ticket, "minutes": 0])
                         }
@@ -520,12 +608,15 @@ enum AccessKey {
         await perform(stage: "Сохраняю запись и проверяю текст") {
             liveFinalText = await liveTranscriber?.finish(expectedChunks: result.chunks)
             liveMinutes = liveTranscriber?.streamedMinutes ?? 0
-            liveConnection?.cancel(); liveConnection = nil; liveTranscriber = nil
+            // A short credential response may still arrive after live fallback. Let it
+            // finish so its known reservation is released, rather than losing the ticket.
+            liveConnection = nil; liveTranscriber = nil
             operationStage = liveFinalText == nil ? "Распознаю полную запись" : "Сохраняю оригинал записи"
             try await uploadRecording()
         }
     }
     func transcribeRecording() async {
+        guard !orphanedRecording else { error = "Запись относится к удалённому занятию. Прослушай её и удали перед новой диагностикой."; return }
         guard localRecording != nil, !recording else { return }
         await perform(stage: "Повторяю распознавание записи") { try await uploadRecording() }
     }
@@ -565,7 +656,7 @@ enum AccessKey {
             }
         }
         if let url = localRecording { try? FileManager.default.removeItem(at: url) }
-        localRecording = nil; hasUnuploadedRecording = false; recordedFile = nil
+        localRecording = nil; hasUnuploadedRecording = false; orphanedRecording = false; recordedFile = nil
         clearPendingRecording()
         liveFinalText = nil; liveSessionID = nil; liveTranscript = ""; originalTranscript = ""; draft = ""
     }
@@ -583,7 +674,8 @@ enum AccessKey {
         }
         let pending = await center.pendingNotificationRequests()
         let reminder = pending.first { $0.identifier == "daily-practice" }
-        reminderEnabled = reminder != nil && settings.authorizationStatus != .denied
+        reminderEnabled = reminder != nil && (settings.authorizationStatus == .authorized
+            || settings.authorizationStatus == .provisional || settings.authorizationStatus == .ephemeral)
         if let calendar = reminder?.trigger as? UNCalendarNotificationTrigger {
             reminderHour = calendar.dateComponents.hour ?? 19
             reminderMinute = calendar.dateComponents.minute ?? 0
@@ -614,7 +706,6 @@ enum AccessKey {
                 trigger: UNCalendarNotificationTrigger(dateMatching: DateComponents(hour: hour, minute: minute), repeats: true)))
             await refreshReminderStatus()
             guard reminderEnabled else {
-                notificationState = "unavailable"
                 throw ClientError.message("iPhone не сохранил напоминание. Проверь разрешение на уведомления в настройках приложения и попробуй ещё раз.")
             }
             reminderDiagnostic = nil
@@ -627,7 +718,6 @@ enum AccessKey {
         catch {
             await refreshReminderStatus()
             let authorized = await snapshotReminderFailure(error, identifier: "daily-practice", kind: "daily-calendar")
-            notificationState = notificationState == "denied" ? "denied" : "unavailable"
             self.error = authorized
                 ? "Разрешение на уведомления включено, но iPhone отклонил напоминание. Подробности сохранены в диагностике ниже."
                 : "iPhone не разрешил сохранить напоминание. Открой настройки Ratmir English и проверь «Уведомления»."
@@ -664,9 +754,10 @@ enum AccessKey {
             let pending = await center.pendingNotificationRequests()
             await refreshReminderStatus()
             guard pending.contains(where: { $0.identifier == identifier }) else {
-                notificationState = "unavailable"
-                _ = await snapshotReminderFailure(nil, identifier: identifier, kind: "test-interval")
-                reminderTestMessage = "iPhone не сохранил проверочное уведомление. Проверь разрешение в настройках приложения и повтори тест."
+                let authorized = await snapshotReminderFailure(nil, identifier: identifier, kind: "test-interval")
+                reminderTestMessage = authorized
+                    ? "Разрешение включено, но проверочное уведомление не появилось в очереди iPhone. Открой диагностику ниже и повтори тест."
+                    : "iPhone не разрешил проверочное уведомление. Проверь уведомления в настройках приложения."
                 return
             }
             reminderDiagnostic = nil
@@ -676,7 +767,6 @@ enum AccessKey {
         } catch {
             await refreshReminderStatus()
             let authorized = await snapshotReminderFailure(error, identifier: "practice-reminder-test", kind: "test-interval")
-            notificationState = notificationState == "denied" ? "denied" : "unavailable"
             reminderTestMessage = authorized
                 ? "Разрешение включено, но iPhone отклонил проверочное уведомление. Открой диагностику ниже: она поможет разобраться с регистрацией приложения."
                 : "iPhone не разрешил сохранить проверочное уведомление. Проверь «Уведомления» в настройках Ratmir English."
@@ -687,6 +777,7 @@ enum AccessKey {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         let pending = await center.pendingNotificationRequests()
+        let delivered = await center.deliveredNotifications()
         let request = pending.first { $0.identifier == identifier }
         func setting(_ value: UNNotificationSetting) -> String {
             switch value {
@@ -707,7 +798,8 @@ enum AccessKey {
             "Scheduling authorized: \(authorized)",
             "Alert: \(setting(settings.alertSetting)); sound: \(setting(settings.soundSetting)); badge: \(setting(settings.badgeSetting))",
             "Notification center: \(setting(settings.notificationCenterSetting)); lock screen: \(setting(settings.lockScreenSetting))",
-            "Pending count: \(pending.count); requested identifier present: \(request != nil)"
+            "Pending count: \(pending.count); requested identifier present: \(request != nil)",
+            "Delivered and still in Notification Center: \(delivered.count); requested identifier present: \(delivered.contains { $0.request.identifier == identifier })"
         ]
         let next: Date?
         if let trigger = request?.trigger as? UNCalendarNotificationTrigger { next = trigger.nextTriggerDate() }

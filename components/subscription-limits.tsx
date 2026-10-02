@@ -57,6 +57,15 @@ export function SubscriptionLimits({ usage, loading, onRefresh, compact = false 
   const view = subscriptionView(usage, Math.max(now, Date.now()));
   const bucketIds = [...new Set(view.windows.map(window => window.bucketId))];
   const initialLoading = loading && usage === null;
+  const activity = usage?.activity?.scope === 'app' ? usage.activity : null;
+  const retryAt = activity?.retryAt ? Date.parse(activity.retryAt) : NaN;
+  const retryPending = Number.isFinite(retryAt) && retryAt > now;
+  const manageUrl = (() => {
+    try {
+      const candidate = new URL(usage?.manageUrl ?? USAGE_URL);
+      return candidate.protocol === 'https:' && candidate.hostname === 'chatgpt.com' && !candidate.username && !candidate.password ? candidate.href : USAGE_URL;
+    } catch { return USAGE_URL; }
+  })();
 
   return <section className={`${styles.card} ${compact ? styles.compact : ''}`} aria-labelledby={headingId} aria-busy={loading}>
     <div className={styles.header}>
@@ -86,9 +95,20 @@ export function SubscriptionLimits({ usage, loading, onRefresh, compact = false 
       <span className={styles.unavailableTitle}>Остаток пока недоступен</span>
       <p>{view.unavailableText}</p>
     </div>}
+    {activity && <div className={styles.activity}>
+      <div className={styles.activityHeading}><h4>Sol в этом приложении</h4><span>За {activity.periodDays} дн.</span></div>
+      <dl className={styles.activityNumbers}>
+        <div><dt>Запросов</dt><dd>{activity.requests}</dd></div>
+        <div><dt>Ответил</dt><dd>{activity.successful}</dd></div>
+        <div><dt>С ошибкой</dt><dd>{activity.failed}</dd></div>
+      </dl>
+      <p>Это активность тренинга. Она не показывает расход всей подписки.</p>
+      {activity.lastLimitAt && <p>Последнее ограничение: <time dateTime={activity.lastLimitAt}>{new Date(activity.lastLimitAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</time>.</p>}
+      {retryPending && <p className={styles.retryNotice}>Сервис разрешит повтор после <time dateTime={activity.retryAt!}>{new Date(retryAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</time>.</p>}
+    </div>}
     <div className={styles.footer}>
       {view.checkedLabel && <p>Проверено: <time dateTime={view.checkedAt!}>{view.checkedLabel}</time></p>}
-      <a href={USAGE_URL} target="_blank" rel="noopener noreferrer">Открыть лимиты ChatGPT <ArrowUpRightIcon size={15} aria-hidden="true" /></a>
+      <a href={manageUrl} target="_blank" rel="noopener noreferrer">Открыть лимиты ChatGPT <ArrowUpRightIcon size={15} aria-hidden="true" /></a>
     </div>
   </section>;
 }

@@ -23,7 +23,11 @@ struct RootView: View {
         Group {
             if client.signedIn {
                 TabView(selection: $selectedTab) {
-                    HomeView().tabItem { Label("Сегодня", systemImage: "sun.max") }.tag(0)
+                    Group {
+                        if let onboarding = client.state?.onboarding, onboarding.status != "ready" {
+                            OnboardingView(onboarding: onboarding)
+                        } else { HomeView(onProgress: { selectedTab = 1 }) }
+                    }.tabItem { Label("Сегодня", systemImage: "sun.max") }.tag(0)
                     ProgressViewScreen().tabItem { Label("Прогресс", systemImage: "chart.xyaxis.line") }.tag(1)
                     HistoryView().tabItem { Label("История", systemImage: "clock.arrow.circlepath") }.tag(2)
                     SettingsView().tabItem { Label("Настройки", systemImage: "slider.horizontal.3") }.tag(3)
@@ -33,6 +37,7 @@ struct RootView: View {
         .task {
 #if DEBUG
             if PreviewFixtures.screen == "settings" { selectedTab = 3 }
+            if PreviewFixtures.screen == "progress" || PreviewFixtures.screen == "baseline-report" { selectedTab = 1 }
 #endif
         }
         .sheet(isPresented: $client.conversationPresented) {
@@ -94,10 +99,11 @@ struct LoginView: View {
 }
 
 struct HomeView: View {
+    var onProgress: () -> Void = {}
     @EnvironmentObject private var client: TrainingClient
     @AppStorage("practice-context") private var context = "life"
     @AppStorage("practice-mode") private var mode = "learning"
-    private var saved: Conversation? { client.state?.sessions.first { $0.status != "completed" || $0.retryDeferred == true } }
+    private var saved: Conversation? { client.state?.sessions.first { ($0.baseline == nil || client.state?.onboarding?.status != "ready") && ($0.status != "completed" || $0.retryDeferred == true) } }
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -116,6 +122,18 @@ struct HomeView: View {
                             .font(.system(.largeTitle, design: .rounded).weight(.semibold)).tracking(-0.7)
                         Text("Давай поговорим \(client.state?.profile.dailyMinutes ?? 15) минут.")
                             .foregroundStyle(Theme.secondary)
+                    }
+                    if client.state?.onboarding?.status == "ready" {
+                        if client.state?.onboarding?.report == nil {
+                            NativeBaselineProfile(report: nil)
+                        } else {
+                            Button(action: onProgress) {
+                                HStack(spacing: 8) {
+                                    Text("Твой стартовый профиль").font(.subheadline.weight(.medium))
+                                    Image(systemName: "arrow.up.right").font(.caption.weight(.semibold))
+                                }.foregroundStyle(Theme.charcoal).frame(minHeight: 44)
+                            }.buttonStyle(PressButton())
+                        }
                     }
                     if let saved {
                         Button { client.resume(saved) } label: {
@@ -188,6 +206,10 @@ struct ConversationView: View {
     private var conversation: Conversation? { client.conversation }
     private var active: Bool { conversation?.status == "active" || conversation?.status == "error" }
     private var hasReview: Bool { conversation?.analysis != nil }
+    private var baselineReplies: Int {
+        conversation?.turns.filter { $0.role == "user" && $0.source == "audio" && $0.audioFile != nil && ($0.support ?? 0) == 0 && $0.transcriptEdited != true && $0.disputed != true }.count ?? 0
+    }
+    private var baselineHasEnoughReplies: Bool { conversation?.baseline == nil || baselineReplies >= 2 }
     private var mayComplete: Bool {
         guard let value = conversation, let analysis = value.analysis else { return false }
         return value.completion?.canComplete ?? (analysis.priorities.isEmpty || hasConfirmedImprovement(value))
@@ -211,6 +233,9 @@ struct ConversationView: View {
         if client.playing { return .friendly }
         if client.busy || client.voiceLoading || conversation?.processing != nil { return .curious }
         return .calm
+    }
+    private var playbackControlLabel: String {
+        client.playing ? "Стоп" : client.needsPlaybackAcknowledgement ? "Сохранить прослушивание" : "Ещё раз"
     }
     var body: some View {
         NavigationStack {
@@ -291,6 +316,10 @@ struct ConversationView: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 Text(value.lesson.title).font(.title3.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                if value.baseline != nil {
+                    Text("Стартовая проверка. Попросить повторить или пояснить сказанное можно. Текст собеседника появится после разбора.")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
+                }
                 DisclosureGroup(isExpanded: $showBrief) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(value.lesson.goal).font(.subheadline)
@@ -308,10 +337,10 @@ struct ConversationView: View {
             if let turn = value.turns.last(where: { $0.role == "assistant" }), value.mode == "learning" || client.assistantTextShown { TranscriptCard(turn: turn) }
             HStack(spacing: 10) {
                 Button {
-                    if client.playing { client.stopSpeaking() } else { Task { await client.speak() } }
-                } label: { Label(client.playing ? "Стоп" : "Ещё раз", systemImage: client.playing ? "stop.fill" : "speaker.wave.2") }
+                    if client.playing { client.stopSpeaking() } else { Task { if client.needsPlaybackAcknowledgement { await client.retryPlaybackAcknowledgement() } else { await client.speak() } } }
+                } label: { Label(playbackControlLabel, systemImage: client.playing ? "stop.fill" : client.needsPlaybackAcknowledgement ? "checkmark" : "speaker.wave.2") }
                     .buttonStyle(QuietButton()).disabled(client.busy || client.voiceLoading || client.recording)
-                if value.mode == "call" && !client.assistantTextShown {
+                if value.mode == "call" && value.baseline == nil && !client.assistantTextShown {
                     Button { Task { await client.revealText() } } label: { Label("Текст", systemImage: "text.alignleft") }
                         .buttonStyle(QuietButton()).disabled(client.busy || client.recording)
                 } else if value.mode == "learning" {
@@ -363,10 +392,10 @@ struct ConversationView: View {
                                 Label(showListeningCheck ? "Скрыть ответ" : "Проверить себя", systemImage: "text.alignleft")
                             }.buttonStyle(QuietButton())
                             Button {
-                                if client.playing { client.stopSpeaking() } else { Task { await client.speak() } }
-                            } label: { Image(systemName: client.playing ? "stop.fill" : "speaker.wave.2") }
+                                if client.playing { client.stopSpeaking() } else { Task { if client.needsPlaybackAcknowledgement { await client.retryPlaybackAcknowledgement() } else { await client.speak() } } }
+                            } label: { Image(systemName: client.playing ? "stop.fill" : client.needsPlaybackAcknowledgement ? "checkmark" : "speaker.wave.2") }
                                 .buttonStyle(QuietButton()).disabled(client.busy || client.voiceLoading)
-                                .accessibilityLabel("Послушать ответ собеседника ещё раз")
+                                .accessibilityLabel(playbackControlLabel)
                         }
                         if showListeningCheck { Text(turn.text).font(.subheadline).foregroundStyle(Theme.secondary).textSelection(.enabled) }
                     }
@@ -445,12 +474,12 @@ struct ConversationView: View {
                     HStack { Text(client.busy ? "Сохраняем" : "Завершить занятие"); Spacer(); if client.busy { ProgressView().tint(Theme.lime) } else { Image(systemName: "checkmark") } }
                 }.buttonStyle(PrimaryButton()).disabled(client.busy || client.recording)
             } else {
-                Text("Ответь ещё раз своими словами. Отправь попытку, чтобы закрепить улучшение.")
+                Text("Ответь ещё раз своими словами. Проверим, что стало лучше.")
                     .font(.footnote).foregroundStyle(Theme.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 composerContent(retry: true)
                 Button { Task { await client.action("complete", deferRetry: true) } } label: {
                     Text("На сегодня всё. Вернёмся к попытке позже.")
-                }.font(.caption.weight(.medium)).foregroundStyle(Theme.secondary).disabled(client.busy || client.recording)
+                }.font(.caption.weight(.medium)).foregroundStyle(Theme.secondary).disabled(client.busy || client.recording || !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || client.hasUnuploadedRecording)
             }
         }.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 10).background(Theme.surface)
             .overlay(alignment: .top) { Divider().opacity(0.6) }
@@ -461,7 +490,13 @@ struct ConversationView: View {
             Button { draftFocused = false; Task { await client.action("finish") } } label: {
                 HStack { Text("Закончить разговор и получить разбор"); Image(systemName: "arrow.right") }
             }.font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary)
-                .disabled(client.busy || client.recording || conversation?.turns.contains(where: { $0.role == "user" }) != true)
+                .disabled(client.busy || client.recording || client.hasUnuploadedRecording || !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !baselineHasEnoughReplies || conversation?.turns.contains(where: { $0.role == "user" }) != true)
+            if !client.recording && !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Перед разбором отправь черновик или очисти текст.").font(.caption).foregroundStyle(Theme.secondary)
+            }
+            if conversation?.baseline != nil {
+                Text("Своих ответов голосом без опоры: \(baselineReplies)/2. Хорошая оценка не обязательна.").font(.caption).foregroundStyle(Theme.secondary)
+            }
         }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 8).background(Theme.surface)
             .overlay(alignment: .top) { Divider().opacity(0.6) }
     }
@@ -499,7 +534,7 @@ struct ConversationView: View {
                     }
                     Button("Удалить", role: .destructive) { client.discardRecording() }.disabled(client.busy)
                 }.font(.caption)
-                Text(client.hasUnuploadedRecording ? "Запись осталась на iPhone. Повтори распознавание или запиши новую." : "Проверь текст по оригинальной записи перед отправкой.")
+                Text(client.hasUnuploadedRecording ? "Запись осталась на iPhone. Повтори распознавание или удали её перед новой записью." : "Проверь текст по оригинальной записи перед отправкой.")
                     .font(.caption).foregroundStyle(Theme.secondary)
             }
         }
@@ -515,6 +550,9 @@ struct ProgressViewScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     ScreenHeading(title: "Твой прогресс", subtitle: "Смотрим на то, что получается в разговоре.")
+                    if client.state?.onboarding?.status == "ready" {
+                        NativeBaselineProfile(report: client.state?.onboarding?.report)
+                    }
                     HStack(spacing: 12) {
                         Metric(value: "\(client.state?.completed ?? 0)", title: "Занятий", color: Theme.lavender)
                         Metric(value: "\(client.state?.xp ?? 0)", title: "Опыт XP", color: Theme.lime)
@@ -525,15 +563,43 @@ struct ProgressViewScreen: View {
                                 HStack(alignment: .top) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text(labels[skill.id] ?? skill.id).font(.headline)
-                                        Text(states[skill.state] ?? skill.state).font(.footnote).foregroundStyle(Theme.secondary)
+                                        Text(skill.id == "clarity" ? "Акустическая оценка пока недоступна" : states[skill.state] ?? skill.state).font(.footnote).foregroundStyle(Theme.secondary)
                                     }
                                     Spacer()
-                                    Text("\(skill.independentSuccesses)").font(.system(.title2, design: .rounded).weight(.semibold)).monospacedDigit()
+                                    if skill.id != "clarity" {
+                                        VStack(alignment: .trailing, spacing: 4) {
+                                            Text("\(skill.independentSuccesses)").font(.system(.title2, design: .rounded).weight(.semibold)).monospacedDigit()
+                                            Text(successLabel(skill.independentSuccesses)).font(.caption2).foregroundStyle(Theme.secondary).multilineTextAlignment(.trailing)
+                                        }.accessibilityElement(children: .combine)
+                                    }
                                 }
                                 Divider().opacity(0.5)
                                 ViewThatFits(in: .horizontal) {
                                     HStack(spacing: 14) { EvidenceLabel(title: "В новой ситуации", confirmed: skill.transfer); EvidenceLabel(title: "После паузы", confirmed: skill.retention) }
                                     VStack(alignment: .leading, spacing: 8) { EvidenceLabel(title: "В новой ситуации", confirmed: skill.transfer); EvidenceLabel(title: "После паузы", confirmed: skill.retention) }
+                                }
+                                if skill.id == "clarity" {
+                                    Text("По расшифровке нельзя надёжно оценить произношение. Этот навык пока не получает баллы.").font(.caption).foregroundStyle(Theme.secondary)
+                                }
+                                if let checked = skill.lastChecked, let date = NativeDate.parse(checked) {
+                                    Text("Последняя проверка: " + date.formatted(.dateTime.day().month(.abbreviated))).font(.caption).foregroundStyle(Theme.secondary)
+                                }
+                                if let examples = skill.examples, !examples.isEmpty {
+                                    DisclosureGroup {
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            ForEach(Array(examples.enumerated()), id: \.offset) { _, example in
+                                                Button {
+                                                    if let source = client.state?.sessions.first(where: { $0.id == example.sessionId }) { client.resume(source) }
+                                                } label: {
+                                                    VStack(alignment: .leading, spacing: 8) {
+                                                        Text(example.quote).font(.subheadline).multilineTextAlignment(.leading)
+                                                        Text(example.reason).font(.caption).foregroundStyle(Theme.secondary).multilineTextAlignment(.leading)
+                                                        Label("Открыть свою попытку", systemImage: "arrow.up.right").font(.caption)
+                                                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
+                                                }.buttonStyle(PressButton()).disabled(client.busy || client.recording)
+                                            }
+                                        }.padding(.top, 8)
+                                    } label: { Text("На чём основана оценка").font(.footnote.weight(.medium)) }
                                 }
                             }
                         }
@@ -543,6 +609,12 @@ struct ProgressViewScreen: View {
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
             }.background(Theme.surface).navigationBarHidden(true).refreshable { await client.perform { try await client.refresh() } }
         }
+    }
+    private func successLabel(_ count: Int) -> String {
+        if count % 100 >= 11 && count % 100 <= 14 { return "самостоятельных\nуспехов" }
+        if count % 10 == 1 { return "самостоятельный\nуспех" }
+        if (2...4).contains(count % 10) { return "самостоятельных\nуспеха" }
+        return "самостоятельных\nуспехов"
     }
 }
 
@@ -672,13 +744,22 @@ struct SettingsView: View {
             }
             Text("Лимит общий с ChatGPT и Codex.").font(.caption).foregroundStyle(Theme.secondary)
             if let activity = client.subscriptionUsage?.activity {
+                Text("Только запросы этого приложения").font(.caption.weight(.medium)).foregroundStyle(Theme.secondary)
                 HStack {
                     Text("Запросов за \(activity.periodDays) дн.").font(.caption).foregroundStyle(Theme.secondary)
                     Spacer()
                     Text(String(activity.requests)).font(.subheadline.weight(.semibold)).monospacedDigit()
                 }
+                HStack {
+                    Text("Успешно: \(activity.successful)")
+                    Spacer()
+                    Text("С ошибкой: \(activity.failed)")
+                }.font(.caption).foregroundStyle(Theme.secondary)
                 if let limit = activity.lastLimitAt, let date = NativeDate.parse(limit) {
                     Text("Последнее ограничение: " + date.formatted(.dateTime.day().month(.abbreviated).hour().minute())).font(.caption).foregroundStyle(Theme.secondary)
+                }
+                if let retry = activity.retryAt, let date = NativeDate.parse(retry), date > Date() {
+                    Text("Повторить после " + date.formatted(.dateTime.hour().minute())).font(.caption).foregroundStyle(Theme.secondary)
                 }
             }
             Link(destination: URL(string: client.subscriptionUsage?.manageUrl ?? "https://chatgpt.com/settings/usage") ?? URL(string: "https://chatgpt.com/settings/usage")!) {

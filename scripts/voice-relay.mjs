@@ -2,18 +2,50 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 
-export function authorizedVoiceRequest(req, code, publicOrigin) {
-  if (!code || !publicOrigin) return false;
+const BROWSER_PROTOCOL = 'realtime-transcription';
+const EPHEMERAL_PROTOCOL_PREFIX = 'openai-insecure-api-key.';
+const EPHEMERAL_TOKEN = /^ek_[A-Za-z0-9_-]{10,2048}$/;
+
+function voiceRequestCredential(req, code, publicOrigin) {
+  if (!code || !publicOrigin) return null;
   try {
-    const address = new URL(req.url, publicOrigin);
-    if (address.pathname !== '/api/audio/live-stream' || address.search) return false;
+    // Credentials never belong in URLs. Accept only this exact relative path.
+    if (req.url !== '/api/audio/live-stream') return null;
+    const configuredOrigin = new URL(publicOrigin);
+    if (configuredOrigin.protocol !== 'https:') return null;
     const origin = req.headers.origin;
-    if (origin && origin !== new URL(publicOrigin).origin) return false;
-    const received = /(?:^|;\s*)training-access=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
+    if (origin !== undefined && origin !== configuredOrigin.origin) return null;
+    // Node may discard duplicate Authorization fields; inspect raw headers too.
+    for (const header of ['authorization', 'sec-websocket-protocol', 'origin']) {
+      if (req.rawHeaders?.filter((value, index) => index % 2 === 0 && value.toLowerCase() === header).length > 1) return null;
+    }
+    const cookies = typeof req.headers.cookie === 'string'
+      ? [...req.headers.cookie.matchAll(/(?:^|;\s*)training-access=([^;]*)/g)] : [];
+    if (cookies.length !== 1 || !/^[a-f0-9]{64}$/.test(cookies[0][1])) return null;
+    const received = cookies[0][1];
     const expected = createHash('sha256').update(`training-local:${code}`).digest('hex');
-    if (!received || !timingSafeEqual(Buffer.from(received), Buffer.from(expected))) return false;
-    return /^Bearer ek_[A-Za-z0-9_-]{10,2048}$/.test(req.headers.authorization || '');
-  } catch { return false; }
+    if (!timingSafeEqual(Buffer.from(received), Buffer.from(expected))) return null;
+    const authorization = req.headers.authorization;
+    const offered = req.headers['sec-websocket-protocol'];
+    // A native header and a browser protocol are mutually exclusive channels.
+    if (authorization !== undefined) {
+      if (offered !== undefined || typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) return null;
+      return EPHEMERAL_TOKEN.test(authorization.slice(7)) ? authorization : null;
+    }
+    // Browsers cannot set Authorization. Require the same-origin app cookie and
+    // an explicit matching Origin before reading their short-lived credential.
+    if (origin !== configuredOrigin.origin || typeof offered !== 'string' || offered.length > 2200) return null;
+    const protocols = offered.split(',').map(value => value.trim());
+    if (protocols.length !== 2 || new Set(protocols).size !== 2 || !protocols.includes(BROWSER_PROTOCOL)) return null;
+    const tokenProtocol = protocols.find(value => value !== BROWSER_PROTOCOL);
+    if (!tokenProtocol.startsWith(EPHEMERAL_PROTOCOL_PREFIX)) return null;
+    const token = tokenProtocol.slice(EPHEMERAL_PROTOCOL_PREFIX.length);
+    return EPHEMERAL_TOKEN.test(token) ? `Bearer ${token}` : null;
+  } catch { return null; }
+}
+
+export function authorizedVoiceRequest(req, code, publicOrigin) {
+  return voiceRequestCredential(req, code, publicOrigin) !== null;
 }
 
 /** Limit this relay to learner transcription; it is not an open API proxy. */
@@ -42,22 +74,28 @@ export function transcriptionEvent(event) {
   return event.type === 'input_audio_buffer.append' ? { type: event.type, audio: event.audio } : { type: event.type };
 }
 
-export function startVoiceRelay({ port = 3001, code = process.env.TRAINING_ACCESS_CODE, publicOrigin = process.env.TRAINING_PUBLIC_ORIGIN } = {}) {
+export function startVoiceRelay({ port = 3001, code = process.env.TRAINING_ACCESS_CODE, publicOrigin = process.env.TRAINING_PUBLIC_ORIGIN,
+  upstreamFactory = (url, options) => new WebSocket(url, options) } = {}) {
   const server = createServer((req, res) => {
     res.writeHead(req.url === '/health' ? 200 : 426, { 'Content-Type': 'text/plain' });
     res.end(req.url === '/health' ? 'ready' : 'WebSocket connection required');
   });
-  const websocketServer = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024, perMessageDeflate: false });
+  const websocketServer = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024, perMessageDeflate: false,
+    // Never echo the offered credential in Sec-WebSocket-Protocol.
+    handleProtocols: protocols => protocols.has(BROWSER_PROTOCOL) ? BROWSER_PROTOCOL : false });
   const clients = new Set();
   server.on('upgrade', (req, socket, head) => {
-    if (!authorizedVoiceRequest(req, code, publicOrigin)) {
+    const authorization = voiceRequestCredential(req, code, publicOrigin);
+    if (!authorization) {
       socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       return;
     }
     websocketServer.handleUpgrade(req, socket, head, client => {
       clients.add(client);
-      const upstream = new WebSocket('wss://api.openai.com/v1/realtime?intent=transcription', {
-        headers: { Authorization: req.headers.authorization }, handshakeTimeout: 12000,
+      const upstream = upstreamFactory('wss://api.openai.com/v1/realtime?intent=transcription', {
+        // Only our validated ephemeral goes upstream; no app cookie, Origin,
+        // incoming protocol field, arbitrary header or persistent key is copied.
+        headers: { Authorization: authorization }, handshakeTimeout: 12000,
         maxPayload: 2 * 1024 * 1024, perMessageDeflate: false,
       });
       const waiting = [];

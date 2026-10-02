@@ -7,7 +7,10 @@ struct Skill: Decodable, Identifiable {
     let independentSuccesses: Int
     let transfer: Bool
     let retention: Bool
+    let examples: [SkillExample]?
+    let lastChecked: String?
 }
+struct SkillExample: Decodable { let sessionId: String; let quote: String; let reason: String }
 struct TrainingState: Decodable {
     let profile: Learner
     let sessions: [Conversation]
@@ -15,6 +18,50 @@ struct TrainingState: Decodable {
     let xp: Int
     let completed: Int
     let audioUsage: AudioUsage?
+    let onboarding: OnboardingState?
+}
+struct OnboardingState: Decodable {
+    let version: Int
+    let status: String
+    let introCompletedAt: String?
+    let russianPrompt: String
+    let russianControl: String?
+    let completedStages: Int
+    let steps: [BaselineStep]
+    let report: BaselineReport?
+}
+struct BaselineStep: Decodable, Identifiable {
+    let id: String
+    let familyId: String
+    let title: String
+    let focus: String
+    let minutes: Int
+    let status: String
+    let sessionId: String?
+    let missingEvidence: String?
+}
+struct BaselineReport: Decodable {
+    struct CEFR: Decodable { let from: String; let to: String; let confidence: String; let scope: String; let reason: String }
+    struct Observation: Decodable, Identifiable {
+        var id: String { skill }
+        let skill: String
+        let observation: String
+        let confidence: String
+        let evidence: [Quote]
+    }
+    struct Quote: Decodable { let sessionId: String; let turnId: String; let quote: String; let result: String }
+    struct Communication: Decodable { let observation: String; let russianQuote: String; let limitation: String }
+    let version: Int
+    let model: String
+    let createdAt: String
+    let provisional: Bool
+    let summary: String
+    let cefr: CEFR?
+    let skills: [Observation]
+    let languageVsCommunication: Communication
+    let priorities: [String]
+    let limitations: [String]
+    let nextFocus: String
 }
 struct AudioUsage: Decodable { let usedUsd: Double; let estimated: Bool; let budgetUsd: Double; let recordedMinutes: Double; let spokenCharacters: Int }
 struct Lesson: Decodable {
@@ -29,6 +76,10 @@ struct Turn: Decodable, Identifiable {
     let role: String
     let text: String
     let audioFile: String?
+    let source: String?
+    let support: Int?
+    let transcriptEdited: Bool?
+    let disputed: Bool?
 }
 struct Priority: Decodable, Identifiable {
     var id: String { turnId + title }
@@ -48,6 +99,7 @@ struct Review: Decodable {
 }
 struct Retry: Decodable { let text: String; let feedback: String; let improved: Bool?; let analysisVersion: Int? }
 struct Conversation: Decodable, Identifiable {
+    struct Baseline: Decodable { let version: Int; let stepId: String }
     let id: String
     let lesson: Lesson
     let mode: String
@@ -61,6 +113,7 @@ struct Conversation: Decodable, Identifiable {
     let processing: Processing?
     let completion: Completion?
     let retryDeferred: Bool?
+    let baseline: Baseline?
 }
 struct Processing: Decodable { let stage: String; let startedAt: String; let attempt: Int?; let nextAttemptAt: String? }
 struct Completion: Decodable { let canComplete: Bool; let needsRetry: Bool; let reason: String? }
