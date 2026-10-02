@@ -53,14 +53,14 @@ function observations(sessions: Session[]): Observation[] {
         || !normalized(turn.text).includes(normalized(evidence.quote))) continue;
       if (evidence.skill === 'listening') {
         const previousAssistant = session.turns.slice(0, turnIndex).reverse().find((item) => item.role === 'assistant');
-        if (!previousAssistant || previousAssistant.source !== 'audio' || previousAssistant.support > 0 || previousAssistant.disputed) continue;
+        if (!previousAssistant || previousAssistant.source !== 'audio' || previousAssistant.support > 0 || previousAssistant.disputed || turn.transcriptEdited) continue;
       }
       const time = Date.parse(turn.createdAt || session.createdAt);
       if (!Number.isFinite(time)) continue;
       const key = `${evidence.skill}:${evidence.turnId}:${evidence.result}:${evidence.supported}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      results.push({ session, evidence, turn, time, variant, procedure, supported: evidence.supported || turn.support > 0 });
+      results.push({ session, evidence, turn, time, variant, procedure, supported: evidence.supported || turn.support > 0 || !!turn.transcriptEdited });
     }
   }
   // Two opposite conclusions about the same fragment are an assessment dispute, not new evidence.

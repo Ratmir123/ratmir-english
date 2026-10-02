@@ -6,6 +6,7 @@ import type { BrainStatus, SubscriptionUsage } from '../types';
 import { brainAuthenticationMode } from './configuration';
 import { getSiwcBrainStatus, siwcRun } from './siwc';
 import { SubscriptionUsageCache, unavailableSubscriptionUsage } from './usage';
+import { getBrainActivity } from './store';
 
 export const BRAIN_MODEL = 'gpt-6.1-sol';
 type Effort = 'low' | 'medium' | 'high';
@@ -283,7 +284,8 @@ export async function getBrainStatus(): Promise<BrainStatus> {
 export async function getSubscriptionUsage(force = false): Promise<SubscriptionUsage> {
   try {
     if (brainAuthenticationMode() === 'siwc') {
-      return unavailableSubscriptionUsage('siwc', 'ChatGPT не предоставляет приложению остаток лимитов этого подключения. Проверь лимиты в своей подписке.', new Date().toISOString());
+      return { ...unavailableSubscriptionUsage('siwc', 'Остаток подписки можно посмотреть в ChatGPT. Здесь видны только запросы этого тренинга.', new Date().toISOString()),
+        manageUrl: 'https://chatgpt.com/settings/usage', activity: getBrainActivity() };
     }
     host.__ratmirEnglishUsageCache ||= new SubscriptionUsageCache(() => bridge().usage());
     return await host.__ratmirEnglishUsageCache.read(force);

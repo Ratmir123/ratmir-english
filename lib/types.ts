@@ -29,6 +29,7 @@ export interface Turn {
   id: string; role: 'user' | 'assistant'; text: string; createdAt: string;
   source: 'text' | 'audio'; support: Support; audioFile?: string;
   disputed?: boolean; originalText?: string;
+  originalTranscript?: string; transcriptEdited?: boolean;
 }
 export interface Priority {
   type: 'language' | 'dialogue'; title: string; turnId: string; quote: string;
@@ -47,8 +48,11 @@ export interface Session {
   id: string; lesson: LessonPlan; mode: Mode;
   status: 'active' | 'analysing' | 'review' | 'completed' | 'error';
   createdAt: string; updatedAt: string; turns: Turn[]; analysis: Analysis | null;
-  retries: { text: string; feedback: string; createdAt: string; audioFile?: string; improved?: boolean }[];
+  retries: { id?: string; text: string; feedback: string; createdAt: string; audioFile?: string; improved?: boolean; analysisVersion?: number; originalTranscript?: string; transcriptEdited?: boolean }[];
   support: Support; error?: string; comfort?: number;
+  clientRequestId?: string; retryDeferred?: boolean;
+  processing?: { stage: 'queued' | 'evaluating' | 'waiting-retry' | 'responding'; startedAt: string; attempt?: number; nextAttemptAt?: string };
+  completion?: { canComplete: boolean; needsRetry: boolean; reason: string | null };
 }
 export interface SkillState {
   id: SkillId; state: 'unknown' | 'supported' | 'provisional' | 'independent' | 'recheck';
@@ -83,4 +87,6 @@ export interface SubscriptionUsage {
   source: 'codex' | 'siwc'; available: boolean; scope: 'account' | 'app' | 'unknown';
   checkedAt: string | null; stale: boolean; windows: SubscriptionWindow[];
   plan: string | null; error?: string;
+  manageUrl?: string;
+  activity?: { scope: 'app'; periodDays: number; requests: number; successful: number; failed: number; lastRequestAt: string | null; lastLimitAt: string | null; retryAt: string | null; averageLatencyMs: number | null };
 }

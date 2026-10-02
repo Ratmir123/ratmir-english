@@ -49,6 +49,11 @@ function connection(): Connection {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS audio_usage_time ON audio_usage(created_at);
+    CREATE TABLE IF NOT EXISTS brain_activity (
+      id INTEGER PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('success','failed','limit')),
+      latency_ms INTEGER NOT NULL, retry_at TEXT, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS brain_activity_time ON brain_activity(created_at);
   `);
   if (!db.prepare('SELECT 1 FROM settings WHERE key = ?').get('profile')) {
     db.prepare('INSERT INTO settings(key,data) VALUES (?,?)').run('profile', JSON.stringify(initialProfile(dirname(filename))));
@@ -84,7 +89,7 @@ function writeSession(db: DatabaseSync, session: Session): void {
 function sourceSignature(session: Session): string {
   return JSON.stringify({ lesson: session.lesson, mode: session.mode, support: session.support, turns: session.turns.map((turn) => ({
     id: turn.id, role: turn.role, text: turn.text, source: turn.source, support: turn.support,
-    disputed: !!turn.disputed, audioFile: turn.audioFile,
+    disputed: !!turn.disputed, audioFile: turn.audioFile, originalTranscript: turn.originalTranscript, transcriptEdited: !!turn.transcriptEdited,
   })) });
 }
 
@@ -92,14 +97,40 @@ export function getSession(id: string): Session | null {
   return readSession(connection().db, id);
 }
 
-export function createSession(lesson: LessonPlan, mode: Mode): Session {
+export function createSession(lesson: LessonPlan, mode: Mode, clientRequestId?: string): Session {
+  if (clientRequestId) {
+    const previous = getSessionByRequestId(clientRequestId);
+    if (previous) return previous;
+  }
   const now = new Date().toISOString();
   const session: Session = {
     id: randomUUID(), lesson: structuredClone(lesson), mode, status: 'active',
     createdAt: now, updatedAt: now, turns: [], analysis: null, retries: [], support: 0,
+    ...(clientRequestId ? { clientRequestId } : {}),
   };
   writeSession(connection().db, session);
   return session;
+}
+
+export function getSessionByRequestId(id: string): Session | null {
+  const row = connection().db.prepare("SELECT data FROM sessions WHERE json_extract(data,'$.clientRequestId')=? LIMIT 1")
+    .get(id) as JsonRow | undefined;
+  return row ? JSON.parse(row.data) as Session : null;
+}
+
+/** Idempotent finish keeps a ready review intact; explicit reanalysis alone replaces it. */
+export function finishConversation(id: string, reanalyse = false): Session {
+  const session = getSession(id);
+  if (!session) throw new Error('Занятие не найдено.');
+  if (!reanalyse && (session.analysis || session.status === 'analysing' || session.status === 'completed')) return session;
+  if (!session.turns.some(turn => turn.role === 'user' && !turn.disputed && turn.text.trim())) {
+    throw new Error('Для разбора нужна хотя бы одна твоя подтверждённая попытка.');
+  }
+  if (reanalyse) { session.analysis = null; session.retries = []; session.retryDeferred = false; }
+  session.status = 'analysing'; session.error = undefined;
+  saveSession(session);
+  enqueueAnalysis(id);
+  return getSession(id)!;
 }
 
 /** With expectedSource, publish only analysis fields after atomically checking the analysed snapshot. */
@@ -122,7 +153,7 @@ export function saveSession(input: Session, expectedSource?: Session): void {
     }
     // Unrelated edits (comfort/retries) remain intact when a slow analysis finishes.
     const session = expectedSource
-      ? { ...structuredClone(previous), analysis: structuredClone(input.analysis), status: input.status, error: input.error }
+      ? { ...structuredClone(previous), analysis: structuredClone(input.analysis), status: input.status, error: input.error, processing: input.processing }
       : structuredClone(input);
     session.createdAt = previous.createdAt;
     session.updatedAt = new Date(Math.max(Date.now(), Date.parse(previous.updatedAt) + 1)).toISOString();
@@ -176,6 +207,7 @@ export function enqueueAnalysis(id: string): void {
       .run(id, now, now, now);
     session.status = 'analysing';
     session.error = undefined;
+    session.processing = { stage: 'queued', startedAt: new Date(now).toISOString(), attempt: 0 };
     session.updatedAt = new Date(now).toISOString();
     writeSession(db, session);
   });
@@ -206,11 +238,17 @@ export function claimAnalysisJob(): { sessionId: string } | null {
     db.prepare(`UPDATE analysis_jobs SET state='running',attempts=attempts+1,lease_until=?,token=?,updated_at=? WHERE session_id=?`)
       .run(now + JOB_LEASE_MS, token, now, job.session_id);
     claims.set(job.session_id, token);
+    const session = readSession(db, job.session_id);
+    if (session) {
+      session.processing = { stage: 'evaluating', startedAt: new Date(now).toISOString(), attempt: job.attempts + 1 };
+      session.updatedAt = new Date(Math.max(now, Date.parse(session.updatedAt) + 1)).toISOString();
+      writeSession(db, session);
+    }
     return { sessionId: job.session_id };
   });
 }
 
-export function finishAnalysisJob(id: string, error?: string | Error): void {
+export function finishAnalysisJob(id: string, error?: string | Error, retryable = true): void {
   const { db, claims } = connection();
   const token = claims.get(id);
   if (!token) return;
@@ -225,18 +263,40 @@ export function finishAnalysisJob(id: string, error?: string | Error): void {
       return;
     }
     const message = (error instanceof Error ? error.message : error).slice(0, 2000);
-    const terminal = job.attempts >= MAX_JOB_ATTEMPTS;
+    const terminal = !retryable || job.attempts >= MAX_JOB_ATTEMPTS;
     db.prepare(`UPDATE analysis_jobs SET state=?,available_at=?,lease_until=NULL,token=NULL,last_error=?,updated_at=? WHERE session_id=? AND token=?`)
       .run(terminal ? 'failed' : 'pending', now + 1000 * 2 ** job.attempts, message, now, id, token);
     const session = readSession(db, id);
     if (session) {
       session.status = terminal ? 'error' : 'analysing';
-      session.error = terminal ? 'Разбор не удался после трёх попыток. Исходная речь сохранена.' : undefined;
+      session.error = terminal ? message + ' Исходная речь сохранена.' : undefined;
+      session.processing = terminal ? undefined : { stage: 'waiting-retry', startedAt: new Date(now).toISOString(), attempt: job.attempts,
+        nextAttemptAt: new Date(now + 1000 * 2 ** job.attempts).toISOString() };
       session.updatedAt = new Date(now).toISOString();
       writeSession(db, session);
     }
   });
   claims.delete(id);
+}
+
+export function addBrainActivity(state: 'success' | 'failed' | 'limit', latencyMs: number, retryAt: string | null = null): void {
+  if (!['success', 'failed', 'limit'].includes(state) || !Number.isFinite(latencyMs) || latencyMs < 0) return;
+  const validRetry = retryAt && Number.isFinite(Date.parse(retryAt)) ? new Date(retryAt).toISOString() : null;
+  connection().db.prepare('INSERT INTO brain_activity(state,latency_ms,retry_at,created_at) VALUES (?,?,?,?)')
+    .run(state, Math.round(latencyMs), validRetry, new Date().toISOString());
+}
+
+/** These are this app's measured requests, never the account's remaining quota. */
+export function getBrainActivity() {
+  const cutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const rows = connection().db.prepare('SELECT state,latency_ms,retry_at,created_at FROM brain_activity WHERE created_at>=? ORDER BY id')
+    .all(cutoff) as { state: string; latency_ms: number; retry_at: string | null; created_at: string }[];
+  const lastLimit = rows.findLast(row => row.state === 'limit');
+  return { scope: 'app' as const, periodDays: 30, requests: rows.length,
+    successful: rows.filter(row => row.state === 'success').length, failed: rows.filter(row => row.state !== 'success').length,
+    lastRequestAt: rows.at(-1)?.created_at ?? null, lastLimitAt: lastLimit?.created_at ?? null,
+    retryAt: lastLimit?.retry_at ?? null,
+    averageLatencyMs: rows.length ? Math.round(rows.reduce((sum, row) => sum + row.latency_ms, 0) / rows.length) : null };
 }
 
 export function addAudioUsage(kind: 'transcription' | 'speech', amount: number, costUsd: number): void {

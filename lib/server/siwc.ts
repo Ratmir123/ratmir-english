@@ -1,6 +1,7 @@
 import type { JWTVerifyGetKey } from 'jose';
 import type { BrainStatus } from '../types';
 import { SiwcStore, type SiwcRegistration, type SiwcTokens } from './siwc-store';
+import { addBrainActivity } from './store';
 import { SIWC_ISSUER, SIWC_MODEL, SIWC_RESOURCE, SIWC_TOKEN, SiwcError, consumeCallback, consumeResponsesStream, objectValue, readJsonBounded, responseError, responsesBody, safeSiwcError, verifyIdentity,
   type Fetcher, type SignInAttempt, type SiwcEffort } from './siwc-protocol';
 
@@ -154,7 +155,7 @@ export class SiwcClient {
     // A catalog is a discovery aid. An explicit probe of the user's fixed model
     // can verify access when a new model has not reached the catalog yet. Normal
     // lessons require either a listing or a previously completed exact-model turn.
-    if (!await this.models(record) && !explicitProbe && !record.model_verified_at) {
+    if (!record.model_verified_at && !await this.models(record) && !explicitProbe) {
       await this.markModel(record, false); throw new SiwcError('unavailable');
     }
     const remaining = record.expires_at - this.now();
@@ -166,7 +167,7 @@ export class SiwcClient {
         'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify(body), redirect: 'error', signal: controller.signal });
       const text = await consumeResponsesStream(response);
       if (record.expires_at <= this.now()) throw new SiwcError('expired');
-      await this.markModel(record, true);
+      if (!record.model_verified_at || record.model_available !== true) await this.markModel(record, true);
       return text;
     } catch (error) {
       if (controller.signal.aborted) throw new SiwcError(deadline < 180_000 ? 'expired' : 'timeout');
@@ -194,5 +195,14 @@ export class SiwcClient {
 function client(): SiwcClient { return new SiwcClient(); }
 export async function getSiwcBrainStatus(): Promise<BrainStatus> { return client().status(); }
 export async function siwcRun(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string): Promise<string> {
-  return client().run(prompt, schema, effort, instructions);
+  const started = Date.now();
+  try {
+    const answer = await client().run(prompt, schema, effort, instructions);
+    try { addBrainActivity('success', Date.now() - started); } catch { /* Statistics must not discard a completed response. */ }
+    return answer;
+  } catch (error) {
+    try { addBrainActivity(error instanceof SiwcError && error.code === 'limit' ? 'limit' : 'failed', Date.now() - started,
+      error instanceof SiwcError ? error.retryAt ?? null : null); } catch { /* Preserve the original provider failure. */ }
+    throw error;
+  }
 }

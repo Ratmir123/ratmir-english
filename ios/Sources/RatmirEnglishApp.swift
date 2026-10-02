@@ -1,41 +1,54 @@
 import SwiftUI
 
-private enum Theme {
-    static let charcoal = Color(red: 34.0 / 255, green: 33.0 / 255, blue: 36.0 / 255)
-    static let surface = Color(red: 225.0 / 255, green: 225.0 / 255, blue: 225.0 / 255)
-    static let lavender = Color(red: 187.0 / 255, green: 178.0 / 255, blue: 245.0 / 255)
-    static let lime = Color(red: 218.0 / 255, green: 241.0 / 255, blue: 99.0 / 255)
-}
-
 @main struct RatmirEnglishApp: App {
     @StateObject private var client = TrainingClient()
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(client).tint(Theme.charcoal)
-                .preferredColorScheme(.light)
-                .task { await client.restore() }
+                .preferredColorScheme(.light).task {
+#if DEBUG
+                    if PreviewFixtures.install(client) { return }
+#endif
+                    await client.restore()
+                }
         }
     }
 }
 
 struct RootView: View {
     @EnvironmentObject private var client: TrainingClient
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var selectedTab = 0
     var body: some View {
         Group {
             if client.signedIn {
-                TabView {
-                    HomeView().tabItem { Label("Сегодня", systemImage: "sun.max") }
-                    ProgressViewScreen().tabItem { Label("Прогресс", systemImage: "chart.xyaxis.line") }
-                    HistoryView().tabItem { Label("История", systemImage: "clock.arrow.circlepath") }
-                    SettingsView().tabItem { Label("Настройки", systemImage: "slider.horizontal.3") }
-                }
+                TabView(selection: $selectedTab) {
+                    HomeView().tabItem { Label("Сегодня", systemImage: "sun.max") }.tag(0)
+                    ProgressViewScreen().tabItem { Label("Прогресс", systemImage: "chart.xyaxis.line") }.tag(1)
+                    HistoryView().tabItem { Label("История", systemImage: "clock.arrow.circlepath") }.tag(2)
+                    SettingsView().tabItem { Label("Настройки", systemImage: "slider.horizontal.3") }.tag(3)
+                }.toolbarBackground(Theme.surface, for: .tabBar).toolbarBackground(.visible, for: .tabBar)
             } else { LoginView() }
         }
-        .sheet(item: $client.conversation) { conversation in
-            ConversationView(id: conversation.id).environmentObject(client)
-                .interactiveDismissDisabled(client.busy || client.recording)
+        .task {
+#if DEBUG
+            if PreviewFixtures.screen == "settings" { selectedTab = 3 }
+#endif
         }
-        .alert("Не получилось", isPresented: Binding(get: { client.error != nil && client.conversation == nil },
+        .sheet(isPresented: $client.conversationPresented) {
+            if let value = client.conversation {
+                ConversationView(id: value.id).environmentObject(client)
+                    .presentationDetents([.large]).presentationDragIndicator(.visible)
+                    .interactiveDismissDisabled(client.recording)
+            }
+        }
+        .onChange(of: client.conversationPresented) { _, presented in
+            if !presented { client.minimizeConversation() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await client.refreshReminderStatus() } }
+        }
+        .alert("Не получилось", isPresented: Binding(get: { client.error != nil && !client.conversationPresented },
             set: { if !$0 { client.error = nil } })) {
             Button("Понятно", role: .cancel) { client.error = nil }
         } message: { Text(client.error ?? "") }
@@ -48,196 +61,448 @@ struct LoginView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    Text("R·").font(.system(size: 48, weight: .bold)).padding(20)
-                        .background(Theme.lime, in: RoundedRectangle(cornerRadius: 26))
-                    Text("Твой английский.\nТвоя практика.").font(.largeTitle.bold())
-                    Text("Подключи личный сервер. Уровень, история и занятия будут общими с компьютером.")
-                        .foregroundStyle(.secondary)
-                    TextField("https://адрес-сервера", text: $client.server)
-                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    SecureField("Личный код доступа", text: $code)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button { Task { await client.login(code: code); if client.signedIn { code = "" } } } label: {
-                        HStack { Text("Подключиться"); Spacer(); if client.busy { ProgressView() } else { Image(systemName: "arrow.right") } }
-                    }.buttonStyle(PrimaryButton()).disabled(client.busy || code.isEmpty)
-                }.textFieldStyle(.roundedBorder).padding(24)
-            }.background(Theme.surface).navigationTitle("Ratmir English")
+                VStack(alignment: .leading, spacing: 28) {
+                    BrandMark(size: 58)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Твой английский.\nНа связи.")
+                            .font(.system(.largeTitle, design: .rounded).weight(.semibold)).tracking(-0.8)
+                        Text("Твоя практика, история и прогресс. На телефоне и компьютере.")
+                            .foregroundStyle(Theme.secondary)
+                    }
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 18) {
+                            InputLabel(title: "Адрес приложения")
+                            TextField("https://адрес", text: $client.server)
+                                .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                                .font(.subheadline).padding(14)
+                                .background(Theme.surface.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
+                            InputLabel(title: "Личный код")
+                            SecureField("Код доступа", text: $code)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled().padding(14)
+                                .background(Theme.surface.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
+                            Button { Task { await client.login(code: code); if client.signedIn { code = "" } } } label: {
+                                HStack { Text("Войти"); Spacer(); if client.busy { ProgressView().tint(Theme.lime) } else { Image(systemName: "arrow.right") } }
+                            }.buttonStyle(PrimaryButton()).disabled(client.busy || code.isEmpty)
+                        }
+                    }
+                    Text("Доступ сохраняется на этом iPhone. Личная история хранится на твоём сервере.")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
+                }.padding(24).padding(.top, 30).frame(maxWidth: 600, alignment: .leading).frame(maxWidth: .infinity)
+            }.background(Theme.surface).scrollDismissesKeyboard(.interactively).navigationBarHidden(true)
         }
     }
 }
 
 struct HomeView: View {
     @EnvironmentObject private var client: TrainingClient
-    @State private var context = "life"
-    @State private var mode = "learning"
+    @AppStorage("practice-context") private var context = "life"
+    @AppStorage("practice-mode") private var mode = "learning"
+    private var saved: Conversation? { client.state?.sessions.first { $0.status != "completed" } }
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    Text("Привет, \(client.state?.profile.name ?? "ты").").font(.largeTitle.bold())
-                    Text("Один разговор сегодня — уже движение вперёд.").foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 22) {
+                    HStack {
+                        BrandMark(size: 38)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("ratmir english").font(.headline)
+                            Text("Личная практика").font(.caption).foregroundStyle(Theme.secondary)
+                        }
+                        Spacer()
+                        Text(Date(), format: .dateTime.day().month(.abbreviated)).font(.caption).foregroundStyle(Theme.secondary)
+                    }.padding(.bottom, 4)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Привет, \(client.state?.profile.name ?? "ты").")
+                            .font(.system(.largeTitle, design: .rounded).weight(.semibold)).tracking(-0.7)
+                        Text("Давай поговорим \(client.state?.profile.dailyMinutes ?? 15) минут.")
+                            .foregroundStyle(Theme.secondary)
+                    }
+                    if let saved {
+                        Button { client.resume(saved) } label: {
+                            HStack(spacing: 14) {
+                                Image(systemName: saved.status == "analysing" ? "hourglass" : saved.status == "review" ? "text.badge.checkmark" : "play.fill")
+                                    .font(.body).frame(width: 42, height: 42).background(Theme.lavender.opacity(0.4), in: Circle())
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(sessionLabel(saved)).font(.caption).foregroundStyle(Theme.secondary)
+                                    Text(saved.lesson.title).font(.subheadline.weight(.semibold)).lineLimit(2)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "arrow.up.right").font(.subheadline)
+                            }.foregroundStyle(Theme.charcoal).padding(18)
+                                .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 24))
+                        }.buttonStyle(PressButton()).disabled(client.busy || client.recording)
+                    }
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 20) {
+                            HStack { Text("Новый разговор").font(.title3.weight(.semibold)); Spacer(); Image(systemName: "waveform").foregroundStyle(Theme.secondary) }
+                            VStack(alignment: .leading, spacing: 10) {
+                                InputLabel(title: "О чём поговорим")
+                                SelectionRow(selection: $context, options: [
+                                    SelectionOption(id: "life", title: "Жизнь", icon: "bubble.left.and.bubble.right"),
+                                    SelectionOption(id: "work", title: "Работа", icon: "briefcase"),
+                                    SelectionOption(id: "relocation", title: "Переезд", icon: "airplane")])
+                            }
+                            VStack(alignment: .leading, spacing: 10) {
+                                InputLabel(title: "Как тренируемся")
+                                SelectionRow(selection: $mode, options: [
+                                    SelectionOption(id: "learning", title: "С опорами", icon: "lightbulb"),
+                                    SelectionOption(id: "call", title: "Созвон", icon: "phone")])
+                                Text(mode == "call" ? "Слушай и отвечай. Текст можно открыть, если понадобится." : "Собеседник говорит вслух. Текст и подсказки рядом, когда нужны.")
+                                    .font(.footnote).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                            }
+                            Button { Task { await client.start(mode: mode, context: context, forceNew: true) } } label: {
+                                HStack { Text(client.busy ? "Готовим разговор" : "Поехали"); Spacer(); if client.busy { ProgressView().tint(Theme.lime) } else { Image(systemName: "arrow.up.right") } }
+                            }.buttonStyle(PrimaryButton()).disabled(client.busy)
+                        }
+                    }
+                    if client.busy {
+                        ActivityPanel(title: client.operationStage ?? "Готовим разговор", detail: "Подбираем ситуацию под твою практику.", startedAt: client.operationStartedAt)
+                    }
                     HStack(spacing: 12) {
-                        Metric(value: "\(client.state?.completed ?? 0)", title: "Занятий", color: Theme.lavender)
+                        Metric(value: "\(client.state?.completed ?? 0)", title: "Завершено", color: Theme.lavender)
                         Metric(value: "\(client.state?.xp ?? 0)", title: "Опыт XP", color: Theme.lime)
                     }
-                    VStack(alignment: .leading, spacing: 18) {
-                        Label("\(client.state?.profile.dailyMinutes ?? 15) минут для себя", systemImage: "waveform")
-                            .font(.title2.bold())
-                        Picker("Ситуация", selection: $context) {
-                            Text("Жизнь").tag("life"); Text("Работа").tag("work"); Text("Переезд").tag("relocation")
-                        }.pickerStyle(.segmented)
-                        Picker("Режим", selection: $mode) {
-                            Text("С опорами").tag("learning"); Text("Созвон").tag("call")
-                        }.pickerStyle(.segmented)
-                        Text(mode == "call" ? "Реплики собеседника скрыты. Слушай, отвечай, проявляй интерес." : "Подсказки доступны. После разговора — разбор и улучшенная попытка.")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                        Button { Task { await client.start(mode: mode, context: context) } } label: {
-                            HStack { Text(client.busy ? "Готовим разговор…" : "Начать разговор"); Spacer(); Image(systemName: "arrow.up.right") }
-                        }.buttonStyle(PrimaryButton()).disabled(client.busy)
-                    }.padding(22).background(.white, in: RoundedRectangle(cornerRadius: 28))
-                    if let saved = client.state?.sessions.first(where: { $0.status != "completed" }) {
-                        Button { client.resume(saved) } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Продолжить").font(.caption.bold())
-                                Text(saved.lesson.title).font(.headline)
-                                Text(saved.status == "review" ? "Твой разбор готов" : "Вернуться к занятию").font(.subheadline)
-                            }.frame(maxWidth: .infinity, alignment: .leading).padding(22)
-                                .background(Theme.lavender.opacity(0.35), in: RoundedRectangle(cornerRadius: 28))
-                        }.buttonStyle(.plain)
-                    }
-                }.padding(20)
-            }.background(Theme.surface).navigationTitle("Сегодня").navigationBarTitleDisplayMode(.inline)
+                    Text("Новый разговор откроется отдельно. К прежнему можно вернуться в истории.")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
+                }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
+            }.background(Theme.surface).navigationBarHidden(true)
                 .refreshable { await client.perform { try await client.refresh() } }
         }
+    }
+    private func sessionLabel(_ value: Conversation) -> String {
+        if value.status == "review" { return "Разбор готов" }
+        if value.status == "analysing" { return "Разбор ещё готовится" }
+        return "Продолжить разговор"
     }
 }
 
 struct ConversationView: View {
     let id: String
     @EnvironmentObject private var client: TrainingClient
-    @Environment(\.dismiss) private var dismiss
+    @State private var showBrief = false
+    @State private var showConversation = false
+    @State private var showListeningCheck = false
+    @State private var analysisStartedAt = Date()
+    @FocusState private var draftFocused: Bool
     private var conversation: Conversation? { client.conversation }
+    private var active: Bool { conversation?.status == "active" || conversation?.status == "error" }
+    private var hasReview: Bool { conversation?.analysis != nil }
+    private var mayComplete: Bool {
+        guard let value = conversation, let analysis = value.analysis else { return false }
+        return value.completion?.canComplete ?? (analysis.priorities.isEmpty || value.retries.last?.improved == true)
+    }
+    private var orbMode: VoiceOrbMode {
+        if client.recording { return .listening }
+        if client.playing { return .speaking }
+        if client.voiceLoading || client.busy || conversation?.status == "analysing" { return .thinking }
+        return .ready
+    }
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        if let conversation {
-                            Text(conversation.lesson.goal).font(.headline)
-                            Text(conversation.lesson.why).font(.subheadline).foregroundStyle(.secondary)
-                            VoiceCircle(active: client.recording || client.playing, recording: client.recording)
-                                .frame(maxWidth: .infinity).padding(.vertical, 12)
-                            ForEach(conversation.turns) { turn in
-                                if turn.role == "user" || conversation.mode == "learning" || client.assistantTextShown || conversation.analysis != nil {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text(turn.role == "user" ? "ТЫ" : "СОБЕСЕДНИК").font(.caption2.bold()).foregroundStyle(.secondary)
-                                        Text(turn.text).textSelection(.enabled)
-                                    }.frame(maxWidth: .infinity, alignment: .leading).padding(18)
-                                        .background(turn.role == "user" ? Theme.lavender.opacity(0.35) : .white,
-                                            in: RoundedRectangle(cornerRadius: 22))
-                                }
+                        if let value = conversation {
+                            if hasReview { reviewHeader(value) }
+                            else if value.status == "analysing" { analysisWaiting }
+                            else { liveConversation(value) }
+                            if let analysis = value.analysis { reviewContent(analysis, conversation: value) }
+                            if client.busy && !client.recording && value.status != "analysing" {
+                                ActivityPanel(title: client.operationStage ?? "Готовим ответ", detail: "Твой ответ сохранён. Можно немного выдохнуть.", startedAt: client.operationStartedAt)
                             }
-                            if conversation.status == "active" || conversation.status == "error" {
-                                HStack {
-                                    Button("Слушать", systemImage: "speaker.wave.2") { Task { await client.speak() } }
-                                    if conversation.mode == "call" && !client.assistantTextShown {
-                                        Button("Показать текст") { Task { await client.revealText() } }
-                                    } else if conversation.mode == "learning" {
-                                        Button("Подсказка") { Task { await client.getHint() } }
-                                    }
-                                }.font(.subheadline).disabled(client.busy || client.recording)
-                                if let hint = client.hint { Text(hint).padding(16).background(Theme.lime.opacity(0.3), in: RoundedRectangle(cornerRadius: 20)) }
-                                composer(retry: false)
-                                Button("Закончить и разобрать") { Task { await client.action("finish") } }
-                                    .disabled(client.busy || client.recording)
-                            }
-                            if conversation.status == "analysing" {
-                                HStack { ProgressView(); Text("Sol разбирает разговор…") }
-                                Button("Проверить разбор") { Task { await client.perform { try await client.refresh() } } }
-                            }
-                            if let analysis = conversation.analysis {
-                                Text("Разбор").font(.title.bold())
-                                Text(analysis.summary)
-                                ForEach(analysis.strengths, id: \.self) { Text("✓ " + $0) }
-                                ForEach(analysis.priorities) { priority in
-                                    VStack(alignment: .leading, spacing: 12) {
-                                        Text(priority.title).font(.headline)
-                                        Text("“" + priority.quote + "”").foregroundStyle(.secondary)
-                                        Text(priority.explanation)
-                                        Text(priority.example).font(.headline)
-                                        Text(priority.retryInstruction)
-                                    }.padding(20).background(.white, in: RoundedRectangle(cornerRadius: 24))
-                                }
-                                ForEach(analysis.limitations, id: \.self) { Text($0).font(.footnote).foregroundStyle(.secondary) }
-                                ForEach(Array(conversation.retries.enumerated()), id: \.offset) { _, attempt in
-                                    Text(attempt.feedback).padding(18).background(Theme.lavender.opacity(0.3), in: RoundedRectangle(cornerRadius: 20))
-                                }
-                                if conversation.status != "completed" {
-                                    composer(retry: true)
-                                    Button("Завершить занятие") { Task { await client.action("complete") } }
-                                        .buttonStyle(PrimaryButton()).disabled(client.busy || client.recording ||
-                                            (!analysis.priorities.isEmpty && conversation.retries.last?.improved != true))
-                                }
-                            }
+                            Color.clear.frame(height: 1).id("end")
                         }
-                        Color.clear.frame(height: 1).id("end")
-                    }.padding(20)
-                }.background(Theme.surface)
-                    .onChange(of: conversation?.turns.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+                    }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
+                }.background(Theme.surface).scrollDismissesKeyboard(.interactively)
+                    .onChange(of: conversation?.turns.count) { _, _ in
+                        draftFocused = false
+                        if showConversation { proxy.scrollTo("end", anchor: .bottom) }
+                    }
             }
-            .navigationTitle(conversation?.lesson.title ?? "Разговор").navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Свернуть") { dismiss(); client.conversation = nil }
-                        .disabled(client.busy || client.recording)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let value = conversation {
+                    if active { composer }
+                    else if hasReview && value.status != "completed" { reviewDock }
                 }
             }
-            .task(id: conversation?.status) { await client.pollReview() }
-            .alert("Не получилось", isPresented: Binding(get: { client.error != nil },
-                set: { if !$0 { client.error = nil } })) {
+            .navigationTitle(hasReview ? "Твой разбор" : "Разговор").navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.surface, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Text(conversation?.mode == "call" ? "СОЗВОН" : "С ОПОРАМИ")
+                        .font(.caption2.weight(.semibold)).tracking(0.8).foregroundStyle(Theme.secondary)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { draftFocused = false; client.minimizeConversation() } label: {
+                        Image(systemName: "chevron.down").font(.subheadline.weight(.semibold))
+                            .frame(width: 36, height: 36).background(Color.white.opacity(0.7), in: Circle())
+                    }.accessibilityLabel("Свернуть занятие").disabled(client.recording)
+                }
+            }
+            .task(id: (conversation?.status ?? "") + "|" + (conversation?.processing?.stage ?? "")) {
+                if conversation?.status == "analysing" { analysisStartedAt = processingStart ?? client.operationStartedAt ?? Date() }
+                await client.pollReview()
+            }
+            .alert("Не получилось", isPresented: Binding(get: { client.error != nil }, set: { if !$0 { client.error = nil } })) {
                 Button("Понятно", role: .cancel) { client.error = nil }
             } message: { Text(client.error ?? "") }
         }
     }
-    private func composer(retry: Bool) -> some View {
-        VStack(spacing: 12) {
-            TextField(retry ? "Улучшенная попытка…" : "Твой ответ на английском…", text: $client.draft, axis: .vertical)
-                .lineLimit(3...8).padding(16).background(.white, in: RoundedRectangle(cornerRadius: 18))
-                .disabled(client.busy || client.pendingMessageID != nil)
-            HStack(spacing: 12) {
-                Button {
-                    Task { if client.recording { await client.stopRecording() } else { await client.beginRecording() } }
-                } label: {
-                    Label(client.recording ? "Стоп" : "Записать", systemImage: client.recording ? "stop.fill" : "mic.fill")
-                }.buttonStyle(PrimaryButton()).disabled(client.busy || client.pendingMessageID != nil)
-                Button { Task { await client.send(retry: retry) } } label: {
-                    Text(client.busy ? "Ждём…" : client.pendingMessageID != nil ? "Повторить" : "Отправить")
-                }.buttonStyle(PrimaryButton()).disabled(client.busy || client.recording || client.draft.isEmpty)
+    private var processingStart: Date? {
+        guard let value = conversation?.processing?.startedAt else { return nil }
+        return NativeDate.parse(value)
+    }
+    private func liveConversation(_ value: Conversation) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(value.lesson.title).font(.title3.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                DisclosureGroup(isExpanded: $showBrief) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(value.lesson.goal).font(.subheadline)
+                        Text(value.lesson.why).font(.footnote).foregroundStyle(Theme.secondary)
+                    }.padding(.top, 10)
+                } label: { Text("Твоя задача").font(.footnote.weight(.medium)) }
             }
-            Text("Запись сначала появится текстом: проверь распознавание перед отправкой.").font(.caption).foregroundStyle(.secondary)
+            VStack(spacing: 8) {
+                VoiceOrb(mode: orbMode, level: client.audioLevel).frame(width: 214, height: 214)
+                HStack(spacing: 7) {
+                    Circle().fill(client.recording ? Theme.lime : client.playing ? Theme.lavender : Theme.charcoal.opacity(0.45)).frame(width: 6, height: 6)
+                    Text(voiceLabel).font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary)
+                }
+            }.frame(maxWidth: .infinity).padding(.vertical, 4)
+            if let turn = value.turns.last(where: { $0.role == "assistant" }), value.mode == "learning" || client.assistantTextShown { TranscriptCard(turn: turn) }
+            HStack(spacing: 10) {
+                Button {
+                    if client.playing { client.stopSpeaking() } else { Task { await client.speak() } }
+                } label: { Label(client.playing ? "Пауза" : "Ещё раз", systemImage: client.playing ? "pause.fill" : "speaker.wave.2") }
+                    .buttonStyle(QuietButton()).disabled(client.busy || client.voiceLoading || client.recording)
+                if value.mode == "call" && !client.assistantTextShown {
+                    Button { Task { await client.revealText() } } label: { Label("Текст", systemImage: "text.alignleft") }
+                        .buttonStyle(QuietButton()).disabled(client.busy || client.recording)
+                } else if value.mode == "learning" {
+                    Button { Task { await client.getHint() } } label: { Label("Подсказка", systemImage: "lightbulb") }
+                        .buttonStyle(QuietButton()).disabled(client.busy || client.recording)
+                }
+            }.frame(maxWidth: .infinity)
+            if let hint = client.hint {
+                SurfaceCard(color: Theme.lime.opacity(0.4)) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Опора", systemImage: "lightbulb").font(.caption.weight(.semibold))
+                        Text(hint).font(.subheadline)
+                    }
+                }
+            }
+            if !client.recording, let last = value.turns.last(where: { $0.role == "user" }) { TranscriptCard(turn: last) }
+            if value.turns.count > 2 {
+                DisclosureGroup(isExpanded: $showConversation) {
+                    VStack(spacing: 12) {
+                        ForEach(value.turns) { turn in
+                            if turn.role == "user" || value.mode == "learning" || client.assistantTextShown { TranscriptCard(turn: turn) }
+                        }
+                    }.padding(.top, 12)
+                } label: { Text("Весь разговор").font(.footnote.weight(.medium)) }
+            }
+        }
+    }
+    private var voiceLabel: String {
+        if client.recording { return "Слушаю тебя" }
+        if client.playing { return "Собеседник говорит" }
+        if client.voiceLoading { return "Готовим голос" }
+        if client.busy { return client.operationStage ?? "Готовим ответ" }
+        return "Твой ход"
+    }
+    private var analysisWaiting: some View {
+        VStack(spacing: 22) {
+            VoiceOrb(mode: orbMode, level: client.audioLevel).frame(width: 200, height: 200)
+            ActivityPanel(title: conversation?.processing?.stage == "waiting-retry" ? "Сервис задержал разбор" : "Разбираем разговор", detail: "Проверяем смысл, английский и то, как ты использовал ответы собеседника.", startedAt: analysisStartedAt)
+            if let turn = conversation?.turns.last(where: { $0.role == "assistant" }) {
+                SurfaceCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        InputLabel(title: "Пока ждём")
+                        Text("Что было важно собеседнику? Вспомни одну конкретную деталь.")
+                            .font(.subheadline.weight(.medium))
+                        HStack(spacing: 10) {
+                            Button { showListeningCheck.toggle() } label: {
+                                Label(showListeningCheck ? "Скрыть ответ" : "Проверить себя", systemImage: "text.alignleft")
+                            }.buttonStyle(QuietButton())
+                            Button {
+                                if client.playing { client.stopSpeaking() } else { Task { await client.speak() } }
+                            } label: { Image(systemName: client.playing ? "pause.fill" : "speaker.wave.2") }
+                                .buttonStyle(QuietButton()).disabled(client.busy || client.voiceLoading)
+                                .accessibilityLabel("Послушать ответ собеседника ещё раз")
+                        }
+                        if showListeningCheck { Text(turn.text).font(.subheadline).foregroundStyle(Theme.secondary).textSelection(.enabled) }
+                    }
+                }
+            }
+            Text("Можно свернуть занятие. Когда разбор будет готов, он останется в истории.")
+                .font(.subheadline).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
+            Button { client.minimizeConversation() } label: { Label("Вернусь чуть позже", systemImage: "chevron.down") }
+                .buttonStyle(PrimaryButton())
+            Button("Проверить сейчас") { Task { await client.perform { try await client.refresh() } } }
+                .font(.footnote).disabled(client.busy)
+        }.frame(maxWidth: .infinity).padding(.vertical, 20)
+    }
+    private func reviewHeader(_ value: Conversation) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: value.status == "completed" ? "checkmark" : "sparkle")
+                    .font(.title3).frame(width: 44, height: 44).background(Theme.lime, in: Circle())
+                Spacer()
+                Text(value.status == "completed" ? "ЗАВЕРШЕНО" : "СЛЕДУЮЩИЙ ШАГ")
+                    .font(.caption2.weight(.semibold)).tracking(1).foregroundStyle(Theme.secondary)
+            }
+            Text(value.status == "completed" ? "Практика сохранена." : "Одна реплика.\nСделаем её сильнее.")
+                .font(.system(.title, design: .rounded).weight(.semibold)).tracking(-0.5)
+            Text(value.lesson.title).font(.subheadline).foregroundStyle(Theme.secondary)
+            if value.retryDeferred == true { Text("К улучшенной попытке вернёмся позже. Навык пока не считается закреплённым.").font(.footnote).foregroundStyle(Theme.secondary) }
+        }
+    }
+    private func reviewContent(_ analysis: Review, conversation value: Conversation) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            SurfaceCard { Text(analysis.summary).font(.subheadline).fixedSize(horizontal: false, vertical: true) }
+            if !analysis.strengths.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    InputLabel(title: "Что получилось")
+                    ForEach(analysis.strengths, id: \.self) { item in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.charcoal).padding(.top, 2)
+                            Text(item).font(.subheadline)
+                        }
+                    }
+                }
+            }
+            if !analysis.priorities.isEmpty {
+                InputLabel(title: "Что меняем в следующей попытке")
+                ForEach(Array(analysis.priorities.enumerated()), id: \.element.id) { index, priority in PriorityCard(priority: priority, number: index + 1) }
+            }
+            ForEach(Array(value.retries.enumerated()), id: \.offset) { index, attempt in
+                SurfaceCard(color: attempt.improved == true ? Theme.lime.opacity(0.45) : Theme.lavender.opacity(0.35)) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label(attempt.improved == true ? "Стало лучше" : "Попытка \(index + 1)", systemImage: attempt.improved == true ? "checkmark.circle" : "arrow.clockwise")
+                            .font(.subheadline.weight(.semibold))
+                        Text(attempt.text).font(.subheadline).foregroundStyle(Theme.secondary)
+                        Text(attempt.feedback).font(.subheadline)
+                    }
+                }
+            }
+            if !analysis.limitations.isEmpty {
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(analysis.limitations, id: \.self) { Text($0).font(.footnote).foregroundStyle(Theme.secondary) }
+                    }.padding(.top, 8)
+                } label: { Text("Что пока нельзя оценить").font(.footnote.weight(.medium)) }
+            }
+            DisclosureGroup {
+                VStack(spacing: 12) { ForEach(value.turns) { TranscriptCard(turn: $0) } }.padding(.top, 12)
+            } label: { Text("Текст разговора").font(.footnote.weight(.medium)) }
+        }
+    }
+    private var reviewDock: some View {
+        VStack(spacing: 10) {
+            if mayComplete {
+                Label("Всё сохранено. Можно завершать.", systemImage: "checkmark.circle.fill").font(.footnote).foregroundStyle(Theme.secondary)
+                Button { Task { await client.action("complete") } } label: {
+                    HStack { Text(client.busy ? "Сохраняем" : "Завершить занятие"); Spacer(); if client.busy { ProgressView().tint(Theme.lime) } else { Image(systemName: "checkmark") } }
+                }.buttonStyle(PrimaryButton()).disabled(client.busy || client.recording)
+            } else {
+                Text("Ответь ещё раз своими словами. Отправь попытку, чтобы закрепить улучшение.")
+                    .font(.footnote).foregroundStyle(Theme.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                composerContent(retry: true)
+                Button { Task { await client.action("complete", deferRetry: true) } } label: {
+                    Text("На сегодня всё. Вернёмся к попытке позже.")
+                }.font(.caption.weight(.medium)).foregroundStyle(Theme.secondary).disabled(client.busy || client.recording)
+            }
+        }.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 10).background(Theme.surface)
+            .overlay(alignment: .top) { Divider().opacity(0.6) }
+    }
+    private var composer: some View {
+        VStack(spacing: 12) {
+            composerContent(retry: false)
+            Button { draftFocused = false; Task { await client.action("finish") } } label: {
+                HStack { Text("Закончить разговор и получить разбор"); Image(systemName: "arrow.right") }
+            }.font(.footnote.weight(.medium)).foregroundStyle(Theme.secondary)
+                .disabled(client.busy || client.recording || conversation?.turns.contains(where: { $0.role == "user" }) != true)
+        }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 8).background(Theme.surface)
+            .overlay(alignment: .top) { Divider().opacity(0.6) }
+    }
+    private func composerContent(retry: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if client.recording {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Сейчас говоришь ты", systemImage: "waveform").font(.caption.weight(.medium)).foregroundStyle(Theme.secondary)
+                    Text(client.liveTranscript.isEmpty ? "Текст появится, когда начнёшь говорить…" : client.liveTranscript)
+                        .font(.subheadline).frame(maxWidth: .infinity, alignment: .leading).lineLimit(5)
+                    if !client.liveTranscriptStatus.isEmpty { Text(client.liveTranscriptStatus).font(.caption2).foregroundStyle(Theme.secondary) }
+                }.padding(14).background(.white, in: RoundedRectangle(cornerRadius: 18))
+            } else {
+                TextField(retry ? "Новая попытка на английском" : "Ответ на английском", text: $client.draft, axis: .vertical)
+                    .lineLimit(1...3).focused($draftFocused).font(.subheadline).padding(14)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 18))
+                    .disabled(client.busy || client.pendingMessageID != nil)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    draftFocused = false
+                    Task { if client.recording { await client.stopRecording() } else { await client.beginRecording() } }
+                } label: { HStack { Image(systemName: client.recording ? "stop.fill" : "mic.fill"); Text(client.recording ? "Готово" : client.microphoneStarting ? "Включаем" : "Говорить") } }
+                    .buttonStyle(PrimaryButton()).disabled((client.busy && !client.recording) || client.pendingMessageID != nil || client.hasUnuploadedRecording || client.microphoneStarting)
+                Button { draftFocused = false; Task { await client.send(retry: retry) } } label: {
+                    HStack { Text(client.pendingMessageID != nil ? "Повторить" : "Отправить"); if client.busy { ProgressView().tint(Theme.charcoal) } else { Image(systemName: "arrow.up") } }
+                }.buttonStyle(SecondaryButton()).disabled(client.busy || client.recording || client.hasUnuploadedRecording || client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if !client.recording && (client.recordedFile != nil || client.hasUnuploadedRecording) {
+                HStack(spacing: 14) {
+                    Button { Task { await client.playRecording() } } label: { Label("Моя запись", systemImage: "play.circle") }
+                        .disabled(client.busy || client.voiceLoading)
+                    if client.hasUnuploadedRecording {
+                        Button("Повторить распознавание") { Task { await client.transcribeRecording() } }.disabled(client.busy)
+                    }
+                    Button("Удалить", role: .destructive) { client.discardRecording() }.disabled(client.busy)
+                }.font(.caption)
+                Text(client.hasUnuploadedRecording ? "Запись осталась на iPhone. Повтори распознавание или запиши новую." : "Проверь текст по оригинальной записи перед отправкой.")
+                    .font(.caption).foregroundStyle(Theme.secondary)
+            }
         }
     }
 }
 
 struct ProgressViewScreen: View {
     @EnvironmentObject private var client: TrainingClient
-    private let labels = ["listening": "На слух", "vocabulary": "Активный английский", "grammar": "Построение фраз",
-        "clarity": "Понятность", "coherence": "Логика", "reciprocity": "Использование услышанного", "initiative": "Инициатива", "repair": "Уточнения"]
-    private let states = ["unknown": "Ещё проверяем", "supported": "С опорами", "provisional": "Первые успехи", "independent": "Самостоятельно", "recheck": "Пора перепроверить"]
+    private let labels = ["listening": "Понимать на слух", "vocabulary": "Находить слова", "grammar": "Строить фразы", "clarity": "Выражаться понятно", "coherence": "Держать мысль", "reciprocity": "Учитывать собеседника", "initiative": "Развивать разговор", "repair": "Уточнять и исправляться"]
+    private let states = ["unknown": "Нужна первая проверка", "supported": "Получается с опорой", "provisional": "Первые самостоятельные успехи", "independent": "Получается самостоятельно", "recheck": "Пора проверить ещё раз"]
     var body: some View {
         NavigationStack {
-            List(client.state?.skills ?? []) { skill in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(labels[skill.id] ?? skill.id).font(.headline)
-                    Text(states[skill.state] ?? skill.state).foregroundStyle(.secondary)
-                    Text("Самостоятельных успехов: \(skill.independentSuccesses)").font(.caption)
-                    HStack {
-                        Label("Новая ситуация", systemImage: skill.transfer ? "checkmark.circle.fill" : "circle")
-                        Label("После паузы", systemImage: skill.retention ? "checkmark.circle.fill" : "circle")
-                    }.font(.caption)
-                }.padding(.vertical, 8).listRowBackground(Color.white)
-            }.scrollContentBackground(.hidden).background(Theme.surface).navigationTitle("Прогресс")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    ScreenHeading(title: "Твой прогресс", subtitle: "Смотрим на то, что получается в разговоре.")
+                    HStack(spacing: 12) {
+                        Metric(value: "\(client.state?.completed ?? 0)", title: "Занятий", color: Theme.lavender)
+                        Metric(value: "\(client.state?.xp ?? 0)", title: "Опыт XP", color: Theme.lime)
+                    }
+                    ForEach(client.state?.skills ?? []) { skill in
+                        SurfaceCard {
+                            VStack(alignment: .leading, spacing: 16) {
+                                HStack(alignment: .top) {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(labels[skill.id] ?? skill.id).font(.headline)
+                                        Text(states[skill.state] ?? skill.state).font(.footnote).foregroundStyle(Theme.secondary)
+                                    }
+                                    Spacer()
+                                    Text("\(skill.independentSuccesses)").font(.system(.title2, design: .rounded).weight(.semibold)).monospacedDigit()
+                                }
+                                Divider().opacity(0.5)
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 14) { EvidenceLabel(title: "В новой ситуации", confirmed: skill.transfer); EvidenceLabel(title: "После паузы", confirmed: skill.retention) }
+                                    VStack(alignment: .leading, spacing: 8) { EvidenceLabel(title: "В новой ситуации", confirmed: skill.transfer); EvidenceLabel(title: "После паузы", confirmed: skill.retention) }
+                                }
+                            }
+                        }
+                    }
+                    Text("Число справа показывает самостоятельные успехи. Уровень закрепляется, когда навык срабатывает в новой ситуации и после паузы.")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
+                }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
+            }.background(Theme.surface).navigationBarHidden(true).refreshable { await client.perform { try await client.refresh() } }
         }
     }
 }
@@ -246,78 +511,176 @@ struct HistoryView: View {
     @EnvironmentObject private var client: TrainingClient
     var body: some View {
         NavigationStack {
-            List(client.state?.sessions ?? []) { conversation in
-                Button { client.resume(conversation) } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(conversation.lesson.title).font(.headline)
-                        Text(conversation.status == "completed" ? "Завершено" : conversation.status == "review" ? "Разбор готов" : "Можно продолжить")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.padding(.vertical, 8)
-                }.listRowBackground(Color.white)
-            }.scrollContentBackground(.hidden).background(Theme.surface).navigationTitle("История")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    ScreenHeading(title: "Твои разговоры", subtitle: "Вернись к реплике, разбору или незавершённой практике.")
+                    if client.state?.sessions.isEmpty != false {
+                        SurfaceCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Image(systemName: "bubble.left.and.bubble.right").font(.title2).foregroundStyle(Theme.secondary)
+                                Text("Первый разговор ещё впереди.").font(.headline)
+                                Text("Начни на вкладке «Сегодня». Здесь останутся запись и разбор.").font(.subheadline).foregroundStyle(Theme.secondary)
+                            }
+                        }
+                    }
+                    ForEach(client.state?.sessions ?? []) { value in
+                        Button { client.resume(value) } label: {
+                            HStack(alignment: .top, spacing: 14) {
+                                Image(systemName: historyIcon(value.status)).font(.body).frame(width: 40, height: 40)
+                                    .background(value.status == "completed" ? Theme.lime : Theme.lavender.opacity(0.45), in: Circle())
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(value.lesson.title).font(.subheadline.weight(.semibold)).multilineTextAlignment(.leading)
+                                    HStack(spacing: 6) { Text(historyLabel(value.status)); Text("·"); Text(value.mode == "call" ? "Созвон" : "С опорами") }
+                                        .font(.caption).foregroundStyle(Theme.secondary)
+                                    Text("Твоих реплик: \(value.turns.filter { $0.role == "user" }.count)").font(.caption).foregroundStyle(Theme.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Theme.secondary).padding(.top, 12)
+                            }.foregroundStyle(Theme.charcoal).padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.white, in: RoundedRectangle(cornerRadius: 24))
+                        }.buttonStyle(PressButton()).disabled(client.busy || client.recording)
+                    }
+                }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
+            }.background(Theme.surface).navigationBarHidden(true).refreshable { await client.perform { try await client.refresh() } }
         }
+    }
+    private func historyLabel(_ status: String) -> String {
+        switch status { case "completed": return "Завершено"; case "review": return "Разбор готов"; case "analysing": return "Разбор готовится"; case "error": return "Можно повторить"; default: return "Можно продолжить" }
+    }
+    private func historyIcon(_ status: String) -> String {
+        switch status { case "completed": return "checkmark"; case "review": return "text.badge.checkmark"; case "analysing": return "hourglass"; default: return "play.fill" }
     }
 }
 
 struct SettingsView: View {
     @EnvironmentObject private var client: TrainingClient
+    @State private var reminderDate = Calendar.current.date(from: DateComponents(hour: 19, minute: 0)) ?? Date()
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Мозг тренинга") {
-                    Text(client.status?.brain.model ?? "Проверяем…")
-                    Label(client.status?.brain.verified == true ? "Проверен на сервере" : "Нужно проверить доступ",
-                        systemImage: client.status?.brain.verified == true ? "checkmark.seal" : "exclamationmark.circle")
-                    Text("Общие лимиты ChatGPT. Серверный SIWC сейчас не предоставляет точные проценты остатка.").font(.footnote)
-                    Link("Проверить лимиты ChatGPT", destination: URL(string: "https://chatgpt.com/settings/usage")!)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    ScreenHeading(title: "Настройки", subtitle: "Голос, напоминания и доступ к твоей практике.")
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 18) {
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 6) { InputLabel(title: "Твой тренер"); Text("GPT-6.1 Sol").font(.title3.weight(.semibold)) }
+                                Spacer()
+                                StatusPill(title: client.status?.brain.verified == true ? "На связи" : "Проверяем", color: client.status?.brain.verified == true ? Theme.lime : Theme.surface)
+                            }
+                            Divider().opacity(0.5)
+                            quotaContent
+                        }
+                    }
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 14) {
+                            HStack {
+                                Label("Голос собеседника", systemImage: "speaker.wave.2").font(.headline)
+                                Spacer()
+                                Circle().fill(client.status?.audio.configured == true ? Theme.lime : Theme.lavender).frame(width: 10, height: 10)
+                            }
+                            Text(client.status?.audio.configured == true ? "Включён. Реплики звучат автоматически. Пока ты говоришь, собеседник ждёт." : "Голос ещё не подключён. Добавь API-ключ в настройках приложения на компьютере.")
+                                .font(.footnote).foregroundStyle(Theme.secondary)
+                            if let usage = client.state?.audioUsage {
+                                Divider().opacity(0.5)
+                                HStack {
+                                    Text(usage.estimated ? "Оценка расходов" : "Расходы на голос").font(.caption).foregroundStyle(Theme.secondary)
+                                    Spacer()
+                                    Text(usage.usedUsd, format: .currency(code: "USD")).font(.subheadline.weight(.semibold)).monospacedDigit()
+                                    Text("/ " + usage.budgetUsd.formatted(.currency(code: "USD"))).font(.caption).foregroundStyle(Theme.secondary)
+                                }
+                                Text("Записано \(usage.recordedMinutes.formatted(.number.precision(.fractionLength(1)))) мин. Оценка по данным приложения, итоговый счёт у OpenAI.")
+                                    .font(.caption).foregroundStyle(Theme.secondary)
+                            }
+                        }
+                    }
+                    reminders
+                    VStack(alignment: .leading, spacing: 10) {
+                        InputLabel(title: "Установка через AltStore")
+                        Text("Обновляй подпись до истечения 7 дней, когда iPhone связан с компьютером. Занятия и история останутся на сервере.")
+                            .font(.footnote).foregroundStyle(Theme.secondary)
+                    }.padding(.horizontal, 4)
+                }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
+            }.background(Theme.surface).navigationBarHidden(true)
+                .task {
+                    await client.refreshReminderStatus()
+                    reminderDate = Calendar.current.date(from: DateComponents(hour: client.reminderHour, minute: client.reminderMinute)) ?? Date()
                 }
-                Section("Голос") { Text(client.status?.audio.configured == true ? "API-ключ настроен" : "Добавь API-ключ в настройках на компьютере") }
-                Section("Напоминания") {
-                    Button("Напоминать каждый день в 19:00") { Task { await client.remindAt19() } }.disabled(client.busy)
-                    Text("Локальное уведомление на этом iPhone. Время следует часовому поясу устройства.").font(.footnote)
-                }
-                Section("Установка") {
-                    Text("Бесплатная подпись действует 7 дней. Обновляй её через AltStore при связи с ПК.").font(.footnote)
-                }
-            }.navigationTitle("Настройки")
         }
     }
-}
-
-struct Metric: View {
-    let value: String; let title: String; let color: Color
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(value).font(.system(size: 36, weight: .semibold, design: .rounded)).monospacedDigit()
-            Text(title).font(.subheadline)
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(22)
-            .background(color, in: RoundedRectangle(cornerRadius: 26))
+    private var quotaContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Лимиты подписки").font(.subheadline.weight(.semibold))
+            if let usage = client.subscriptionUsage, usage.available && !usage.windows.isEmpty {
+                ForEach(usage.windows) { window in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(window.bucketName ?? (window.kind == "weekly" ? "На неделю" : "Текущее окно")).font(.footnote)
+                            Spacer()
+                            if let remaining = window.remainingPercent {
+                                Text("\(remaining.formatted(.number.precision(.fractionLength(0))))% осталось").font(.footnote.weight(.semibold)).monospacedDigit()
+                            }
+                        }
+                        if let remaining = window.remainingPercent { Capsule().fill(Theme.surface).frame(height: 6).overlay(alignment: .leading) { GeometryReader { geometry in Capsule().fill(Theme.lavender).frame(width: geometry.size.width * min(1, max(0, remaining / 100))) } } }
+                        if let reset = window.resetsAt, let date = NativeDate.parse(reset) {
+                            Text("Обновится " + date.formatted(.dateTime.day().month(.abbreviated).hour().minute())).font(.caption).foregroundStyle(Theme.secondary)
+                        }
+                    }
+                }
+                if usage.stale { Text("Данные с последней проверки. Сейчас обновить их не удалось.").font(.caption).foregroundStyle(Theme.secondary) }
+            } else {
+                Text("Точный остаток сейчас недоступен. Его можно проверить в ChatGPT.")
+                    .font(.footnote).foregroundStyle(Theme.secondary)
+            }
+            Text("Лимит общий с ChatGPT и Codex.").font(.caption).foregroundStyle(Theme.secondary)
+            if let activity = client.subscriptionUsage?.activity {
+                HStack {
+                    Text("Запросов за \(activity.periodDays) дн.").font(.caption).foregroundStyle(Theme.secondary)
+                    Spacer()
+                    Text(String(activity.requests)).font(.subheadline.weight(.semibold)).monospacedDigit()
+                }
+                if let limit = activity.lastLimitAt, let date = NativeDate.parse(limit) {
+                    Text("Последнее ограничение: " + date.formatted(.dateTime.day().month(.abbreviated).hour().minute())).font(.caption).foregroundStyle(Theme.secondary)
+                }
+            }
+            Link(destination: URL(string: client.subscriptionUsage?.manageUrl ?? "https://chatgpt.com/settings/usage") ?? URL(string: "https://chatgpt.com/settings/usage")!) {
+                HStack { Text("Открыть лимиты ChatGPT"); Spacer(); Image(systemName: "arrow.up.right") }
+                    .font(.subheadline.weight(.medium)).padding(.top, 3)
+            }
+        }
     }
-}
-
-struct PrimaryButton: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.headline).padding(.horizontal, 18).padding(.vertical, 17)
-            .frame(maxWidth: .infinity).background(Theme.charcoal, in: RoundedRectangle(cornerRadius: 20))
-            .foregroundStyle(Theme.lime).scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: configuration.isPressed)
-    }
-}
-
-struct VoiceCircle: View {
-    let active: Bool; let recording: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !active || reduceMotion)) { timeline in
-            let phase = active && !reduceMotion ? sin(timeline.date.timeIntervalSinceReferenceDate * 3) : 0
-            ZStack {
-                Circle().stroke(Theme.lavender.opacity(0.3), lineWidth: 14).scaleEffect(1.05 + phase * 0.025)
-                Circle().fill(LinearGradient(colors: [Theme.lavender, Theme.charcoal], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .scaleEffect(1 + phase * 0.035)
-                Image(systemName: recording ? "mic.fill" : active ? "waveform" : "waveform.circle")
-                    .font(.system(size: 42)).foregroundStyle(Theme.lime)
-            }.frame(width: 126, height: 126)
-        }.accessibilityLabel(recording ? "Записывается твой ответ" : active ? "Звучит собеседник" : "Готов к разговору")
+    private var reminders: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 16) {
+                Label("Твои 15 минут", systemImage: "bell").font(.headline)
+                if client.notificationState == "denied" {
+                    Text("Уведомления отключены в настройках iPhone.").font(.subheadline).foregroundStyle(Theme.secondary)
+                    Button { client.openSystemSettings() } label: { Label("Разрешить уведомления", systemImage: "arrow.up.right") }.buttonStyle(SecondaryButton())
+                } else if client.notificationState == "unavailable" || client.notificationState == "unsupported" {
+                    Text("iPhone не разрешил создать напоминание. В этой установке уведомления пока недоступны.").font(.subheadline).foregroundStyle(Theme.secondary)
+                    Button { client.openSystemSettings() } label: { Label("Проверить настройки iPhone", systemImage: "arrow.up.right") }.buttonStyle(QuietButton())
+                } else {
+                    Toggle("Ежедневное напоминание", isOn: Binding(get: { client.reminderEnabled }, set: { enabled in
+                        Task {
+                            if enabled {
+                                let parts = Calendar.current.dateComponents([.hour, .minute], from: reminderDate)
+                                await client.scheduleReminder(hour: parts.hour ?? 19, minute: parts.minute ?? 0)
+                            } else { await client.disableReminder() }
+                        }
+                    })).tint(Theme.charcoal).font(.subheadline).disabled(client.reminderBusy)
+                    HStack {
+                        Text("Время").font(.subheadline).foregroundStyle(Theme.secondary)
+                        Spacer()
+                        DatePicker("Время напоминания", selection: $reminderDate, displayedComponents: .hourAndMinute).labelsHidden().tint(Theme.charcoal)
+                    }.disabled(client.reminderBusy)
+                    .onChange(of: reminderDate) { _, date in
+                        guard client.reminderEnabled else { return }
+                        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                        Task { await client.scheduleReminder(hour: parts.hour ?? 19, minute: parts.minute ?? 0) }
+                    }
+                    Text(client.reminderEnabled ? "Напоминание включено. Время местное для этого iPhone." : "Выбери время, когда тебе удобно начать разговор.")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
+                }
+            }
+        }
     }
 }

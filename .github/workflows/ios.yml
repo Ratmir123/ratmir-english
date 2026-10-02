@@ -35,6 +35,12 @@ jobs:
           xcrun simctl launch "$device" app.ratmirenglish.personal
           sleep 3
           xcrun simctl io "$device" screenshot iPhone11-login.png
+          for screen in home practice listening analysing review settings; do
+            xcrun simctl terminate "$device" app.ratmirenglish.personal || true
+            xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
+            sleep 3
+            xcrun simctl io "$device" screenshot "iPhone11-$screen.png"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: RatmirEnglish-unsigned-IPA
@@ -44,5 +50,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: iPhone11-preview
-          path: iPhone11-login.png
+          path: iPhone11-*.png
           retention-days: 7

@@ -1,5 +1,6 @@
 import { claimAnalysisJob, finishAnalysisJob, getAppState, getSession, saveSession } from './store';
 import { analyse } from './teacher';
+import { SiwcError } from './siwc-protocol';
 
 const globals = globalThis as unknown as { trainingWorker?: ReturnType<typeof setInterval>; trainingWorkerBusy?: boolean };
 export async function processAnalysisQueue(analyser: typeof analyse = analyse) {
@@ -15,17 +16,19 @@ export async function processAnalysisQueue(analyser: typeof analyse = analyse) {
     const analysis = await analyser(session, getAppState().profile);
     const latest = getSession(job.sessionId);
     if (!latest || latest.status === 'completed') { finishAnalysisJob(job.sessionId); return; }
-    latest.analysis = analysis; latest.status = 'review'; latest.error = undefined;
+    latest.analysis = analysis; latest.status = 'review'; latest.error = undefined; latest.processing = undefined;
     // The source condition is checked inside the SQLite transaction, not against this fresh object.
     saveSession(latest, source);
     finishAnalysisJob(job.sessionId);
   } catch (error) {
-    if (job) finishAnalysisJob(job.sessionId, error instanceof Error ? error.message : 'Не удалось подготовить разбор.');
+    // Limits, expired grants and an indeterminate provider timeout need an explicit user retry.
+    // Automatically resubmitting can consume another billable turn with no new learner action.
+    if (job) finishAnalysisJob(job.sessionId, error instanceof Error ? error.message : 'Не удалось подготовить разбор.', !(error instanceof SiwcError));
   } finally { globals.trainingWorkerBusy = false; }
 }
 export function ensureWorker() {
   if (globals.trainingWorker) return;
-  globals.trainingWorker = setInterval(() => void processAnalysisQueue(), 5000);
+  globals.trainingWorker = setInterval(() => void processAnalysisQueue(), 1500);
   globals.trainingWorker.unref();
   void processAnalysisQueue();
 }

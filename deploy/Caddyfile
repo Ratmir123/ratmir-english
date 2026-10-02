@@ -1,9 +1,14 @@
 {$TRAINING_DOMAIN} {
     encode zstd gzip
+    handle /api/audio/live-stream {
+        reverse_proxy app:3001
+    }
+    handle {
     reverse_proxy app:3000 {
         # The application compares Origin and this configured public hostname.
         # Browser-supplied forwarding headers never define its public origin.
         header_up Host {$TRAINING_DOMAIN}
         header_up X-Forwarded-Proto https
+    }
     }
 }

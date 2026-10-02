@@ -2,6 +2,10 @@
 
 Native SwiftUI client, iOS 17+, sharing the existing HTTPS backend and private training history. Includes learning/call modes, microphone recording, transcription review before sending, voice playback, analysis and required improved retry, skill evidence, history and daily local notifications. No Apple password, OpenAI key or ChatGPT credentials are embedded in the app or CI.
 
+Version 0.2 adds automatic assistant playback, a voice-reactive gradient companion, manually committed live subtitles through the private VPS, and preservation of the original WAV and unedited transcript. Transcription is explicitly instructed to retain fillers, repeats and unfinished phrases; recognition can still be wrong, so the user reviews the text. New lessons and continuing a saved lesson are separate actions. A review may be closed with its improved attempt deferred, without claiming mastery.
+
+CI also captures synthetic home, conversation, recording, waiting, review and settings screens on an iPhone 11 simulator. Preview fixtures are compiled only in Debug; the Release IPA has no sample profile. Simulator screenshots do not verify physical microphone capture, audio routing or local notification delivery. Notification permission and scheduled request readback are checked on the actual device.
+
 The macOS GitHub Actions job builds an unsigned device IPA. AltStore Classic on Windows signs this IPA with the owner's free Apple Account. This is a personal installation, not App Store distribution. Build success is distinct from installation and a physical-device microphone test.
 
 1. Install AltServer and its Apple dependencies using the [official Windows instructions](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows). Connect the unlocked iPhone by USB and trust the computer.

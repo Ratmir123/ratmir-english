@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "createdAt": "2026-10-01T21:24:42.989Z",
+  "createdAt": "2026-10-02T00:49:25.235Z",
   "reviewRequired": true,
   "published": false,
   "licenseCandidate": "MIT",
@@ -8,8 +8,8 @@
   "files": [
     {
       "path": ".dockerignore",
-      "bytes": 867,
-      "sha256": "989d9330a02744330c878ec3edcf9b385697e6f518f5799d55288ab5b6682ac0"
+      "bytes": 917,
+      "sha256": "d7bd652942b9b3bc702f5a8f9ce4f5262902fe547753584ef59a07e9156d2cad"
     },
     {
       "path": ".env.example",
@@ -18,8 +18,8 @@
     },
     {
       "path": ".github/workflows/ios.yml",
-      "bytes": 2229,
-      "sha256": "1dd2fe3fe7c174e1a846eb939d50114f8150d62ba2e90ad41fac2b08be001576"
+      "bytes": 2579,
+      "sha256": "37dddd9792b7a0dd033c4be766392cd2dbcb16d6b14b5b10535472ac3117be71"
     },
     {
       "path": "Disable Autostart.cmd",
@@ -33,8 +33,8 @@
     },
     {
       "path": "Dockerfile",
-      "bytes": 1686,
-      "sha256": "bf2acb96dc2e8a3c799782d71eecc8f2b63ef6148195dab9a857f93cd5b29201"
+      "bytes": 1690,
+      "sha256": "eb5ef588ae12cc2372445ff713860c3e88fa112588b04ff785131199fdbf5e86"
     },
     {
       "path": "Enable Autostart.cmd",
@@ -63,8 +63,8 @@
     },
     {
       "path": "app/api/[...path]/route.ts",
-      "bytes": 14929,
-      "sha256": "67ded96caaa31b10a53adb5cec259153bf1a641852f614bbe0470a46677cc914"
+      "bytes": 17137,
+      "sha256": "df7c95affb29f159ebed9dfd07c6c34727222f937fb492e9b801ee22b2d734e9"
     },
     {
       "path": "app/globals.css",
@@ -163,8 +163,8 @@
     },
     {
       "path": "deploy/Caddyfile",
-      "bytes": 320,
-      "sha256": "74e2270ce44fdfa5693fc5bfc004bed150d20f4d8701ed4dcf383a9d3a39b98a"
+      "bytes": 412,
+      "sha256": "7f90fb8e144b3d92335537edd494201d9ea1d562ed6ab55df3b21cd3910be3e0"
     },
     {
       "path": "deploy/README.md",
@@ -173,8 +173,8 @@
     },
     {
       "path": "deploy/compose.yaml",
-      "bytes": 1735,
-      "sha256": "5607d41f61894c9cea0b7cd1e294a341d01ecfb8f7776cff89d3a29d774ac8e8"
+      "bytes": 1750,
+      "sha256": "0cefdf9323fd5adc52c14e2c90baeb7ce1056b61ce5c9025f214320926ae3574"
     },
     {
       "path": "deploy/healthcheck.mjs",
@@ -213,8 +213,8 @@
     },
     {
       "path": "ios/README.md",
-      "bytes": 2530,
-      "sha256": "68acc78fd96637dc0f040227d8043477ef50fd46497afe94e28c75225347d6e9"
+      "bytes": 3444,
+      "sha256": "4f35d150be455228cf08d4f2f15c1c8666cd228850999654870b8852049f90ac"
     },
     {
       "path": "ios/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json",
@@ -228,23 +228,38 @@
     },
     {
       "path": "ios/Sources/Models.swift",
-      "bytes": 1782,
-      "sha256": "5a7db902b67b7f80c025fa1fa2f09a5a7a21359f4a9956bce552e08be08fa151"
+      "bytes": 3189,
+      "sha256": "a1aea30c7a6ab80b91316cc01f942d81d63bd1d5201a09ecd90f42855d5ec675"
+    },
+    {
+      "path": "ios/Sources/NativeDesign.swift",
+      "bytes": 15458,
+      "sha256": "636eb68c654d9e6878e5499675a65c72d7db8cfe8cc1d8789bbedd66ed89070a"
+    },
+    {
+      "path": "ios/Sources/PreviewFixtures.swift",
+      "bytes": 5016,
+      "sha256": "e90a0ef320f34a4c11bf864569130695958f6263a735de31efed768b820450c5"
     },
     {
       "path": "ios/Sources/RatmirEnglishApp.swift",
-      "bytes": 21275,
-      "sha256": "a29fc2e0631242983a15136d56e3fc4429439e670f311e985c3e4451040d446f"
+      "bytes": 49192,
+      "sha256": "cd158e28bbcd82f6886e8cdb5d00efb8d171a1813315adc985be766128a8b728"
     },
     {
       "path": "ios/Sources/TrainingClient.swift",
-      "bytes": 13472,
-      "sha256": "3ee5162930d4573ebf3b116ec9bdf428b2b6d3263af9684cccee836085fcd53f"
+      "bytes": 34830,
+      "sha256": "a5976e9486e91d3c0e86ec9b16d7270451fb8dc9af1096a3ec8b3621af0198a7"
+    },
+    {
+      "path": "ios/Sources/VoiceCapture.swift",
+      "bytes": 13028,
+      "sha256": "cb4178398d1e6941860dc322d26fd287d8ee1c4cf30d4c2c0b4acc4876cc3cf6"
     },
     {
       "path": "ios/project.yml",
       "bytes": 1145,
-      "sha256": "ee015dec354150b6bb1533f391a2742bad8d5db429d9f7cc6819cedae2818e41"
+      "sha256": "5c1f1b8d5d01ea86717b386ea3a65a63a6f040c76880b41b2d3e4fe98b146005"
     },
     {
       "path": "ios/scripts/create-icon.swift",
@@ -258,18 +273,23 @@
     },
     {
       "path": "lib/server/adaptation.ts",
-      "bytes": 8861,
-      "sha256": "3b440114486a6bd855849b615f43f59601189e9457e0b5d24ead7de9229502de"
+      "bytes": 8913,
+      "sha256": "19e0cb850778c2dc20526700223b7cd56809a619a350f79e9f76e2fe83782b1b"
+    },
+    {
+      "path": "lib/server/audio-transcription.ts",
+      "bytes": 1054,
+      "sha256": "3a19b3b9d1cbd566aec44ab5540108aedb33def51b261083c65c92e947172f27"
     },
     {
       "path": "lib/server/audio.ts",
-      "bytes": 6322,
-      "sha256": "8ffa656f584dc8b5a64e3ede6a0ad70c4441f133c555a06a032c5df2e197a662"
+      "bytes": 11163,
+      "sha256": "28ce482d408228b1c2abd5abf5f2e1403eec5aa32d6bb48dc060bd4455f44f1e"
     },
     {
       "path": "lib/server/codex.ts",
-      "bytes": 19550,
-      "sha256": "9c648b1b9881ba7a0cb3a58fdc6c723e57156570c0e02bbb8451e1e121b9465a"
+      "bytes": 19657,
+      "sha256": "ec009ed16fa817d22a67ec5cbab518d0043a605ec6812e181423e75284f0870b"
     },
     {
       "path": "lib/server/configuration.ts",
@@ -278,8 +298,8 @@
     },
     {
       "path": "lib/server/mentor-style.ts",
-      "bytes": 2005,
-      "sha256": "8b7c35cf5af6d955abb50302074867568f0910a0ebcddde36901c14862077a66"
+      "bytes": 2331,
+      "sha256": "671441057dc507fb6b9b8f18b927663829977433dff07b58a96ca3b818839452"
     },
     {
       "path": "lib/server/profile.ts",
@@ -297,9 +317,14 @@
       "sha256": "a9ef887d616d37a492a4ca6456a0015516bfba70f855aa1617a2be1cb55ec69c"
     },
     {
+      "path": "lib/server/session-lifecycle.ts",
+      "bytes": 843,
+      "sha256": "7ab406a1a6c73a42aef32adc48272a976fda6bf7a0edbbad6a63c73a8756ee40"
+    },
+    {
       "path": "lib/server/siwc-protocol.ts",
-      "bytes": 17721,
-      "sha256": "bd842380958ad321760e5fb45100f560bde6a75044fb5839a9f1fac42f8332b4"
+      "bytes": 18225,
+      "sha256": "9a7f4d96f76fe89562076c519ae615f2a26fd1b391bacd5832c7d9d34a24ba5f"
     },
     {
       "path": "lib/server/siwc-store.ts",
@@ -308,18 +333,23 @@
     },
     {
       "path": "lib/server/siwc.ts",
-      "bytes": 14369,
-      "sha256": "4bbefd160002512f17b3fba28c556c3c159d75586dc6e987333fca7c9879159f"
+      "bytes": 14970,
+      "sha256": "eba4fc0364d9aa895cbcb723ff18c13e7018302a20f009e8a54c3b9b9403b5f7"
     },
     {
       "path": "lib/server/store.ts",
-      "bytes": 14191,
-      "sha256": "74c65ab3bf2ea91dde40b9cfe7ac1786926ab96f5377e74c541e0ff0e1799a36"
+      "bytes": 18109,
+      "sha256": "549a49f2d71e046165abb2d1298fef04a707f575c7c80b7297b011afd466b88d"
     },
     {
       "path": "lib/server/teacher.ts",
-      "bytes": 29464,
-      "sha256": "3c9f6b764c50c03784c62284a454d0fecd35d0ac928fb170b0ee14a873e3697b"
+      "bytes": 31230,
+      "sha256": "e2ebff05c8963ffe48a6831c4c7bedadcea9fb41da709ec98bf88977b3c47d93"
+    },
+    {
+      "path": "lib/server/transcript-integrity.ts",
+      "bytes": 1181,
+      "sha256": "2812b6cc3bcb22909b2cf980ec04eca81f62873af10a8b4b71dc287228ca83a6"
     },
     {
       "path": "lib/server/usage.ts",
@@ -328,8 +358,8 @@
     },
     {
       "path": "lib/server/worker.ts",
-      "bytes": 1629,
-      "sha256": "d43b707467849c4d9100622459290260435b790efbdb43c4dce9cfc64b36c3a8"
+      "bytes": 1929,
+      "sha256": "8d3952b8cd2587d3f96ea389ef97f5d3e6bb495d66a52d6d0e33b4c73707cd10"
     },
     {
       "path": "lib/startup-welcome.ts",
@@ -348,8 +378,8 @@
     },
     {
       "path": "lib/types.ts",
-      "bytes": 4289,
-      "sha256": "03a5012d916411ef65afffa01d770bdf8a00e77c94e935cbea8be2f666e46815"
+      "bytes": 4969,
+      "sha256": "9b2af58a5080c934f6c49964229ecae98d99c0f848cabd5477f14ecca3471ba1"
     },
     {
       "path": "next-env.d.ts",
@@ -363,13 +393,13 @@
     },
     {
       "path": "package-lock.json",
-      "bytes": 166131,
-      "sha256": "c84e34f95326b690c36965301a0bcb086a5aa9a954e7c27d554559e9c804766d"
+      "bytes": 166750,
+      "sha256": "13e0a53ea200ea2b795657bad0ce16ad027421f8f127f562973d556ddc2dae18"
     },
     {
       "path": "package.json",
-      "bytes": 953,
-      "sha256": "9d49f7670683d2795c674f807be2a4df1da35f3e4d512c645d46ad507094320e"
+      "bytes": 973,
+      "sha256": "e66b3755d4dfbf273c6b1b842239b87ae85aadc51db619ffee09df922b6cacb3"
     },
     {
       "path": "public/icon-192.png",
@@ -412,6 +442,11 @@
       "sha256": "4b58b998880dc310ea2cd5b5d85718f3329ee1c73176ee8de5398ea087f8ab9c"
     },
     {
+      "path": "scripts/host-server.mjs",
+      "bytes": 774,
+      "sha256": "39dbb6946412b07e1160fed154bda170e4f9fa7c51aeab2a5446ab6fcb569ed3"
+    },
+    {
       "path": "scripts/probe-codex.ts",
       "bytes": 1395,
       "sha256": "a41649abeb9df7d6cbaaa2f6f5460d571ac454e84e1f42e12f72ad7c8a7fe9f7"
@@ -425,6 +460,11 @@
       "path": "scripts/start.mjs",
       "bytes": 13545,
       "sha256": "0c5fa0b01dfcb0a89ea183213130fc07b0950750ce9d360f668383cf99811549"
+    },
+    {
+      "path": "scripts/voice-relay.mjs",
+      "bytes": 6063,
+      "sha256": "0b3a4d8c52d8d3d8f9e134043e6935fa25a84262a9277f90a5948451990da3a9"
     },
     {
       "path": "tsconfig.json",

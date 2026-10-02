@@ -25,6 +25,7 @@ services:
       - training_data:/app/.data
     expose:
       - "3000"
+      - "3001"
     security_opt:
       - no-new-privileges:true
     cap_drop:

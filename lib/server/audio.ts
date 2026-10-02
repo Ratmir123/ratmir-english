@@ -3,6 +3,7 @@ import { resolve, join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ApiError } from './security';
 import { addAudioUsage, getAppState } from './store';
+import { FILE_TRANSCRIPTION_MODEL, LIVE_TRANSCRIPTION_MODEL, MAX_RECORDING_MINUTES, TRANSCRIPTION_MINUTE_USD, LIVE_TRANSCRIPTION_MINUTE_USD, VERBATIM_TRANSCRIPTION_PROMPT, liveTranscriptionConfiguration } from './audio-transcription';
 
 const dataDir = resolve(process.cwd(), '.data');
 const audioDir = join(dataDir, 'audio');
@@ -18,8 +19,22 @@ export function setAudioKey(value: string) {
   if (!value) { if (existsSync(keyFile)) unlinkSync(keyFile); return; }
   writeFileSync(keyFile, JSON.stringify({ key: value }), { mode: 0o600 });
 }
-const audioGlobals = globalThis as typeof globalThis & { trainingAudioReserved?: number };
+const audioGlobals = globalThis as typeof globalThis & {
+  trainingAudioReserved?: number;
+  trainingLiveReservations?: Map<string, { release: () => void; expiresAt: number }>;
+};
+function clearExpiredLiveReservations() {
+  for (const [id, entry] of audioGlobals.trainingLiveReservations || []) {
+    if (entry.expiresAt > Date.now()) continue;
+    // An abandoned live connection may have incurred usage. Count its upper
+    // bound as an estimate rather than silently allowing it to bypass budget.
+    addAudioUsage('transcription', MAX_RECORDING_MINUTES, MAX_RECORDING_MINUTES * LIVE_TRANSCRIPTION_MINUTE_USD);
+    entry.release();
+    audioGlobals.trainingLiveReservations!.delete(id);
+  }
+}
 function reserveBudget(reserve: number) {
+  clearExpiredLiveReservations();
   const usage = getAppState().audioUsage;
   if (usage.usedUsd + (audioGlobals.trainingAudioReserved || 0) + reserve > usage.budgetUsd) throw new ApiError('Достигнут предел бюджета голоса. Можно продолжить текстом.', 402);
   audioGlobals.trainingAudioReserved = (audioGlobals.trainingAudioReserved || 0) + reserve;
@@ -59,26 +74,74 @@ export function cleanAudio(days: number, only?: string[]) {
     if (only ? only.includes(file) : Date.now() - statSync(path).mtimeMs > days * 86400000) unlinkSync(path);
   }
 }
-export async function transcribe(file: File, minutes: number) {
-  if (file.size > 20 * 1024 * 1024 || file.size < 100) throw new ApiError('Нужна запись размером до 20 МБ.');
+export async function createLiveTranscriptionSession() {
+  const origin = process.env.TRAINING_PUBLIC_ORIGIN;
+  if (!origin || !origin.startsWith('https://')) throw new ApiError('Живые субтитры требуют подключения к серверу по HTTPS.', 412);
+  const relayUrl = new URL('/api/audio/live-stream', origin);
+  relayUrl.protocol = 'wss:';
+  const apiKey = key();
+  if (!apiKey) throw new ApiError('Добавь OpenAI API-ключ в настройках, чтобы включить голос.', 412);
+  const release = reserveBudget(MAX_RECORDING_MINUTES * LIVE_TRANSCRIPTION_MINUTE_USD);
+  try {
+    const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+      method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(12000),
+      body: JSON.stringify({ expires_after: { anchor: 'created_at', seconds: 60 }, session: liveTranscriptionConfiguration() }),
+    });
+    if (!response.ok) throw new ApiError('Живые субтитры сейчас недоступны. Запись можно расшифровать после остановки.', 502);
+    const value = await response.json();
+    if (typeof value.value !== 'string' || !Number.isFinite(value.expires_at)) throw new ApiError('Не удалось подключить живые субтитры.', 502);
+    const ticket = randomUUID();
+    (audioGlobals.trainingLiveReservations ??= new Map()).set(ticket, { release, expiresAt: Date.now() + (MAX_RECORDING_MINUTES + 2) * 60000 });
+    // Only a sixty-second, transcription-scoped ephemeral is returned. The
+    // persistent API key and the learner access code never leave this server.
+    return { clientSecret: value.value, expiresAt: value.expires_at, ticket,
+      model: LIVE_TRANSCRIPTION_MODEL, url: relayUrl.toString() };
+  } catch (error) { release(); throw error; }
+}
+export function closeLiveTranscriptionSession(ticket: string, minutes: number) {
+  if (!Number.isFinite(minutes) || minutes < 0 || minutes > MAX_RECORDING_MINUTES) throw new ApiError('Некорректная длительность записи.');
+  const entry = audioGlobals.trainingLiveReservations?.get(ticket);
+  if (!entry) return;
+  if (minutes > 0) addAudioUsage('transcription', minutes, minutes * LIVE_TRANSCRIPTION_MINUTE_USD);
+  entry.release();
+  audioGlobals.trainingLiveReservations!.delete(ticket);
+}
+export async function transcribe(file: File, minutes: number, live?: { text: string; final: boolean; ticket?: string; minutes?: number }) {
+  if (file.size > 25 * 1024 * 1024 || file.size < 100) throw new ApiError('Нужна запись размером до 25 МБ.');
   if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 10) throw new ApiError('Некорректная длительность записи.');
   if (!audioConfigured()) throw new ApiError('Добавь OpenAI API-ключ в настройках, чтобы включить голос.', 412);
-  const releaseBudget = reserveBudget(0.07);
+  const reservation = live?.ticket && audioGlobals.trainingLiveReservations?.get(live.ticket);
+  if (reservation && live?.ticket) {
+    const streamedMinutes = live.minutes === undefined ? minutes : live.minutes;
+    if (!Number.isFinite(streamedMinutes) || streamedMinutes < 0 || streamedMinutes > MAX_RECORDING_MINUTES) throw new ApiError('Некорректная длительность живой записи.');
+    if (streamedMinutes > 0) addAudioUsage('transcription', streamedMinutes, streamedMinutes * LIVE_TRANSCRIPTION_MINUTE_USD);
+    reservation.release();
+    audioGlobals.trainingLiveReservations!.delete(live.ticket);
+  }
+  const useLiveFinal = !!reservation && live?.final === true && typeof live.text === 'string' && live.text.trim().length > 0 && live.text.length <= 7000;
+  const releaseBudget = reserveBudget(useLiveFinal ? 0 : minutes * TRANSCRIPTION_MINUTE_USD);
   try {
   const type = file.type.toLowerCase();
   const ext = type.includes('mpeg') || type.includes('mp3') ? 'mp3' :
     type.includes('mp4') || type.includes('m4a') ? 'mp4' : type.includes('ogg') ? 'ogg' : type.includes('wav') ? 'wav' : 'webm';
   const audioFile = saveAudio(new Uint8Array(await file.arrayBuffer()), ext);
+  // The completed live transcript is kept verbatim alongside its original WAV;
+  // a second recognizer must not silently polish it or drop disfluencies.
+  if (useLiveFinal) return { text: live!.text.trim(), audioFile, model: LIVE_TRANSCRIPTION_MODEL, transcriptSource: 'live' };
   const form = new FormData();
   form.set('file', file, `speech.${ext}`);
-  form.set('model', process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe');
-  form.set('language', 'en');
+  const model = process.env.OPENAI_TRANSCRIBE_MODEL || FILE_TRANSCRIPTION_MODEL;
+  form.set('model', model);
+  if (model === FILE_TRANSCRIPTION_MODEL) { form.append('languages[]', 'en'); form.append('languages[]', 'ru'); }
+  else form.set('language', 'en');
+  form.set('prompt', VERBATIM_TRANSCRIPTION_PROMPT);
   form.set('response_format', 'json');
   const response = await audioRequest('transcriptions', { method: 'POST', body: form });
   const result = await response.json();
   if (typeof result.text !== 'string' || !result.text.trim()) throw new ApiError('Речь не распознана. Попробуй ещё раз.');
-  addAudioUsage('transcription', minutes, minutes * 0.006);
-  return { text: result.text.trim(), audioFile };
+  addAudioUsage('transcription', minutes, minutes * (model === FILE_TRANSCRIPTION_MODEL ? TRANSCRIPTION_MINUTE_USD : 0.006));
+  return { text: result.text.trim(), audioFile, model, transcriptSource: 'file' };
   } finally { releaseBudget(); }
 }
 export async function synthesize(text: string) {

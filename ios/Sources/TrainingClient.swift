@@ -2,6 +2,7 @@ import Foundation
 import Security
 import AVFoundation
 import UserNotifications
+import UIKit
 
 enum ClientError: LocalizedError {
     case message(String)
@@ -43,27 +44,68 @@ enum AccessKey {
 }
 
 @MainActor final class TrainingClient: ObservableObject {
+#if DEBUG
+    var previewMode = false
+#endif
     @Published var state: TrainingState?
     @Published var conversation: Conversation?
     @Published var status: ServerStatus?
+    @Published var subscriptionUsage: SubscriptionUsage?
     @Published var busy = false
     @Published var error: String?
     @Published var hint: String?
     @Published var signedIn = false
     @Published var recording = false
+    @Published var microphoneStarting = false
     @Published var playing = false
     @Published var draft = ""
     @Published var recordedFile: String?
     @Published var pendingMessageID: String?
     @Published var assistantTextShown = true
+    @Published var conversationPresented = false
+    @Published var audioLevel = 0.0
+    @Published var liveTranscript = ""
+    @Published var liveTranscriptStatus = ""
+    @Published var voiceLoading = false
+    @Published var operationStage: String?
+    @Published var operationStartedAt: Date?
+    @Published var reviewStartedAt: Date?
+    @Published var notificationState = "notDetermined"
+    @Published var reminderEnabled = false
+    @Published var reminderHour = 19
+    @Published var reminderMinute = 0
+    @Published var reminderBusy = false
+    @Published var hasUnuploadedRecording = false
+    @Published var originalTranscript = ""
     @Published var server = UserDefaults.standard.string(forKey: "training-server") ?? ""
-    private var recorder: AVAudioRecorder?
+    private var capture: VoiceCapture?
+    private var liveTranscriber: LiveTranscriber?
+    private var liveConnection: Task<Void, Never>?
+    private var recordingLimit: Task<Void, Never>?
     private var player: AVAudioPlayer?
     private var playbackDelegate: PlaybackDelegate?
-    private var recordedAt = Date()
     private var recordedMinutes = 0.01
     private var localRecording: URL?
     private var pendingSpeechTurn: String?
+    private var heardTurns = Set<String>()
+    private var voiceGeneration = UUID()
+    private var speechTask: Task<Void, Never>?
+    private var meterTask: Task<Void, Never>?
+    private var interrupted: NSObjectProtocol?
+    private var liveFinalText: String?
+    private var liveSessionID: String?
+    private var liveMinutes = 0.0
+    private var recordingID = UUID()
+    private var startRequestID: String?
+    private var startRequestIntent: String?
+    private struct DraftSnapshot {
+        let text: String
+        let file: String?
+        let pendingID: String?
+        let transcript: String
+        let liveText: String
+    }
+    private var savedDrafts: [String: DraftSnapshot] = [:]
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 180
@@ -71,6 +113,20 @@ enum AccessKey {
         config.httpCookieStorage = HTTPCookieStorage.shared
         return URLSession(configuration: config)
     }()
+
+    init() {
+        UNUserNotificationCenter.current().delegate = ReminderPresentation.shared
+        interrupted = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,
+            object: nil, queue: .main) { [weak self] notification in
+                guard let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                      type == AVAudioSession.InterruptionType.began.rawValue else { return }
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.stopSpeaking()
+                    if self.recording { await self.stopRecording() }
+                }
+            }
+    }
 
     private func endpoint(_ path: String) throws -> URL {
         guard let base = URL(string: server), base.scheme == "https", base.host != nil,
@@ -98,52 +154,116 @@ enum AccessKey {
         }
         return try JSONDecoder().decode(T.self, from: await checked(request))
     }
-    func perform(_ action: () async throws -> Void) async {
+    func perform(stage: String? = nil, _ action: () async throws -> Void) async {
         guard !busy else { return }
-        busy = true; error = nil
-        defer { busy = false }
+        busy = true; error = nil; operationStage = stage; operationStartedAt = Date()
+        defer { busy = false; operationStage = nil; operationStartedAt = nil }
         do { try await action() } catch { self.error = error.localizedDescription }
     }
     func login(code: String) async {
-        await perform {
+        await perform(stage: "Подключаю твой профиль") {
             let _: Confirmation = try await request("login", body: ["code": code])
             try AccessKey.save(code)
             UserDefaults.standard.set(server, forKey: "training-server")
             try await refresh()
             signedIn = true
+            recoverPendingRecording()
+            await refreshReminderStatus()
         }
     }
     func restore() async {
         guard !server.isEmpty, let code = AccessKey.read() else { return }
         await login(code: code)
     }
+    private func recoverPendingRecording() {
+        guard localRecording == nil, let path = UserDefaults.standard.string(forKey: "pending-recording-path"),
+              let folder = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                  appropriateFor: nil, create: false).appendingPathComponent("Recordings", isDirectory: true) else { return }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard url.deletingLastPathComponent() == folder.standardizedFileURL,
+              FileManager.default.fileExists(atPath: url.path) else { return }
+        localRecording = url; hasUnuploadedRecording = true
+        if let audio = try? AVAudioFile(forReading: url) {
+            recordedMinutes = max(0.01, min(8, Double(audio.length) / audio.processingFormat.sampleRate / 60))
+        } else {
+            recordedMinutes = max(0.01, UserDefaults.standard.double(forKey: "pending-recording-minutes"))
+        }
+        if let id = UserDefaults.standard.string(forKey: "pending-recording-session"), conversation == nil {
+            conversation = state?.sessions.first { $0.id == id }
+        }
+        liveTranscriptStatus = "На iPhone сохранилась предыдущая запись. Можно повторить распознавание."
+    }
+    private func clearPendingRecording() {
+        for key in ["pending-recording-path", "pending-recording-session", "pending-recording-minutes"] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
     func refresh() async throws {
-        state = try await request("state")
-        status = try await request("status")
+        async let updatedState: TrainingState = request("state")
+        async let updatedStatus: ServerStatus = request("status")
+        async let updatedUsage: SubscriptionUsage? = try? request("usage")
+        (state, status, subscriptionUsage) = try await (updatedState, updatedStatus, updatedUsage)
         if let id = conversation?.id { conversation = state?.sessions.first { $0.id == id } }
     }
     func resume(_ value: Conversation) {
+        if hasUnuploadedRecording, let currentID = conversation?.id, currentID != value.id {
+            error = "В текущем занятии есть несохранённая запись. Сначала повтори её распознавание или явно удали запись."; return
+        }
+        stopSpeaking()
+        if let id = conversation?.id {
+            savedDrafts[id] = DraftSnapshot(text: draft, file: recordedFile, pendingID: pendingMessageID,
+                transcript: originalTranscript, liveText: liveTranscript)
+        }
         conversation = value
+        conversationPresented = true
         assistantTextShown = value.mode == "learning"
-        hint = nil; draft = ""; pendingMessageID = nil; recordedFile = nil
-        if value.status == "active" || value.status == "error", let last = value.turns.last, last.role == "user" {
+        hint = nil
+        let saved = savedDrafts[value.id]
+        draft = saved?.text ?? ""; pendingMessageID = saved?.pendingID; recordedFile = saved?.file
+        originalTranscript = saved?.transcript ?? ""; liveTranscript = saved?.liveText ?? ""
+        if draft.isEmpty, pendingMessageID == nil, value.status == "active" || value.status == "error",
+           let last = value.turns.last, last.role == "user" {
             draft = last.text; pendingMessageID = last.id; recordedFile = last.audioFile
         }
+        autoSpeakLatest()
     }
-    func start(mode: String, context: String) async {
-        await perform {
-            let value: Conversation = try await request("sessions", body: ["mode": mode, "context": context,
-                "minutes": state?.profile.dailyMinutes ?? 15])
+    func minimizeConversation() {
+        guard !recording else { return }
+        stopSpeaking()
+        conversationPresented = false
+    }
+    func start(mode: String, context: String, forceNew: Bool = false) async {
+        guard !hasUnuploadedRecording else {
+            error = "Сначала сохрани текущую запись: вернись к занятию и повтори распознавание. Или явно удали запись, если она больше не нужна."; return
+        }
+        await perform(stage: "Выбираю ситуацию для разговора") {
+            let shouldResume = !forceNew && conversation != nil
+            let intent = "\(mode)|\(context)|\(shouldResume)|\(shouldResume ? conversation?.id ?? "" : "")"
+            if startRequestID == nil || startRequestIntent != intent {
+                startRequestID = UUID().uuidString.lowercased(); startRequestIntent = intent
+            }
+            var body: [String: Any] = ["mode": mode, "context": context,
+                "intent": shouldResume ? "resume" : "new", "minutes": state?.profile.dailyMinutes ?? 15,
+                "requestId": startRequestID!]
+            if shouldResume, let id = conversation?.id { body["sessionId"] = id }
+            let value: Conversation = try await request("sessions", body: body)
+            startRequestID = nil
             resume(value)
             try await refresh()
         }
     }
     func send(retry: Bool = false) async {
         guard let conversation, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        await perform {
+        stopSpeaking()
+        await perform(stage: retry ? "Проверяю твою новую попытку" : "Собеседник отвечает") {
             let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
             var body: [String: Any] = ["text": text]
             if let recordedFile { body["audioFile"] = recordedFile }
+            if !originalTranscript.isEmpty { body["originalTranscript"] = originalTranscript }
+            if retry {
+                let id = pendingMessageID ?? UUID().uuidString.lowercased()
+                pendingMessageID = id; body["id"] = id
+            }
             if !retry {
                 let id = pendingMessageID ?? UUID().uuidString.lowercased()
                 pendingMessageID = id
@@ -152,31 +272,47 @@ enum AccessKey {
                 body["textVisible"] = assistantTextShown
             }
             self.conversation = try await request("sessions/\(conversation.id)/\(retry ? "retry" : "message")", body: body)
-            draft = ""; recordedFile = nil; pendingMessageID = nil; hint = nil
+            draft = ""; recordedFile = nil; pendingMessageID = nil; hint = nil; originalTranscript = ""; liveTranscript = ""
+            savedDrafts.removeValue(forKey: conversation.id)
             assistantTextShown = conversation.mode == "learning"
             try await refresh()
+            autoSpeakLatest()
         }
     }
-    func action(_ name: String) async {
+    func action(_ name: String, deferRetry: Bool = false) async {
         guard let conversation else { return }
-        await perform {
-            self.conversation = try await request("sessions/\(conversation.id)/\(name)", body: [:])
+        if (name == "finish" || name == "complete"), hasUnuploadedRecording {
+            error = "Сначала сохрани последнюю запись: повтори распознавание или явно удали её, если она не нужна."; return
+        }
+        stopSpeaking()
+        await perform(stage: name == "complete" ? "Сохраняю результат" : name == "finish" ? "Передаю разговор на разбор" : "Обновляю занятие") {
+            self.conversation = try await request("sessions/\(conversation.id)/\(name)", body: deferRetry ? ["deferRetry": true] : [:])
             try await refresh()
+            if self.conversation?.status == "analysing" { reviewStartedAt = Date() }
         }
     }
     func pollReview() async {
-        while conversation?.status == "analysing", !Task.isCancelled {
+#if DEBUG
+        if previewMode { return }
+#endif
+        while conversation?.status == "analysing" || conversation?.processing != nil, !Task.isCancelled {
             do {
                 try await Task.sleep(for: .seconds(3))
                 guard let id = conversation?.id else { return }
-                conversation = try await request("sessions/\(id)")
+                let value: Conversation = try await request("sessions/\(id)")
+                guard conversation?.id == id else { return }
+                conversation = value
+                if value.processing == nil, value.status != "analysing" {
+                    try? await refresh()
+                    autoSpeakLatest()
+                }
             } catch is CancellationError { return }
             catch { self.error = error.localizedDescription; return }
         }
     }
     func getHint() async {
         guard let conversation else { return }
-        await perform {
+        await perform(stage: "Подбираю опору для ответа") {
             let result: Hint = try await request("sessions/\(conversation.id)/hint", body: ["level": 1])
             hint = result.text
         }
@@ -185,83 +321,307 @@ enum AccessKey {
         await action("show-text")
         if error == nil { assistantTextShown = true }
     }
+    private func autoSpeakLatest() {
+        guard conversationPresented, let conversation, conversation.status == "active",
+              let turn = conversation.turns.last, turn.role == "assistant",
+              !heardTurns.contains(turn.id), pendingSpeechTurn != turn.id, !recording else { return }
+        speechTask = Task { [weak self] in
+            guard let self else { return }
+            await self.speak()
+        }
+    }
+
+    /// Playback has its own loading state. Speech fetching never locks the record/finish buttons.
     func speak() async {
-        guard let conversation, let turn = conversation.turns.last(where: { $0.role == "assistant" }) else { return }
-        await perform {
+        guard !recording, let conversation, let turn = conversation.turns.last(where: { $0.role == "assistant" }) else { return }
+        if pendingSpeechTurn == turn.id, voiceLoading || playing { return }
+        resetPlayback(cancelLoading: false)
+        let generation = voiceGeneration
+        pendingSpeechTurn = turn.id; voiceLoading = true
+        defer { if generation == voiceGeneration { voiceLoading = false } }
+        do {
             let speech: Speech = try await request("sessions/\(conversation.id)/speech", body: ["turnId": turn.id])
             let data = try await checked(URLRequest(url: endpoint("audio/\(speech.file)")))
+            guard generation == voiceGeneration, !recording, self.conversation?.id == conversation.id, !Task.isCancelled else { return }
             let audio = AVAudioSession.sharedInstance()
             try audio.setCategory(.playback, mode: .spokenAudio)
             try audio.setActive(true)
             player = try AVAudioPlayer(data: data)
+            player?.isMeteringEnabled = true
             playbackDelegate = PlaybackDelegate { [weak self] completed in
                 Task { @MainActor in
-                    guard let self else { return }
-                    self.playing = false
-                    guard completed else { return }
+                    guard let self, generation == self.voiceGeneration else { return }
+                    self.playing = false; self.audioLevel = 0; self.pendingSpeechTurn = nil
+                    self.meterTask?.cancel(); self.meterTask = nil
+                    guard completed else { self.error = "Озвучка прервалась. Нажми «Слушать» ещё раз."; return }
+                    self.heardTurns.insert(turn.id)
                     do {
                         let _: Confirmation = try await self.request("sessions/\(conversation.id)/played", body: ["turnId": turn.id])
-                    } catch { self.error = error.localizedDescription }
+                    } catch { self.error = "Реплика прозвучала, но отметка о прослушивании не сохранилась. Проверь соединение." }
                 }
             }
             player?.delegate = playbackDelegate
-            guard player?.play() == true else { throw ClientError.message("Не удалось начать озвучку.") }
+            player?.prepareToPlay()
+            guard player?.play() == true else { throw ClientError.message("Не удалось начать озвучку. Проверь громкость и попробуй снова.") }
             playing = true
+            startPlaybackMeter()
+        } catch is CancellationError { }
+        catch {
+            guard generation == voiceGeneration else { return }
+            pendingSpeechTurn = nil
+            self.error = "Не удалось озвучить реплику. Текст сохранён; можно повторить кнопкой «Слушать». " + error.localizedDescription
         }
     }
-    func beginRecording() async {
-        guard !busy, !recording else { return }
-        let allowed = await AVAudioApplication.requestRecordPermission()
-        guard allowed else { error = "Разреши микрофон в настройках iPhone."; return }
+
+    func stopSpeaking() {
+        resetPlayback(cancelLoading: true)
+    }
+    private func resetPlayback(cancelLoading: Bool) {
+        voiceGeneration = UUID()
+        if cancelLoading { speechTask?.cancel(); speechTask = nil }
+        meterTask?.cancel(); meterTask = nil
+        player?.stop(); player = nil; playbackDelegate = nil
+        playing = false; voiceLoading = false; audioLevel = 0; pendingSpeechTurn = nil
+    }
+    private func startPlaybackMeter() {
+        meterTask?.cancel()
+        meterTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.playing, let player = self.player else { return }
+                player.updateMeters()
+                self.audioLevel = min(1, max(0, Double((player.averagePower(forChannel: 0) + 55) / 55)))
+                do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
+            }
+        }
+    }
+    func playRecording() async {
+        guard !recording else { return }
+        stopSpeaking()
+        let generation = voiceGeneration
+        voiceLoading = true
+        defer { if generation == voiceGeneration { voiceLoading = false } }
         do {
-            player?.stop(); playing = false
+            let data: Data
+            if let url = localRecording { data = try Data(contentsOf: url) }
+            else if let recordedFile { data = try await checked(URLRequest(url: endpoint("audio/\(recordedFile)"))) }
+            else { return }
+            guard generation == voiceGeneration, !recording else { return }
             let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
-            try audio.setActive(true)
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
-            recorder = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: 44100, AVNumberOfChannelsKey: 1, AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue])
-            guard recorder?.record(forDuration: 590) == true else { throw ClientError.message("Запись не началась.") }
-            localRecording = url; recordedAt = Date(); recording = true; error = nil
+            try audio.setCategory(.playback, mode: .spokenAudio); try audio.setActive(true)
+            player = try AVAudioPlayer(data: data); player?.isMeteringEnabled = true
+            playbackDelegate = PlaybackDelegate { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, generation == self.voiceGeneration else { return }
+                    self.playing = false; self.audioLevel = 0; self.meterTask?.cancel()
+                }
+            }
+            player?.delegate = playbackDelegate
+            guard player?.play() == true else { throw ClientError.message("Не удалось прослушать запись.") }
+            playing = true; startPlaybackMeter()
+        } catch { if generation == voiceGeneration { self.error = error.localizedDescription } }
+    }
+
+    func beginRecording() async {
+        guard !busy, !recording, !microphoneStarting else { return }
+        guard localRecording == nil else {
+            error = "Предыдущая запись ещё не сохранилась на сервере. Повтори распознавание или явно удали её перед новой записью."; return
+        }
+        microphoneStarting = true
+        let currentSession = conversation?.id
+        defer { microphoneStarting = false }
+        let allowed = await AVAudioApplication.requestRecordPermission()
+        guard allowed else { error = "Микрофон отключён. Открой настройки Ratmir English и разреши доступ."; return }
+        guard !busy, conversationPresented, conversation?.id == currentSession else { return }
+        do {
+            stopSpeaking()
+            let folder = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                appropriateFor: nil, create: true).appendingPathComponent("Recordings", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appendingPathComponent(UUID().uuidString + ".wav")
+            let identifier = UUID(); recordingID = identifier
+            let live = LiveTranscriber(serverOrigin: server)
+            live.onTranscript = { [weak self] text in
+                guard self?.recordingID == identifier else { return }
+                self?.liveTranscript = text
+            }
+            live.onState = { [weak self] text in
+                guard self?.recordingID == identifier else { return }
+                self?.liveTranscriptStatus = text
+            }
+            let capture = VoiceCapture()
+            capture.onChunk = { [weak self, weak live] sequence, bytes, level in
+                Task { @MainActor in
+                    guard let self, self.recordingID == identifier else { return }
+                    if self.recording { self.audioLevel = self.audioLevel * 0.35 + level * 0.65 }
+                    live?.append(sequence: sequence, data: bytes)
+                }
+            }
+            capture.onFailure = { [weak self] message in
+                Task { @MainActor in
+                    guard let self, self.recordingID == identifier, self.recording else { return }
+                    await self.stopRecording(); self.error = message
+                }
+            }
+            try capture.start(at: url)
+            self.capture = capture; liveTranscriber = live
+            localRecording = url; recording = true; error = nil
+            UserDefaults.standard.set(url.path, forKey: "pending-recording-path")
+            UserDefaults.standard.set(conversation?.id, forKey: "pending-recording-session")
+            UserDefaults.standard.set(0.01, forKey: "pending-recording-minutes")
+            hasUnuploadedRecording = true; liveTranscript = ""; originalTranscript = ""; liveFinalText = nil; liveSessionID = nil; liveMinutes = 0
+            liveTranscriptStatus = "Запись идёт. Подключаю живой текст…"
+            liveConnection = Task { [weak self, weak live] in
+                guard let self, let live else { return }
+                do {
+                    let credential: LiveSpeechCredential = try await self.request("audio/live-session", body: [:])
+                    guard self.recordingID == identifier, !Task.isCancelled else {
+                        if let ticket = credential.ticket {
+                            let _: Confirmation? = try? await self.request("audio/live-session-close", body: ["ticket": ticket, "minutes": 0])
+                        }
+                        return
+                    }
+                    self.liveSessionID = credential.ticket
+                    try await live.connect(credential)
+                } catch {
+                    guard self.recordingID == identifier, !Task.isCancelled else { return }
+                    self.liveTranscriptStatus = "Живой текст недоступен. После остановки распознаю полную запись."
+                    live.close()
+                }
+            }
+            recordingLimit = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(480)) } catch { return }
+                guard let self, self.recordingID == identifier, self.recording else { return }
+                self.recordingLimit = nil
+                await self.stopRecording()
+            }
         } catch { self.error = error.localizedDescription }
     }
     func stopRecording() async {
-        recorder?.stop(); recording = false
-        recordedMinutes = max(0.01, min(9.9, Date().timeIntervalSince(recordedAt) / 60))
-        await transcribeRecording()
+        guard recording, let capture else { return }
+        let result = capture.stop(); self.capture = nil
+        recording = false; audioLevel = 0; recordingLimit?.cancel(); recordingLimit = nil
+        recordedMinutes = max(0.01, min(8, result.duration / 60))
+        UserDefaults.standard.set(recordedMinutes, forKey: "pending-recording-minutes")
+        await perform(stage: "Сохраняю запись и проверяю текст") {
+            liveFinalText = await liveTranscriber?.finish(expectedChunks: result.chunks)
+            liveMinutes = liveTranscriber?.streamedMinutes ?? 0
+            liveConnection?.cancel(); liveConnection = nil; liveTranscriber = nil
+            operationStage = liveFinalText == nil ? "Распознаю полную запись" : "Сохраняю оригинал записи"
+            try await uploadRecording()
+        }
     }
     func transcribeRecording() async {
+        guard localRecording != nil, !recording else { return }
+        await perform(stage: "Повторяю распознавание записи") { try await uploadRecording() }
+    }
+    private func uploadRecording() async throws {
         guard let url = localRecording else { return }
-        await perform {
-            let boundary = "English-" + UUID().uuidString
-            var data = Data()
-            func append(_ value: String) { data.append(Data(value.utf8)) }
-            append("--\(boundary)\r\nContent-Disposition: form-data; name=\"minutes\"\r\n\r\n\(recordedMinutes)\r\n")
-            append("--\(boundary)\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"speech.mp4\"\r\nContent-Type: audio/mp4\r\n\r\n")
-            data.append(try Data(contentsOf: url))
-            append("\r\n--\(boundary)--\r\n")
-            var upload = URLRequest(url: try endpoint("transcribe"))
-            upload.httpMethod = "POST"
-            upload.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-            upload.httpBody = data
-            let result = try JSONDecoder().decode(Transcription.self, from: await checked(upload))
-            draft = result.text; recordedFile = result.audioFile
-            try? FileManager.default.removeItem(at: url)
-            localRecording = nil
+        let boundary = "English-" + UUID().uuidString
+        var data = Data()
+        func append(_ value: String) { data.append(Data(value.utf8)) }
+        func field(_ name: String, _ value: String) {
+            append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
+        }
+        field("minutes", String(recordedMinutes))
+        if let liveFinalText, !liveFinalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            field("liveText", liveFinalText); field("liveFinal", "true")
+        }
+        if let liveSessionID { field("liveSessionId", liveSessionID); field("liveMinutes", String(liveMinutes)) }
+        append("--\(boundary)\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n")
+        data.append(try Data(contentsOf: url)); append("\r\n--\(boundary)--\r\n")
+        var upload = URLRequest(url: try endpoint("transcribe"))
+        upload.httpMethod = "POST"
+        upload.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        upload.httpBody = data
+        let result = try JSONDecoder().decode(Transcription.self, from: await checked(upload))
+        draft = result.text; originalTranscript = result.text; recordedFile = result.audioFile
+        try? FileManager.default.removeItem(at: url)
+        localRecording = nil; hasUnuploadedRecording = false
+        clearPendingRecording()
+        liveTranscriptStatus = "Проверь текст по оригинальной записи перед отправкой."
+    }
+    func discardRecording() {
+        guard !busy, !recording else { return }
+        if let ticket = liveSessionID {
+            let minutes = liveMinutes
+            Task { [weak self] in
+                guard let self else { return }
+                let _: Confirmation? = try? await self.request("audio/live-session-close", body: ["ticket": ticket, "minutes": minutes])
+            }
+        }
+        if let url = localRecording { try? FileManager.default.removeItem(at: url) }
+        localRecording = nil; hasUnuploadedRecording = false; recordedFile = nil
+        clearPendingRecording()
+        liveFinalText = nil; liveSessionID = nil; liveTranscript = ""; originalTranscript = ""; draft = ""
+    }
+
+    func refreshReminderStatus() async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        switch settings.authorizationStatus {
+        case .notDetermined: notificationState = "notDetermined"
+        case .denied: notificationState = "denied"
+        case .authorized: notificationState = "authorized"
+        case .provisional: notificationState = "provisional"
+        case .ephemeral: notificationState = "provisional"
+        @unknown default: notificationState = "unavailable"
+        }
+        let pending = await center.pendingNotificationRequests()
+        let reminder = pending.first { $0.identifier == "daily-practice" }
+        reminderEnabled = reminder != nil && settings.authorizationStatus != .denied
+        if let calendar = reminder?.trigger as? UNCalendarNotificationTrigger {
+            reminderHour = calendar.dateComponents.hour ?? 19
+            reminderMinute = calendar.dateComponents.minute ?? 0
         }
     }
-    func remindAt19() async {
-        await perform {
-            let center = UNUserNotificationCenter.current()
-            guard try await center.requestAuthorization(options: [.alert, .sound, .badge]) else {
-                throw ClientError.message("Уведомления отключены. Их можно разрешить в настройках iPhone.")
+    func remindAt19() async { await scheduleReminder(hour: 19, minute: 0) }
+    func scheduleReminder(hour: Int, minute: Int) async {
+        guard !reminderBusy else { return }
+        reminderBusy = true; error = nil
+        defer { reminderBusy = false }
+        let center = UNUserNotificationCenter.current()
+        do {
+            var settings = await center.notificationSettings()
+            if settings.authorizationStatus == .notDetermined {
+                _ = try await center.requestAuthorization(options: [.alert, .sound])
+                settings = await center.notificationSettings()
+            }
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+                await refreshReminderStatus()
+                throw ClientError.message("iPhone не разрешил уведомления. Открой настройки Ratmir English, включи «Допуск уведомлений» и вернись сюда.")
             }
             let content = UNMutableNotificationContent()
-            content.title = "Твои 15 минут английского"
-            content.body = "Один разговор сегодня. Начни с первой реплики."
+            content.title = "Есть 15 минут?"
+            content.body = "Давай одну ситуацию на английском. Начнём с короткого ответа."
             content.sound = .default
+            let hour = min(23, max(0, hour)); let minute = min(59, max(0, minute))
             try await center.add(UNNotificationRequest(identifier: "daily-practice", content: content,
-                trigger: UNCalendarNotificationTrigger(dateMatching: DateComponents(hour: 19), repeats: true)))
+                trigger: UNCalendarNotificationTrigger(dateMatching: DateComponents(hour: hour, minute: minute), repeats: true)))
+            await refreshReminderStatus()
+            guard reminderEnabled else {
+                notificationState = "unavailable"
+                throw ClientError.message("iPhone не сохранил напоминание. Проверь разрешение на уведомления в настройках приложения и попробуй ещё раз.")
+            }
+        } catch let error as ClientError { self.error = error.localizedDescription }
+        catch {
+            await refreshReminderStatus()
+            notificationState = notificationState == "denied" ? "denied" : "unavailable"
+            self.error = "iPhone не разрешил сохранить напоминание. Открой настройки Ratmir English и проверь «Уведомления». Если этого пункта нет, потребуется проверить подпись приложения в AltStore."
         }
+    }
+    func disableReminder() async {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["daily-practice"])
+        await refreshReminderStatus()
+    }
+    func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+}
+
+private final class ReminderPresentation: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = ReminderPresentation()
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
     }
 }

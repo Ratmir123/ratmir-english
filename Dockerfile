@@ -33,6 +33,7 @@ COPY package.json tsconfig.json next.config.ts ./
 # dependency; no Codex binary, desktop token store or personal documents are copied.
 COPY lib ./lib
 COPY scripts/connect-chatgpt.ts ./scripts/connect-chatgpt.ts
+COPY scripts/host-server.mjs scripts/voice-relay.mjs ./scripts/
 COPY deploy/healthcheck.mjs ./deploy/healthcheck.mjs
 
 RUN mkdir -p /app/.data/siwc \
@@ -44,4 +45,4 @@ EXPOSE 3000
 STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=8s --start-period=40s --retries=3 \
     CMD ["node", "deploy/healthcheck.mjs"]
-CMD ["node", "node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0", "--port", "3000"]
+CMD ["node", "scripts/host-server.mjs"]

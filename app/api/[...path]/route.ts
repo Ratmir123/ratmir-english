@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getBrainStatus, getSubscriptionUsage } from '@/lib/server/codex';
-import { getAppState, getSession, createSession, saveSession, updateProfile, deleteSession, deleteAllTraining, enqueueAnalysis } from '@/lib/server/store';
+import { getAppState, getSession, getSessionByRequestId, createSession, saveSession, updateProfile, deleteSession, deleteAllTraining, enqueueAnalysis, finishConversation } from '@/lib/server/store';
+import { completionRequirement } from '@/lib/server/session-lifecycle';
+import { messageInputSchema, retryInputSchema, transcriptIntegrity } from '@/lib/server/transcript-integrity';
 import { planLesson, respond, hint, reviewRetryAssessment } from '@/lib/server/teacher';
-import { audioConfigured, setAudioKey, getAudio, transcribe, synthesize, cleanAudio } from '@/lib/server/audio';
+import { audioConfigured, setAudioKey, getAudio, transcribe, synthesize, cleanAudio, createLiveTranscriptionSession, closeLiveTranscriptionSession } from '@/lib/server/audio';
 import { checkAccess, checkOrigin, validAccessCode, accessCookie, requestIsSecure, ApiError } from '@/lib/server/security';
 import { ensureWorker, processAnalysisQueue } from '@/lib/server/worker';
 import { assessQuickCoachRetry, explainQuickCoach, quickCoachInputSchema, quickCoachRetryInputSchema } from '@/lib/server/quick-coach';
@@ -28,7 +30,7 @@ function session(id: string) {
   return value;
 }
 function safeSession(value: Session): Session {
-  return { ...value, lesson: { ...value.lesson, npcBrief: '', hiddenFacts: [] } };
+  return { ...value, completion: completionRequirement(value), lesson: { ...value.lesson, npcBrief: '', hiddenFacts: [] } };
 }
 function safeState(state: AppState): AppState { return { ...state, sessions: state.sessions.map(safeSession) }; }
 function json(value: unknown, status = 200) {
@@ -78,7 +80,7 @@ async function handle(req: NextRequest, route: Route) {
     if (path[0] === 'sessions' && path[1]) return json(safeSession(session(path[1])));
     if (path[0] === 'audio' && path[1]) {
       const bytes = getAudio(path[1]);
-      const type = path[1].endsWith('.mp3') ? 'audio/mpeg' : path[1].endsWith('.mp4') ? 'audio/mp4' : path[1].endsWith('.ogg') ? 'audio/ogg' : 'audio/webm';
+      const type = path[1].endsWith('.mp3') ? 'audio/mpeg' : path[1].endsWith('.mp4') ? 'audio/mp4' : path[1].endsWith('.ogg') ? 'audio/ogg' : path[1].endsWith('.wav') ? 'audio/wav' : 'audio/webm';
       return new Response(bytes, { headers: { 'Content-Type': type, 'Cache-Control': 'private, no-store' } });
     }
     if (path[0] === 'export') return new Response(JSON.stringify(safeState(getAppState()), null, 2), { headers: {
@@ -90,11 +92,25 @@ async function handle(req: NextRequest, route: Route) {
     cleanAudio(180, [...value.turns, ...value.retries].flatMap(t => t.audioFile ? [t.audioFile] : []));
     deleteSession(path[1]); return json({ ok: true });
   }
-  if (req.method === 'POST' && path[0] === 'transcribe') {
+  if (req.method === 'POST' && path[0] === 'audio' && path[1] === 'live-session') {
+    return json(await createLiveTranscriptionSession());
+  }
+  if (req.method === 'POST' && path[0] === 'audio' && path[1] === 'live-session-close') {
+    const data = z.object({ ticket: z.string().uuid(), minutes: z.number().min(0).max(8) }).parse(await body(req));
+    closeLiveTranscriptionSession(data.ticket, data.minutes);
+    return json({ ok: true });
+  }
+  if (req.method === 'POST' && (path[0] === 'transcribe' || (path[0] === 'audio' && path[1] === 'transcribe'))) {
     const form = await req.formData();
     const file = form.get('audio');
     if (!(file instanceof File)) throw new ApiError('Запись отсутствует.');
-    return json(await transcribe(file, Number(form.get('minutes'))));
+    const liveText = form.get('liveText');
+    const liveSessionId = form.get('liveSessionId');
+    return json(await transcribe(file, Number(form.get('minutes')), {
+      text: typeof liveText === 'string' ? liveText : '', final: form.get('liveFinal') === 'true',
+      minutes: form.has('liveMinutes') ? Number(form.get('liveMinutes')) : undefined,
+      ticket: typeof liveSessionId === 'string' ? liveSessionId : undefined,
+    }));
   }
   if (req.method !== 'POST') throw new ApiError('Действие не найдено.', 404);
   if (path[0] === 'profile') { updateProfile(profileSchema.parse(await body(req)) as Profile); return json(safeState(getAppState())); }
@@ -107,12 +123,17 @@ async function handle(req: NextRequest, route: Route) {
     void data; cleanAudio(0); deleteAllTraining(); return json(safeState(getAppState()));
   }
   if (path[0] === 'sessions' && !path[1]) {
-    const data = z.object({ mode: z.enum(['learning', 'call']), context: z.enum(['work', 'life', 'relocation']).optional(), familyId: z.string().max(100).optional(), topic: z.string().max(300).optional(), minutes: z.number().int().min(5).max(30).optional() }).parse(await body(req));
+    const data = z.object({ mode: z.enum(['learning', 'call']), context: z.enum(['work', 'life', 'relocation']).optional(), familyId: z.string().max(100).optional(), topic: z.string().max(300).optional(), minutes: z.number().int().min(5).max(30).optional(),
+      intent: z.enum(['new', 'resume']).default('new'), sessionId: z.string().uuid().optional(), requestId: z.string().uuid().optional() }).parse(await body(req));
     return locked('planning', async () => {
-      const existing = getAppState().sessions.find(s => s.status === 'active');
+      if (data.intent === 'resume') {
+        if (!data.sessionId) throw new ApiError('Выбери разговор, который хочешь продолжить.');
+        return json(safeSession(session(data.sessionId)));
+      }
+      const existing = data.requestId ? getSessionByRequestId(data.requestId) : null;
       if (existing) return json(safeSession(existing));
       const plan = await planLesson(getAppState(), data);
-      const value = createSession({ ...plan, id: randomUUID() }, data.mode);
+      const value = createSession({ ...plan, id: randomUUID() }, data.mode, data.requestId);
       value.turns.push({ id: randomUUID(), role: 'assistant', text: plan.opening, createdAt: new Date().toISOString(), source: 'text', support: 0 });
       saveSession(value); return json(safeSession(value));
     });
@@ -123,7 +144,7 @@ async function handle(req: NextRequest, route: Route) {
       const value = session(id);
       if (action === 'message') {
         if (value.status !== 'active' && value.status !== 'error') throw new ApiError('Этот разговор уже завершён.');
-        const data = z.object({ id: z.string().uuid(), text: z.string().trim().min(1).max(7000), source: z.enum(['text', 'audio']), audioFile: z.string().max(100).optional(), textVisible: z.boolean().default(false) }).parse(await body(req));
+        const data = messageInputSchema.parse(await body(req));
         const previous = value.turns.findIndex(t => t.id === data.id);
         if (previous >= 0 && value.turns.slice(previous + 1).some(t => t.role === 'assistant')) return json(safeSession(value));
         if (previous < 0 && value.turns.at(-1)?.role === 'user') throw new ApiError('Сначала повтори ответ собеседника на сохранённую реплику.', 409);
@@ -132,14 +153,16 @@ async function handle(req: NextRequest, route: Route) {
           if (heard) heard.support = Math.max(heard.support, 1) as 1 | 2 | 3;
         }
         if (data.source === 'audio') { if (!data.audioFile) throw new ApiError('Нет исходной записи.'); getAudio(data.audioFile); }
-        if (previous < 0) value.turns.push({ ...data, role: 'user', support: value.support, createdAt: new Date().toISOString() });
-        value.status = 'active'; value.error = undefined; saveSession(value);
+        if (previous < 0) value.turns.push({ id: data.id, text: data.text, source: data.source, audioFile: data.audioFile,
+          ...transcriptIntegrity(data.text, data.originalTranscript, data.source, value.support), role: 'user', createdAt: new Date().toISOString() });
+        value.status = 'active'; value.error = undefined;
+        value.processing = { stage: 'responding', startedAt: new Date().toISOString() }; saveSession(value);
         try {
           const text = await respond(value, getAppState().profile);
           value.turns.push({ id: randomUUID(), role: 'assistant', text, source: 'text', support: data.textVisible ? 1 : 0, createdAt: new Date().toISOString() });
-          value.support = 0; saveSession(value);
+          value.support = 0; value.processing = undefined; saveSession(value);
         } catch (error) {
-          value.error = error instanceof Error ? error.message : 'Собеседник не смог ответить.';
+          value.error = error instanceof Error ? error.message : 'Собеседник не смог ответить.'; value.processing = undefined;
           saveSession(value); throw error;
         }
         return json(safeSession(value));
@@ -176,28 +199,38 @@ async function handle(req: NextRequest, route: Route) {
         turn.source = 'audio'; saveSession(value); return json({ ok: true });
       }
       if (action === 'finish' || action === 'reanalyse') {
-        if (!value.turns.some(t => t.role === 'user')) throw new ApiError('Для разбора нужна хотя бы одна твоя попытка.');
-        value.status = 'analysing'; value.error = undefined; value.analysis = null; saveSession(value);
-        enqueueAnalysis(id); void processAnalysisQueue(); return json(safeSession(value));
+        const queued = finishConversation(id, action === 'reanalyse');
+        if (queued.status === 'analysing') void processAnalysisQueue();
+        return json(safeSession(queued));
       }
       if (action === 'retry') {
         if (!value.analysis) throw new ApiError('Сначала нужен разбор.');
-        const data = z.object({ text: z.string().trim().min(1).max(7000), audioFile: z.string().max(100).optional() }).parse(await body(req));
+        const data = retryInputSchema.parse(await body(req));
+        if (data.id && value.retries.some(retry => retry.id === data.id)) return json(safeSession(value));
         if (data.audioFile) getAudio(data.audioFile);
-        const result = await reviewRetryAssessment(value, getAppState().profile, data.text);
-        value.retries.push({ text: data.text, ...result, audioFile: data.audioFile, createdAt: new Date().toISOString() }); saveSession(value); return json(safeSession(value));
+        const { support: ignoredSupport, ...integrity } = transcriptIntegrity(data.text, data.originalTranscript, data.audioFile ? 'audio' : 'text');
+        void ignoredSupport;
+        const result = await reviewRetryAssessment(value, getAppState().profile, data.text, integrity);
+        value.retries.push({ id: data.id, text: data.text, ...result, ...integrity, audioFile: data.audioFile, analysisVersion: value.analysis.version, createdAt: new Date().toISOString() });
+        value.retryDeferred = false; saveSession(value); return json(safeSession(value));
       }
       if (action === 'complete') {
         if (!value.analysis) throw new ApiError('Разбор ещё не готов.');
-        if (value.analysis.priorities.length && value.retries.at(-1)?.improved !== true) throw new ApiError('Сначала добейся улучшения в своей попытке по разбору. Можно вернуться к ней позже.');
-        const data = z.object({ comfort: z.number().int().min(1).max(5).optional() }).parse(await body(req));
-        value.comfort = data.comfort; value.status = 'completed'; saveSession(value); return json(safeSession(value));
+        const data = z.object({ comfort: z.number().int().min(1).max(5).optional(), deferRetry: z.boolean().default(false) }).parse(await body(req));
+        const requirement = completionRequirement(value);
+        if (!requirement.canComplete && !data.deferRetry) throw new ApiError(requirement.reason || 'Сначала нужна улучшенная попытка.', 409);
+        value.comfort = data.comfort; value.retryDeferred = requirement.needsRetry && data.deferRetry;
+        value.processing = undefined; value.status = 'completed'; saveSession(value); return json(safeSession(value));
       }
       if (action === 'edit') {
         const data = z.object({ turnId: z.string(), text: z.string().trim().min(1).max(7000), disputed: z.boolean() }).parse(await body(req));
         const turn = value.turns.find(t => t.id === data.turnId && t.role === 'user');
         if (!turn) throw new ApiError('Твоя реплика не найдена.');
         turn.originalText ||= turn.text; turn.text = data.text; turn.disputed = data.disputed;
+        if (turn.source === 'audio') {
+          turn.originalTranscript ??= turn.originalText;
+          turn.transcriptEdited = turn.originalTranscript.trim() !== turn.text.trim();
+        }
         // A correction after feedback stays useful, but is no longer a fresh unaided probe.
         turn.support = Math.max(turn.support, 1) as 1 | 2 | 3;
         value.analysis = null; value.retries = []; value.comfort = undefined; value.status = 'analysing'; saveSession(value); enqueueAnalysis(id); void processAnalysisQueue();

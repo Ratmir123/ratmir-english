@@ -34,6 +34,7 @@ const MESSAGES = {
 export type SiwcErrorCode = keyof typeof MESSAGES;
 export class SiwcError extends Error {
   readonly code: SiwcErrorCode;
+  retryAt?: string;
   constructor(code: SiwcErrorCode) { super(MESSAGES[code]); this.name = 'SiwcError'; this.code = code; }
 }
 const OAUTH_ERRORS = ['access_denied', 'invalid_request', 'invalid_client', 'unauthorized_client', 'invalid_scope',
@@ -178,7 +179,14 @@ export async function consumeResponsesStream(response: Response): Promise<string
   if (!response.ok) {
     const body: ObjectValue = await readJsonBounded(response).catch(() => ({}));
     const error = body.error && typeof body.error === 'object' ? body.error as ObjectValue : {};
-    throw responseError(response.status, error.code);
+    const failure = responseError(response.status, error.code);
+    // Retry-After is an explicit retry hint, not a subscription reset prediction.
+    const retry = response.headers.get('retry-after');
+    if (failure.code === 'limit' && retry) {
+      const timestamp = /^\d{1,8}$/.test(retry) ? Date.now() + Number(retry) * 1000 : Date.parse(retry);
+      if (Number.isFinite(timestamp) && timestamp > Date.now() && timestamp < Date.now() + 30 * 86_400_000) failure.retryAt = new Date(timestamp).toISOString();
+    }
+    throw failure;
   }
   const contentType = response.headers.get('content-type')?.toLowerCase();
   // Some plan-usage responses omit this header. The event parser still requires

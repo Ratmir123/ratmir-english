@@ -14,12 +14,15 @@ struct TrainingState: Decodable {
     let skills: [Skill]
     let xp: Int
     let completed: Int
+    let audioUsage: AudioUsage?
 }
+struct AudioUsage: Decodable { let usedUsd: Double; let estimated: Bool; let budgetUsd: Double; let recordedMinutes: Double; let spokenCharacters: Int }
 struct Lesson: Decodable {
     let title: String
     let goal: String
     let why: String
     let minutes: Int
+    let context: String?
 }
 struct Turn: Decodable, Identifiable {
     let id: String
@@ -52,6 +55,44 @@ struct Conversation: Decodable, Identifiable {
     let analysis: Review?
     let retries: [Retry]
     let error: String?
+    let createdAt: String?
+    let updatedAt: String?
+    let processing: Processing?
+    let completion: Completion?
+    let retryDeferred: Bool?
+}
+struct Processing: Decodable { let stage: String; let startedAt: String; let attempt: Int?; let nextAttemptAt: String? }
+struct Completion: Decodable { let canComplete: Bool; let needsRetry: Bool; let reason: String? }
+struct SubscriptionUsage: Decodable {
+    struct Window: Decodable, Identifiable {
+        let id: String
+        let bucketName: String?
+        let kind: String
+        let usedPercent: Double?
+        let remainingPercent: Double?
+        let windowDurationMins: Int?
+        let resetsAt: String?
+    }
+    struct Activity: Decodable {
+        let periodDays: Int
+        let requests: Int
+        let successful: Int
+        let failed: Int
+        let lastRequestAt: String?
+        let lastLimitAt: String?
+        let retryAt: String?
+        let averageLatencyMs: Double?
+    }
+    let available: Bool
+    let source: String
+    let scope: String
+    let checkedAt: String?
+    let stale: Bool
+    let windows: [Window]
+    let plan: String?
+    let error: String?
+    let manageUrl: String?
+    let activity: Activity?
 }
 struct Transcription: Decodable { let text: String; let audioFile: String }
 struct Speech: Decodable { let file: String }

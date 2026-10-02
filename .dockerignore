@@ -17,6 +17,8 @@
 !public/*.html
 !public/*.js
 !scripts/connect-chatgpt.ts
+!scripts/host-server.mjs
+!scripts/voice-relay.mjs
 !deploy/healthcheck.mjs
 
 # Keep these exclusions last, including inside otherwise allowed directories.
