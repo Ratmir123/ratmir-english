@@ -187,3 +187,32 @@ final class LiveTranscriptTokenTests: XCTestCase {
         XCTAssertEqual(stream.revision, revision, "Duplicate deltas do not trigger another scroll/layout update")
     }
 }
+
+final class AudioSessionOwnershipTests: XCTestCase {
+    func testAStalePlayerCannotReleaseTheNewMicrophoneOwner() {
+        let order = AudioSessionCommandOrder()
+        let playback = order.reserve()
+        let capture = order.reserve()
+        XCTAssertFalse(order.isCurrent(playback))
+        XCTAssertTrue(order.isCurrent(capture))
+        XCTAssertNil(order.reserveRelease(ifOwnedBy: playback), "Late playback callbacks must not silence a newer capture")
+        XCTAssertTrue(order.isCurrent(capture))
+        let release = order.reserveRelease(ifOwnedBy: capture)
+        XCTAssertNotNil(release)
+        XCTAssertFalse(order.isCurrent(capture))
+        XCTAssertTrue(order.isCurrent(release!))
+    }
+
+    func testQueuedRepairAndStopAreSupersededByTheLatestAudioIntent() {
+        let order = AudioSessionCommandOrder()
+        _ = order.reserve()
+        let queuedRepair = order.snapshot()
+        let queuedStop = order.reserveRelease(ifOwnedBy: nil)!
+        let latestPlayback = order.reserve()
+        XCTAssertFalse(order.isCurrent(queuedRepair))
+        XCTAssertFalse(order.isCurrent(queuedStop), "An obsolete stop cannot run after a newer activation")
+        XCTAssertTrue(order.isCurrent(latestPlayback))
+        XCTAssertNil(order.reserveRelease(ifOwnedBy: queuedStop))
+        XCTAssertTrue(order.isCurrent(latestPlayback))
+    }
+}

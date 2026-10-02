@@ -11,13 +11,16 @@ final class VoiceCapture {
     private var active = false
     private var sequence = 0
     private var samples: Int64 = 0
+    private var sessionOwner: Int?
     var onChunk: ((Int, Data, Double) -> Void)?
     var onFailure: ((String) -> Void)?
 
-    func start(at url: URL) throws {
+    func start(at url: URL) async throws {
         var didStart = false
-        defer { if !didStart { NativeAudioRoute.deactivate() } }
-        try NativeAudioRoute.prepareCapture()
+        let owner = try await NativeAudioRoute.prepareCapture()
+        sessionOwner = owner
+        defer { if !didStart { NativeAudioRoute.deactivate(ifOwnedBy: owner); sessionOwner = nil } }
+        try Task.checkCancellation()
         let input = engine.inputNode
         let source = input.outputFormat(forBus: 0)
         guard source.sampleRate > 0, source.channelCount > 0,
@@ -89,7 +92,8 @@ final class VoiceCapture {
             file = nil; converter = nil
             return (duration, sequence)
         }
-        NativeAudioRoute.deactivate()
+        NativeAudioRoute.deactivate(ifOwnedBy: sessionOwner)
+        sessionOwner = nil
         return result
     }
 }

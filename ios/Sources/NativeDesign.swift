@@ -30,6 +30,7 @@ struct ReadingCanvas: ViewModifier {
 
 /// Material belongs to floating controls. Reading surfaces remain quiet and solid.
 struct LiquidChrome: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
     var radius: CGFloat = 28
     var tint: Color? = nil
     var interactive = true
@@ -38,7 +39,10 @@ struct LiquidChrome: ViewModifier {
     @Environment(\.colorSchemeContrast) private var contrast
     @ViewBuilder
     func body(content: Content) -> some View {
-        if reduceTransparency || contrast == .increased {
+        if !isEnabled {
+            content.background(Theme.surface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.white.opacity(0.7), lineWidth: 1).allowsHitTesting(false) }
+        } else if reduceTransparency || contrast == .increased {
             content.background(tint ?? .white, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
                 .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Theme.charcoal.opacity(0.22), lineWidth: 1).allowsHitTesting(false) }
         } else if #available(iOS 26.0, *) {
@@ -89,6 +93,21 @@ struct ComposerBackdrop: ViewModifier {
             }
             .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.76)).frame(height: 1).allowsHitTesting(false) }
             .environment(\.colorScheme, .light)
+    }
+}
+
+/// Unlike an inset alone, the native bar extends the scroll edge effect through
+/// the complete control area and home-indicator safe area on the modern SDK.
+struct ConversationDock<Dock: View>: ViewModifier {
+    let dock: Dock
+    init(@ViewBuilder dock: () -> Dock) { self.dock = dock() }
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.safeAreaBar(edge: .bottom, spacing: 0) { dock }
+                .scrollEdgeEffectStyle(.hard, for: .bottom)
+        } else {
+            content.safeAreaInset(edge: .bottom, spacing: 0) { dock }
+        }
     }
 }
 
@@ -242,10 +261,9 @@ struct PrimaryButton: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.subheadline.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 16)
-            .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(Theme.lime)
+            .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(isEnabled ? Theme.lime : Theme.secondary)
             .modifier(LiquidChrome(radius: 20, tint: Theme.charcoal))
-            .opacity(isEnabled ? 1 : 0.48)
-            .scaleEffect(x: configuration.isPressed && !reduceMotion ? 0.982 : 1, y: configuration.isPressed && !reduceMotion ? 0.965 : 1)
+            .scaleEffect(x: configuration.isPressed && isEnabled && !reduceMotion ? 0.982 : 1, y: configuration.isPressed && isEnabled && !reduceMotion ? 0.965 : 1)
             .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
     }
 }
@@ -255,10 +273,9 @@ struct SecondaryButton: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.subheadline.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 16)
-            .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(Theme.charcoal)
+            .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(isEnabled ? Theme.charcoal : Theme.secondary)
             .modifier(LiquidChrome(radius: 20, tint: Theme.lime))
-            .opacity(isEnabled ? 1 : 0.45)
-            .scaleEffect(x: configuration.isPressed && !reduceMotion ? 0.982 : 1, y: configuration.isPressed && !reduceMotion ? 0.965 : 1)
+            .scaleEffect(x: configuration.isPressed && isEnabled && !reduceMotion ? 0.982 : 1, y: configuration.isPressed && isEnabled && !reduceMotion ? 0.965 : 1)
             .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
     }
 }

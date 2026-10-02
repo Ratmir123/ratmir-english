@@ -103,6 +103,7 @@ enum AccessKey {
     private var liveConnection: Task<Void, Never>?
     private var recordingLimit: Task<Void, Never>?
     private var player: AVAudioPlayer?
+    private var playbackAudioOwner: Int?
     private var playbackDelegate: PlaybackDelegate?
     private var recordedMinutes = 0.01
     private var localRecording: URL?
@@ -180,8 +181,14 @@ enum AccessKey {
             return
         }
         if playing {
-            do { try NativeAudioRoute.repairReceiverIfNeeded() }
-            catch { audioRouteMessage = "Не удалось переключить звук. Останови озвучку и включи её снова." }
+            let generation = voiceGeneration
+            do { try await NativeAudioRoute.repairReceiverIfNeeded() }
+            catch is CancellationError { return }
+            catch {
+                guard generation == voiceGeneration, playing, !recording else { return }
+                audioRouteMessage = "Не удалось переключить звук. Останови озвучку и включи её снова."
+            }
+            guard generation == voiceGeneration, playing, !recording else { return }
             audioOutput = NativeAudioRoute.outputLabel()
         }
     }
@@ -518,9 +525,16 @@ enum AccessKey {
         defer { if generation == voiceGeneration { voiceLoading = false } }
         do {
             let speech: Speech = try await request("sessions/\(conversation.id)/speech", body: ["turnId": turn.id])
+            guard generation == voiceGeneration, !recording, !microphoneStarting,
+                  self.conversation?.id == conversation.id, !Task.isCancelled else { return }
             let data = try await checked(URLRequest(url: endpoint("audio/\(speech.file)")))
-            guard generation == voiceGeneration, !recording, self.conversation?.id == conversation.id, !Task.isCancelled else { return }
-            try NativeAudioRoute.preparePlayback()
+            guard generation == voiceGeneration, !recording, !microphoneStarting,
+                  self.conversation?.id == conversation.id, !Task.isCancelled else { return }
+            let owner = try await NativeAudioRoute.preparePlayback()
+            guard generation == voiceGeneration, !recording, !microphoneStarting, self.conversation?.id == conversation.id, !Task.isCancelled else {
+                NativeAudioRoute.deactivate(ifOwnedBy: owner); return
+            }
+            playbackAudioOwner = owner
             audioOutput = NativeAudioRoute.outputLabel(); audioRouteMessage = nil
             player = try AVAudioPlayer(data: data)
             player?.isMeteringEnabled = true
@@ -530,7 +544,7 @@ enum AccessKey {
                     guard generation == client.voiceGeneration else { return }
                     client.playing = false; client.playingLearnerRecording = false; client.audioLevel = 0; client.pendingSpeechTurn = nil
                     client.meterTask?.cancel(); client.meterTask = nil
-                    NativeAudioRoute.deactivate()
+                    NativeAudioRoute.deactivate(ifOwnedBy: owner); client.playbackAudioOwner = nil
                     guard completed else { client.error = "Озвучка прервалась. Нажми «Слушать» ещё раз."; return }
                     client.heardTurns.insert(turn.id)
                     await client.savePlaybackAcknowledgement(sessionID: conversation.id, turnID: turn.id)
@@ -544,7 +558,7 @@ enum AccessKey {
         } catch is CancellationError { }
         catch {
             guard generation == voiceGeneration else { return }
-            pendingSpeechTurn = nil
+            resetPlayback(cancelLoading: false)
             self.error = "Не удалось озвучить реплику. Текст сохранён; можно повторить кнопкой «Слушать». " + error.localizedDescription
         }
     }
@@ -584,9 +598,10 @@ enum AccessKey {
         if cancelLoading { speechTask?.cancel(); speechTask = nil }
         meterTask?.cancel(); meterTask = nil
         player?.stop(); player = nil; playbackDelegate = nil
+        let owner = playbackAudioOwner; playbackAudioOwner = nil
         playbackEndTime = nil
         playing = false; playingLearnerRecording = false; voiceLoading = false; audioLevel = 0; pendingSpeechTurn = nil
-        if !recording && !microphoneStarting { NativeAudioRoute.deactivate() }
+        if !recording && !microphoneStarting { NativeAudioRoute.deactivate(ifOwnedBy: owner) }
     }
     private func startPlaybackMeter() {
         meterTask?.cancel()
@@ -622,8 +637,12 @@ enum AccessKey {
             else if let url = localRecording { data = try Data(contentsOf: url) }
             else if let recordedFile { data = try await checked(URLRequest(url: endpoint("audio/\(recordedFile)"))) }
             else { return }
-            guard generation == voiceGeneration, !recording else { return }
-            try NativeAudioRoute.preparePlayback()
+            guard generation == voiceGeneration, !recording, !microphoneStarting, !Task.isCancelled else { return }
+            let owner = try await NativeAudioRoute.preparePlayback()
+            guard generation == voiceGeneration, !recording, !microphoneStarting, !Task.isCancelled else {
+                NativeAudioRoute.deactivate(ifOwnedBy: owner); return
+            }
+            playbackAudioOwner = owner
             audioOutput = NativeAudioRoute.outputLabel(); audioRouteMessage = nil
             player = try AVAudioPlayer(data: data); player?.isMeteringEnabled = true
             if let startSeconds, startSeconds.isFinite {
@@ -637,13 +656,18 @@ enum AccessKey {
                 Task { @MainActor [client] in
                     guard generation == client.voiceGeneration else { return }
                     client.playing = false; client.playingLearnerRecording = false; client.audioLevel = 0; client.meterTask?.cancel()
-                    NativeAudioRoute.deactivate()
+                    NativeAudioRoute.deactivate(ifOwnedBy: owner); client.playbackAudioOwner = nil
                 }
             }
             player?.delegate = playbackDelegate
             guard player?.play() == true else { throw ClientError.message("Не удалось прослушать запись.") }
             playing = true; playingLearnerRecording = true; startPlaybackMeter()
-        } catch { if generation == voiceGeneration { self.error = error.localizedDescription } }
+        } catch is CancellationError { }
+        catch {
+            guard generation == voiceGeneration else { return }
+            resetPlayback(cancelLoading: false)
+            self.error = error.localizedDescription
+        }
     }
 
     func beginRecording() async {
@@ -659,9 +683,10 @@ enum AccessKey {
         defer { microphoneStarting = false }
         let allowed = await AVAudioApplication.requestRecordPermission()
         guard allowed else { error = "Микрофон отключён. Открой настройки Ratmir English и разреши доступ."; return }
-        guard !busy, conversationPresented, conversation?.id == currentSession else { return }
+        guard !busy, conversationPresented, conversation?.id == currentSession, !Task.isCancelled else { return }
         do {
             stopSpeaking()
+            let captureGeneration = voiceGeneration
             let folder = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                 appropriateFor: nil, create: true).appendingPathComponent("Recordings", isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -692,7 +717,14 @@ enum AccessKey {
                     await client.stopRecording(); client.error = message
                 }
             }
-            try capture.start(at: url)
+            try await capture.start(at: url)
+            guard recordingID == identifier, captureGeneration == voiceGeneration,
+                  !busy, conversationPresented, conversation?.id == currentSession, !Task.isCancelled else {
+                _ = capture.stop()
+                live.close()
+                try? FileManager.default.removeItem(at: url)
+                return
+            }
             self.capture = capture; liveTranscriber = live
             localRecording = url; recording = true; error = nil
             UserDefaults.standard.set(url.path, forKey: "pending-recording-path")
@@ -724,7 +756,8 @@ enum AccessKey {
                 self.recordingLimit = nil
                 await self.stopRecording()
             }
-        } catch { self.error = error.localizedDescription }
+        } catch is CancellationError { }
+        catch { self.error = error.localizedDescription }
     }
     func stopRecording() async {
         guard recording, let capture else { return }

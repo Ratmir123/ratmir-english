@@ -115,6 +115,7 @@ private struct TimedAnswer: Identifiable {
 
 struct SpeechTimingView: View {
     let conversation: Conversation
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var answers: [TimedAnswer] {
         var result: [TimedAnswer] = []
         let ownTurns = conversation.turns.filter { $0.role == "user" }
@@ -137,10 +138,17 @@ struct SpeechTimingView: View {
     var body: some View {
         if let first = answers.first {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Label("Твоя речь в записи", systemImage: "waveform").font(.headline)
-                    Spacer(minLength: 8)
-                    Text("По аудио").font(.caption).foregroundStyle(Theme.secondary)
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Твоя речь в записи", systemImage: "waveform").font(.headline)
+                        Text("По аудио").font(.caption).foregroundStyle(Theme.secondary)
+                    }
+                } else {
+                    HStack {
+                        Label("Твоя речь в записи", systemImage: "waveform").font(.headline)
+                        Spacer(minLength: 8)
+                        Text("По аудио").font(.caption).foregroundStyle(Theme.secondary)
+                    }
                 }
                 TimedAnswerView(answer: first)
                 if answers.count > 1 {
@@ -162,14 +170,14 @@ struct SpeechTimingView: View {
 private struct TimedAnswerView: View {
     let answer: TimedAnswer
     @EnvironmentObject private var client: TrainingClient
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var timing: SpeechTiming { answer.timing }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(answer.title).font(.subheadline.weight(.semibold))
-                Spacer(minLength: 8)
-                Text(SpeechTime.clock(timing.durationSeconds)).font(.subheadline).monospacedDigit()
-                    .accessibilityLabel("Длительность записи: \(SpeechTime.seconds(timing.durationSeconds)) секунд")
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 6) { answerHeader }
+            } else {
+                HStack(alignment: .firstTextBaseline) { answerHeader }
             }
             SpeechTimeline(timing: timing)
             if timing.quality == "no-speech" {
@@ -215,6 +223,12 @@ private struct TimedAnswerView: View {
                 }.font(.footnote).padding(.top, 12)
             } label: { Text("Текст, темп и ограничения").font(.footnote.weight(.medium)) }
         }
+    }
+    @ViewBuilder private var answerHeader: some View {
+        Text(answer.title).font(.subheadline.weight(.semibold))
+        if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
+        Text(SpeechTime.clock(timing.durationSeconds)).font(.subheadline).monospacedDigit()
+            .accessibilityLabel("Длительность записи: \(SpeechTime.seconds(timing.durationSeconds)) секунд")
     }
     @ViewBuilder private var pauseMetrics: some View {
         VStack(alignment: .leading, spacing: 5) {

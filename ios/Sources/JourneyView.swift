@@ -209,8 +209,8 @@ struct AchievementsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                ScreenHeading(title: "Твои награды", subtitle: "\(achievements.filter { $0.unlocked }.count) из \(achievements.count) открыто. У каждой есть понятное условие.")
-                Text("Награда отмечает действие или наблюдение. Она не обещает владение языком и не заменяет примеры твоей речи.")
+                ScreenHeading(title: "Твои награды", subtitle: "Открыто \(achievements.filter { $0.unlocked }.count) из \(achievements.count).")
+                Text("Выбери награду и практику для неё. Языковой уровень проверяем по твоим ответам.")
                     .font(.subheadline).foregroundStyle(Theme.secondary)
                 Text("Дни практики считаются по UTC. Это не обязательная серия посещений.").font(.caption).foregroundStyle(Theme.secondary)
                 ForEach(achievements) { achievement in AchievementRow(achievement: achievement) }

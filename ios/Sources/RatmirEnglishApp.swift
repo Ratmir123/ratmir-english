@@ -36,7 +36,7 @@ struct RootView: View {
                     ProgressViewScreen().tabItem { Label("Прогресс", systemImage: "chart.xyaxis.line") }.tag(1)
                     HistoryView().tabItem { Label("История", systemImage: "clock.arrow.circlepath") }.tag(2)
                     SettingsView().tabItem { Label("Настройки", systemImage: "slider.horizontal.3") }.tag(3)
-                }
+                }.tint(Theme.charcoal).toolbarColorScheme(.light, for: .tabBar)
             } else { LoginView() }
         }
         .task {
@@ -328,7 +328,7 @@ struct ConversationView: View {
     }
     private var decoratedConversation: some View {
         conversationScroll
-            .safeAreaInset(edge: .bottom, spacing: 0) { bottomDock }
+            .modifier(ConversationDock { bottomDock })
             .navigationTitle(hasReview ? "Твой разбор" : textActivity ? (readingActivity ? "Чтение" : "Письмо") : "Разговор")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.light, for: .navigationBar)
@@ -356,6 +356,10 @@ struct ConversationView: View {
     private var conversationContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             if let value = conversation {
+                Text(textActivity ? (readingActivity ? "ЧТЕНИЕ" : "ПИСЬМО") : value.mode == "call" ? "СОЗВОН" : "С ОПОРАМИ")
+                    .font(.caption2.weight(.semibold)).tracking(0.8).foregroundStyle(Theme.charcoal)
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background(Theme.lavender.opacity(0.3), in: Capsule())
                 conversationHeader(value)
                 if value.status == "completed", let result = client.state?.progression?.recentResults.first(where: { $0.sessionId == value.id }) {
                     PracticeOutcomeView(result: result)
@@ -386,10 +390,6 @@ struct ConversationView: View {
         }
     }
     @ToolbarContentBuilder private var conversationToolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Text(textActivity ? (readingActivity ? "ЧТЕНИЕ" : "ПИСЬМО") : conversation?.mode == "call" ? "СОЗВОН" : "С ОПОРАМИ")
-                .font(.caption2.weight(.semibold)).tracking(0.8).foregroundStyle(Theme.secondary)
-        }
         ToolbarItem(placement: .topBarTrailing) {
             Button { draftFocused = false; client.minimizeConversation() } label: {
                 Image(systemName: "chevron.down").font(.subheadline.weight(.semibold))

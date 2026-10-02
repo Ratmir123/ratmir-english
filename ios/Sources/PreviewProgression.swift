@@ -12,9 +12,9 @@ enum PreviewProgression {
         ]
         let achievements: [[String: Any]] = [
             achievement("first-practice", "Первый разговор", "Завершить одну практику с разбором.", current: 6, target: 1, at: now),
-            achievement("five-practices", "Уже вошёл в ритм", "Завершить пять занятий с разбором.", current: 6, target: 5, at: now),
-            achievement("independent-three", "Своими словами", "Три самостоятельных успеха с примерами из твоих ответов.", current: 2, target: 3, at: nil),
-            achievement("ielts-mix", "Попробовать четыре навыка", "По одному заданию на речь, слушание, чтение и письмо.", current: 1, target: 4, at: nil)
+            achievement("ten-practices", "Уже вошёл в ритм", "Завершить десять занятий с разбором.", current: 6, target: 10, at: nil),
+            achievement("own-improvement", "Своими словами", "Сделать улучшенную самостоятельную попытку после разбора.", current: 0, target: 1, at: nil),
+            achievement("ielts-four-sides", "Попробовать четыре навыка", "По одному заданию на речь, слушание, чтение и письмо.", current: 1, target: 4, at: nil)
         ]
         let quality: [String: Any] = ["observedTargets": 2, "targetCount": 3, "independentSuccesses": 1, "supportedObservations": 0, "partial": 1, "difficulty": 0]
         let result: [String: Any] = ["sessionId": sessionId, "xp": deferred ? 15 : 20, "completedAt": now, "track": "life", "activity": "speaking", "improvedRetry": !deferred, "quality": quality,
