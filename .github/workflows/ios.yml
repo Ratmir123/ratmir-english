@@ -24,6 +24,19 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/RatmirEnglish.app package/Payload/
           cd package
           zip -qr ../RatmirEnglish.ipa Payload
+      - name: Verify device bundle metadata
+        run: |
+          xcodebuild -project ios/RatmirEnglish.xcodeproj -scheme RatmirEnglish -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO -showBuildSettings -json > build-settings.json
+          python3 - <<'PY'
+          import json, plistlib
+          targets = json.load(open('build-settings.json'))
+          settings = next(item['buildSettings'] for item in targets if item['target'] == 'RatmirEnglish')
+          info = plistlib.load(open('build/Build/Products/Release-iphoneos/RatmirEnglish.app/Info.plist', 'rb'))
+          fields = {'CFBundleIdentifier': 'PRODUCT_BUNDLE_IDENTIFIER', 'CFBundleShortVersionString': 'MARKETING_VERSION', 'CFBundleVersion': 'CURRENT_PROJECT_VERSION'}
+          for field, setting in fields.items():
+              assert info[field] == settings[setting], f'Packaged {field} does not match {setting}'
+          print('Verified device bundle:', info['CFBundleIdentifier'], info['CFBundleShortVersionString'], info['CFBundleVersion'])
+          PY
       - name: Launch iPhone 11 simulator
         run: |
           xcodebuild -quiet -project ios/RatmirEnglish.xcodeproj -scheme RatmirEnglish -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath simulator-build CODE_SIGNING_ALLOWED=NO build
