@@ -61,7 +61,7 @@ export function StartupWelcome({ state, busy, error, onStart, onResume, onDismis
 
   return <section className={styles.entry} aria-labelledby="startup-greeting">
     <div className={styles.content}>
-      <div className={styles.identity}><span className={styles.wordmark}>ratmir<span>english</span></span><span>Личная практика</span></div>
+      <div className={styles.identity}><span className={styles.wordmark}>smooth<span>english</span></span><span>Личная практика</span></div>
       <div className={styles.panel}>
         <div className={styles.greeting}><h1 id="startup-greeting">{greeting}</h1><p>{done ? 'Хорошая точка, чтобы остановиться.' : 'Английский — сейчас, небольшим шагом.'}</p></div>
         <div className={styles.task}>
