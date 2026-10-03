@@ -471,6 +471,9 @@ final class NativeChromeTests: XCTestCase {
         func readiness(signedIn: Bool = true, loaded: Bool = true, onboarding: Bool = false, protected: Bool = false, foreground: Bool = true) -> NativeOpeningReadiness {
             NativeOpeningReadiness(signedIn: signedIn, stateLoaded: loaded, onboardingBlocked: onboarding, protectedActivity: protected, foreground: foreground)
         }
+        XCTAssertTrue(readiness(foreground: false).displayEligible, "The greeting owns the first frame while its timer waits for foreground")
+        XCTAssertFalse(readiness(onboarding: true).displayEligible)
+        XCTAssertFalse(readiness(protected: true).displayEligible)
         for input in [readiness(signedIn: false), readiness(loaded: false), readiness(foreground: false)] {
             var state = NativeOpeningState()
             XCTAssertFalse(state.begin(readiness: input, reduceMotion: false))

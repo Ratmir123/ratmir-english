@@ -41,7 +41,7 @@ struct RootView: View {
                 || client.playing || client.hasUnuploadedRecording || !client.draft.isEmpty || selectedTab != 0 || dynamicTypeSize.isAccessibilitySize,
             foreground: scenePhase == .active)
     }
-    private var openingVisible: Bool { opening.phase != .finished && openingReadiness.allowed && !reduceMotion && !voiceOver }
+    private var openingVisible: Bool { opening.phase != .finished && openingReadiness.displayEligible && !reduceMotion && !voiceOver }
     private var openingSentence: String {
         if client.state?.sessions.contains(where: { ($0.baseline == nil || client.state?.onboarding?.status != "ready") && ($0.status != "completed" || $0.retryDeferred == true) }) == true {
             return "Разговор на месте. Давай дожмём мысль."

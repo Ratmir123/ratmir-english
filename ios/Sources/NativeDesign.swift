@@ -266,11 +266,15 @@ struct SelectionRow: View {
                             selection = option.id
                         } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: option.icon).frame(width: 26)
+                                Image(systemName: option.icon).font(.system(size: 24, weight: .medium))
+                                    .frame(width: 32, height: 32)
                                 Text(option.title).font(.body.weight(.medium))
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 0)
-                                if selection == option.id { Image(systemName: "checkmark").font(.body.weight(.semibold)) }
+                                if selection == option.id {
+                                    Image(systemName: "checkmark").font(.system(size: 24, weight: .semibold))
+                                        .frame(width: 28, height: 32)
+                                }
                             }.foregroundStyle(Theme.charcoal).padding(16).frame(maxWidth: .infinity, minHeight: 54)
                                 .background(selection == option.id ? Theme.lavender.opacity(0.48) : Theme.surface.opacity(0.42),
                                             in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -516,7 +520,10 @@ struct NativeOpeningReadiness: Hashable {
     let protectedActivity: Bool
     let foreground: Bool
     var ready: Bool { signedIn && stateLoaded && foreground }
-    var allowed: Bool { ready && !onboardingBlocked && !protectedActivity }
+    // Own the initial foreground frame before scenePhase becomes active. Only
+    // the automatic timer waits for .active; protected flows still stay visible.
+    var displayEligible: Bool { signedIn && stateLoaded && !onboardingBlocked && !protectedActivity }
+    var allowed: Bool { displayEligible && foreground }
 }
 
 struct NativeOpeningState {
