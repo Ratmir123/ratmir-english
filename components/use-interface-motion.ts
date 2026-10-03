@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 
 const EASE_OUT = 'cubic-bezier(0.23, 1, 0.32, 1)';
 
@@ -60,6 +60,32 @@ export function useContentEntrance<T extends HTMLElement>(key: string, distance 
     };
   }, []);
   return ref;
+}
+
+/** The opening reveals mounted Home blocks once; interaction restores their natural position. */
+export function useHomeStagger<T extends HTMLElement>(root: RefObject<T | null>, sequence: number) {
+  useLayoutEffect(() => {
+    const element = root.current;
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (!sequence || !element || document.hidden || preference.matches
+      || document.documentElement.dataset.input === 'keyboard' || !element.animate) return;
+    const blocks = element.querySelectorAll<HTMLElement>('.page-heading, .home-main > *, .profile-column > *');
+    const animations = [...blocks].map((block, index) => block.animate([
+      { opacity: 0, transform: 'translateY(10px) scale(.99)' },
+      { opacity: 1, transform: 'translateY(0) scale(1)' },
+    ], { duration: 300, delay: Math.min(index * 45, 225), easing: EASE_OUT, fill: 'backwards' }));
+    const stop = () => animations.forEach(animation => animation.cancel());
+    const onVisibility = () => { if (document.hidden) stop(); };
+    const onPreference = () => { if (preference.matches) stop(); };
+    window.addEventListener('pointerdown', stop, true);
+    window.addEventListener('keydown', stop, true);
+    document.addEventListener('visibilitychange', onVisibility);
+    preference.addEventListener('change', onPreference);
+    return () => {
+      stop(); window.removeEventListener('pointerdown', stop, true); window.removeEventListener('keydown', stop, true);
+      document.removeEventListener('visibilitychange', onVisibility); preference.removeEventListener('change', onPreference);
+    };
+  }, [root, sequence]);
 }
 
 /** Measure stable button hitboxes only on selection or resize, never on animation frames. */

@@ -85,7 +85,7 @@ struct RewardInvitation: View {
     let total: Int
     var body: some View {
         HStack(spacing: 12) {
-            RewardImage(name: RewardArt.achievement("own-improvement"), size: 50)
+            RewardImage(name: RewardArt.achievement("own-improvement"), size: 50, motion: .goal)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Награды").font(.headline)
                 Text("Открыто \(unlocked) из \(total)").font(.caption).foregroundStyle(Theme.charcoal.opacity(0.74))
@@ -332,6 +332,11 @@ struct PracticeTrackView: View {
 struct AchievementsView: View {
     @EnvironmentObject private var client: TrainingClient
     private var achievements: [PracticeAchievement] { client.state?.progression?.achievements ?? [] }
+    private var nextGoalID: String? {
+        achievements.filter { !$0.unlocked }.max {
+            Double($0.current) / Double(max(1, $0.target)) < Double($1.current) / Double(max(1, $1.target))
+        }?.id
+    }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -339,7 +344,7 @@ struct AchievementsView: View {
                 Text("Выбери награду и практику для неё. Языковой уровень проверяем по твоим ответам.")
                     .font(.subheadline).foregroundStyle(Theme.secondary)
                 Text("Дни практики считаются по UTC. Это не обязательная серия посещений.").font(.caption).foregroundStyle(Theme.secondary)
-                ForEach(achievements) { achievement in AchievementRow(achievement: achievement) }
+                ForEach(achievements) { achievement in AchievementRow(achievement: achievement, nearestGoal: achievement.id == nextGoalID) }
             }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
         }.modifier(ReadingCanvas()).navigationTitle("Награды").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
     }
@@ -347,11 +352,16 @@ struct AchievementsView: View {
 
 private struct AchievementRow: View {
     let achievement: PracticeAchievement
+    var nearestGoal = false
     var body: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 14) {
-                    RewardImage(name: RewardArt.achievement(achievement.id), size: 72)
+                    Button {} label: {
+                        RewardImage(name: RewardArt.achievement(achievement.id), size: 72, motion: achievement.unlocked ? .earned : nearestGoal ? .goal : .still)
+                    }.buttonStyle(RewardArtPressStyle())
+                        .accessibilityLabel("Значок «\(achievement.title)»")
+                        .accessibilityHint("Нажми, чтобы пошевелить значок. Условие награды ниже.")
                     VStack(alignment: .leading, spacing: 6) {
                         Text(achievement.title).font(.headline)
                         Text(achievement.unlocked ? "Открыто" : "Пока впереди").font(.caption).foregroundStyle(Theme.secondary)

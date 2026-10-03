@@ -96,6 +96,38 @@ jobs:
           sleep 8
           kill -INT "$recorder"
           wait "$recorder" || true
+          # Start recording before launch so the brief greeting is not missed.
+          xcrun simctl terminate "$device" app.ratmirenglish.personal || true
+          xcrun simctl io "$device" recordVideo --codec=h264 iPhone11-opening-motion.mp4 &
+          recorder=$!
+          sleep 0.2
+          xcrun simctl launch "$device" app.ratmirenglish.personal --preview=opening
+          sleep 5
+          kill -INT "$recorder"
+          wait "$recorder" || true
+          xcrun simctl io "$device" screenshot iPhone11-opening.png
+          for appearance in light dark; do
+            xcrun simctl ui "$device" appearance "$appearance"
+            xcrun simctl terminate "$device" app.ratmirenglish.personal || true
+            xcrun simctl io "$device" recordVideo --codec=h264 "iPhone11-selector-$appearance-motion.mp4" &
+            recorder=$!
+            sleep 0.2
+            xcrun simctl launch "$device" app.ratmirenglish.personal --preview=selector-rapid
+            sleep 5
+            kill -INT "$recorder"
+            wait "$recorder" || true
+            xcrun simctl io "$device" screenshot "iPhone11-selector-rapid-$appearance.png"
+          done
+          xcrun simctl ui "$device" appearance light
+          for screen in achievements ranks; do
+            xcrun simctl terminate "$device" app.ratmirenglish.personal || true
+            xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
+            xcrun simctl io "$device" recordVideo --codec=h264 "iPhone11-$screen-motion.mp4" &
+            recorder=$!
+            sleep 6
+            kill -INT "$recorder"
+            wait "$recorder" || true
+          done
       - name: Test native completion and audio policy
         run: |
           device="$TRAINING_SIMULATOR"
@@ -105,18 +137,29 @@ jobs:
           python3 - <<'PY'
           import json
           summary = json.load(open('native-tests-summary.json'))
-          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 36, summary
-          assert type(summary['passedTests']) is int and summary['passedTests'] == 36, summary
+          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 39, summary
+          assert type(summary['passedTests']) is int and summary['passedTests'] == 39, summary
           assert summary['failedTests'] == 0 and summary['skippedTests'] == 0, summary
           assert not summary['testFailures'] and summary.get('expectedFailures', 0) == 0, summary
-          print('Verified native tests: 36 passed, none failed or skipped')
+          print('Verified native tests: 39 passed, none failed or skipped')
           PY
-          for screen in achievements ranks ranks-bottom reminder-editor completed review preview-timing dictation-preview; do
+          for screen in achievements ranks ranks-bottom reminder-editor completed review preview-timing dictation-preview selector-rapid; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen" --large-type
-            sleep 3
+            if [ "$screen" = "selector-rapid" ]; then sleep 5; else sleep 3; fi
             xcrun simctl io "$device" screenshot "iPhone11-$screen-large.png"
           done
+      - name: Verify preview capture inventory
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          images = list(Path('.').glob('iPhone11-*.png'))
+          movies = list(Path('.').glob('iPhone11-*-motion.mp4'))
+          assert len(images) == 48, [p.name for p in images]
+          assert len(movies) == 9, [p.name for p in movies]
+          assert all(p.stat().st_size > 1024 for p in images + movies), 'A preview capture is empty or incomplete'
+          print('Verified previews: 48 PNG screenshots and 9 motion recordings')
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

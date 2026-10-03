@@ -12,7 +12,7 @@ function validTimestamp(value: string): number {
   return Number.isFinite(time) ? time : -Infinity;
 }
 
-/** Reads saved evidence only. Showing the entry screen never schedules a lesson. */
+/** Reads saved evidence only. Opening the app never schedules a lesson. */
 export function deriveStartupWelcome(
   state: AppState,
   now = new Date(),
@@ -41,5 +41,17 @@ export function deriveStartupWelcome(
       : completedCalibrations < 3 ? completedCalibrations + 1 : null,
     fullMinutes: Number.isFinite(state.profile.dailyMinutes)
       ? Math.min(30, Math.max(5, Math.floor(state.profile.dailyMinutes))) : 15,
+  };
+}
+
+/** A short greeting from saved facts; launch does not wait for a model call. */
+export function deriveOpeningGreeting(state: AppState, now = new Date(), timeZone = 'Europe/Moscow') {
+  const saved = deriveStartupWelcome(state, now, timeZone);
+  const name = state.profile.name.trim();
+  return {
+    greeting: name && !['Ты', 'You', 'Learner'].includes(name) ? `Привет, ${name}.` : 'Привет.',
+    motivation: saved.resumable ? 'Разговор на месте. Давай дожмём мысль.'
+      : saved.completedToday ? 'Сегодня уже потренировался. Дальше в своём темпе.'
+        : 'Сначала одна мысль. Потом разговор пойдёт.',
   };
 }

@@ -24,6 +24,33 @@ struct RootView: View {
     @EnvironmentObject private var client: TrainingClient
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab = 0
+    @State private var opening = NativeOpeningState()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private var openingReadiness: NativeOpeningReadiness {
+        let previewAllowsOpening: Bool
+#if DEBUG
+        previewAllowsOpening = PreviewFixtures.screen == nil || PreviewFixtures.screen == "opening"
+#else
+        previewAllowsOpening = true
+#endif
+        return NativeOpeningReadiness(signedIn: client.signedIn, stateLoaded: client.state != nil,
+            onboardingBlocked: (client.state?.onboarding?.status).map { $0 != "ready" } ?? false,
+            protectedActivity: !previewAllowsOpening || client.conversationPresented || client.recording || client.microphoneStarting
+                || client.playing || client.hasUnuploadedRecording || !client.draft.isEmpty || selectedTab != 0 || dynamicTypeSize.isAccessibilitySize,
+            foreground: scenePhase == .active)
+    }
+    private var openingVisible: Bool { opening.phase != .finished && openingReadiness.allowed && !reduceMotion && !voiceOver }
+    private var openingSentence: String {
+        if client.state?.sessions.contains(where: { ($0.baseline == nil || client.state?.onboarding?.status != "ready") && ($0.status != "completed" || $0.retryDeferred == true) }) == true {
+            return "Разговор на месте. Давай дожмём мысль."
+        }
+        let completedToday = client.state?.sessions.contains {
+            $0.baseline == nil && $0.status == "completed" && NativeDate.parse($0.createdAt ?? "").map { Calendar.current.isDateInToday($0) } == true
+        } == true
+        return completedToday ? "Сегодня уже потренировался. Дальше в своём темпе." : "Сначала одна мысль. Потом разговор пойдёт."
+    }
     var body: some View {
         Group {
             if client.signedIn {
@@ -31,7 +58,7 @@ struct RootView: View {
                     Group {
                         if let onboarding = client.state?.onboarding, onboarding.status != "ready" {
                             OnboardingView(onboarding: onboarding)
-                        } else { HomeView(onProgress: { selectedTab = 1 }) }
+                        } else { HomeView(onProgress: { selectedTab = 1 }, entryVisible: !openingVisible, animateEntry: opening.animateHome) }
                     }.background(StableTabBarAppearance(selection: selectedTab))
                         .toolbarColorScheme(.light, for: .tabBar)
                         .tabItem { Label("Сегодня", systemImage: "sun.max") }.tag(0)
@@ -43,6 +70,19 @@ struct RootView: View {
                         .tabItem { Label("Настройки", systemImage: "slider.horizontal.3") }.tag(3)
                 }.tint(Theme.charcoal).toolbarColorScheme(.light, for: .tabBar)
             } else { LoginView() }
+        }
+        .overlay {
+            if openingVisible {
+                NativeOpeningGreeting(name: client.state?.profile.name ?? "ты", sentence: openingSentence) { finishOpening(animated: false) }
+                    .transition(reduceMotion ? .identity : .opacity.combined(with: .offset(y: -6)))
+                    .zIndex(10)
+            }
+        }
+        .task(id: openingReadiness) {
+            guard opening.begin(readiness: openingReadiness, reduceMotion: reduceMotion || voiceOver) else { return }
+            do { try await Task.sleep(for: .milliseconds(NativeOpeningState.greetingMilliseconds)) }
+            catch { finishOpening(animated: false); return }
+            finishOpening(animated: true)
         }
         .task {
 #if DEBUG
@@ -70,16 +110,25 @@ struct RootView: View {
             }
         }
         .onChange(of: client.conversationPresented) { _, presented in
-            if !presented { client.minimizeConversation() }
+            if presented { finishOpening(animated: false) }
+            else { client.minimizeConversation() }
         }
         .onChange(of: client.homeRequest) { _, _ in selectedTab = 0 }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await client.refreshReminderStatus() } }
+            else if opening.phase == .greeting { finishOpening(animated: false) }
         }
+        .onChange(of: reduceMotion) { _, reduced in if reduced { finishOpening(animated: false) } }
+        .onChange(of: voiceOver) { _, enabled in if enabled { finishOpening(animated: false) } }
         .alert(client.error?.hasPrefix("Занятие сохранено.") == true ? "Занятие сохранено" : "Не получилось", isPresented: Binding(get: { client.error != nil && !client.conversationPresented },
             set: { if !$0 { client.error = nil } })) {
             Button("Понятно", role: .cancel) { client.error = nil }
         } message: { Text(client.error ?? "") }
+    }
+    private func finishOpening(animated: Bool) {
+        withAnimation(animated && !reduceMotion ? .timingCurve(0.23, 1, 0.32, 1, duration: 0.28) : nil) {
+            opening.finish(animated: animated)
+        }
     }
 }
 
@@ -123,6 +172,8 @@ struct LoginView: View {
 
 struct HomeView: View {
     var onProgress: () -> Void = {}
+    var entryVisible = true
+    var animateEntry = false
     @EnvironmentObject private var client: TrainingClient
     @AppStorage("practice-context") private var context = "life"
     @AppStorage("practice-mode") private var mode = "learning"
@@ -130,6 +181,7 @@ struct HomeView: View {
     private var saved: Conversation? { client.state?.sessions.first { ($0.baseline == nil || client.state?.onboarding?.status != "ready") && ($0.status != "completed" || $0.retryDeferred == true) } }
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -137,17 +189,17 @@ struct HomeView: View {
                             .font(.system(.largeTitle, design: .rounded).weight(.semibold)).tracking(-0.7)
                         Text("Давай поговорим \(client.state?.profile.dailyMinutes ?? 15) минут.")
                             .foregroundStyle(Theme.secondary)
-                    }
+                    }.modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 0))
                     if client.state?.onboarding?.status == "ready" {
                         if client.state?.onboarding?.report == nil {
-                            NativeBaselineProfile(report: nil)
+                            NativeBaselineProfile(report: nil).modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 1))
                         } else {
                             Button(action: onProgress) {
                                 HStack(spacing: 8) {
                                     Text("Твой стартовый профиль").font(.subheadline.weight(.medium))
                                     Image(systemName: "arrow.up.right").font(.caption.weight(.semibold))
                                 }.foregroundStyle(Theme.charcoal).frame(minHeight: 44)
-                            }.buttonStyle(PressButton())
+                            }.buttonStyle(PressButton()).modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 1))
                         }
                     }
                     if let saved {
@@ -164,10 +216,11 @@ struct HomeView: View {
                             }.foregroundStyle(Theme.charcoal).padding(18)
                                 .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 24))
                         }.buttonStyle(PressButton()).disabled(client.busy || client.recording)
+                            .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 1))
                     }
                     if let progression = client.state?.progression {
-                        NextPracticeCard(progression: progression)
-                        JourneySummary(progression: progression)
+                        NextPracticeCard(progression: progression).modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 2))
+                        JourneySummary(progression: progression).modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 3))
                     }
                     SurfaceCard {
                         VStack(alignment: .leading, spacing: 20) {
@@ -191,7 +244,8 @@ struct HomeView: View {
                                 HStack { Text(client.busy ? "Готовим разговор" : "Поехали"); Spacer(); if client.busy { ProgressView().tint(Theme.lime) } else { Image(systemName: "arrow.up.right") } }
                             }.buttonStyle(PrimaryButton()).disabled(client.busy)
                         }
-                    }
+                    }.modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 4))
+                        .id("native-new-conversation")
                     if client.busy {
                         ActivityPanel(title: client.operationStage ?? "Готовим разговор", detail: "Подбираем ситуацию под твою практику.", startedAt: client.operationStartedAt)
                             .transition(reduceMotion ? .identity : NativeMotion.insertion)
@@ -204,10 +258,26 @@ struct HomeView: View {
                     }
                     Text("Новый разговор откроется отдельно. К прежнему можно вернуться в истории.")
                         .font(.footnote).foregroundStyle(Theme.secondary)
+                        .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 5))
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
                     .animation(reduceMotion ? nil : NativeMotion.reveal, value: client.busy)
             }.modifier(ReadingCanvas()).navigationBarHidden(true)
                 .refreshable { await client.perform { try await client.refresh() } }
+#if DEBUG
+                .task {
+                    guard PreviewFixtures.screen == "selector-rapid" else { return }
+                    try? await Task.sleep(for: .milliseconds(500))
+                    proxy.scrollTo("native-new-conversation", anchor: .center)
+                    context = "life"; mode = "learning"
+                    try? await Task.sleep(for: .milliseconds(500))
+                    for (index, next) in ["work", "relocation", "life", "work", "life", "relocation", "work", "life", "relocation", "work", "life", "work"].enumerated() {
+                        do { try await Task.sleep(for: .milliseconds(index < 8 ? 90 : 320)) } catch { return }
+                        context = next
+                        mode = index.isMultiple(of: 2) ? "call" : "learning"
+                    }
+                }
+#endif
+            }
         }
     }
     private func sessionLabel(_ value: Conversation) -> String {

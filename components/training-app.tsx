@@ -21,7 +21,7 @@ import { useVoice, type RecordingDraft } from './use-voice';
 import { SubscriptionLimits } from './subscription-limits';
 import { BaselineProfile, OnboardingFlow } from './onboarding-flow';
 import { PracticeModeSwitch as ModeSwitch } from './practice-mode-switch';
-import { useContentEntrance, useInputModality, useNavigationHighlight } from './use-interface-motion';
+import { useContentEntrance, useHomeStagger, useInputModality, useNavigationHighlight } from './use-interface-motion';
 import motionStyles from './training-app.module.css';
 import { Achievements, CurriculumOverview, EvidenceCoverage, PracticeLevel, SessionOutcome } from './learning-path';
 import { SpeechTimingPanel } from './speech-timing';
@@ -134,6 +134,8 @@ export function TrainingApp() {
   const usageRequest = useRef<Promise<void> | null>(null);
   const [tab, setTab] = useState<Tab>('today');
   const [startupVisible, setStartupVisible] = useState(false);
+  const [homeEntry, setHomeEntry] = useState(0);
+  const startupHandled = useRef(false);
   const [quickVisible, setQuickVisible] = useState(false);
   const [mode, setMode] = useState<Mode>('learning');
   const [session, setSession] = useState<Session | null>(null);
@@ -168,7 +170,8 @@ export function TrainingApp() {
   const lastAutoplay = useRef<string | null>(null);
   const sessionActionLock = useRef(false);
   const tabRef = useRef(tab); tabRef.current = tab;
-  const screenRef = useContentEntrance<HTMLDivElement>(startupVisible ? 'startup' : tab);
+  const screenRef = useContentEntrance<HTMLDivElement>(tab);
+  useHomeStagger(screenRef, homeEntry);
   const desktopNavigation = useNavigationHighlight(tab);
   const mobileNavigation = useNavigationHighlight(tab);
   useLayoutEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }); }, [tab]);
@@ -182,9 +185,16 @@ export function TrainingApp() {
   }, [rewardsRequested, tab]);
   useEffect(() => {
     const entry = new URLSearchParams(window.location.search).get('entry');
-    setStartupVisible(entry === 'startup');
     setQuickVisible(entry === 'quick');
   }, []);
+  useLayoutEffect(() => {
+    if (!state || startupHandled.current) return;
+    startupHandled.current = true;
+    const entry = new URLSearchParams(window.location.search).get('entry');
+    const ordinaryHome = entry !== 'quick' && !quickVisible && tab === 'today' && !busy && !starting
+      && (!state.onboarding || state.onboarding.status === 'ready');
+    if (ordinaryHome) setStartupVisible(true);
+  }, [state, quickVisible, tab, busy, starting]);
   useEffect(() => {
     try {
       const stored: unknown = JSON.parse(localStorage.getItem(DRAFT_STORAGE) || '{}');
@@ -337,6 +347,7 @@ export function TrainingApp() {
     return () => document.removeEventListener('visibilitychange', pauseHiddenWindow);
   }, [voice.stop]);
   function dismissStartup() {
+    startupHandled.current = true;
     setStartupVisible(false);
     setQuickVisible(false);
     const address = new URL(window.location.href);
@@ -469,9 +480,8 @@ export function TrainingApp() {
   );
 
   if (state && quickVisible) return <QuickCoach onDismiss={dismissStartup} />;
-  if (state && startupVisible && (!state.onboarding || state.onboarding.status === 'ready')) return <StartupWelcome state={state} busy={busy} error={error} onStart={minutes => void start(undefined, undefined, minutes)} onResume={value => { dismissStartup(); open(value); }} onDismiss={dismissStartup} />;
 
-  return <div className={`app-shell ${motionStyles.motionShell}`}>
+  return <><div className={`app-shell ${motionStyles.motionShell}`} inert={startupVisible} aria-hidden={startupVisible || undefined}>
     <aside className="sidebar">
       <a href="/" className="brand"><span>smooth<span>english</span></span></a>
       <div className="sidebar-caption">ТВОЯ ПРОГРАММА</div>
@@ -497,7 +507,7 @@ export function TrainingApp() {
       </header>}
       {error && <div className="message-banner error" role="alert"><CircleHelp size={18} /><span>{error}</span><button onClick={() => setError('')} aria-label="Закрыть сообщение"><X size={18} /></button></div>}
       {notice && <div className="message-banner success" role="status"><Check size={18} /><span>{notice}</span><button onClick={() => setNotice('')} aria-label="Закрыть сообщение"><X size={18} /></button></div>}
-      <div ref={screenRef} className="screen-content" data-screen={startupVisible ? 'startup' : tab}>
+      <div ref={screenRef} className="screen-content" data-screen={tab}>
       {!state ? <div className="page-loading"><div className="skeleton title-skeleton" /><div className="skeleton panel-skeleton" /><p>Открываю твой тренинг…</p>{error && <button className="button secondary" onClick={() => void refresh()}>Повторить загрузку</button>}</div> : <>
       {starting && <PreparationPanel startedAt={busySince} stage={busy} />}
       {state.onboarding && state.onboarding.status !== 'ready' && ['today', 'practice', 'progress'].includes(tab) && <OnboardingFlow state={state} onboarding={state.onboarding} busy={busy} audioReady={!!status?.audio.configured} onIntro={text => void completeIntro(text)} onStart={stepId => void start(undefined, undefined, undefined, stepId)} onResume={open} onSettings={() => navigation('settings')} />}
@@ -750,8 +760,8 @@ export function TrainingApp() {
       </>}
       {tab === 'session' && session && <SessionView session={session} result={state.progression?.recentResults.find(result => result.sessionId === session.id)} progression={state.progression} confirmedCompletion={completionMoment?.sessionId === session.id} previousUnlocks={completionMoment?.sessionId === session.id ? completionMoment.previousUnlocks : []} onNext={() => navigation("practice")} onDone={() => navigation("today")} setSession={setSession} busy={busy} busySince={busySince} input={input} setInput={changeInput} draft={drafts[session.id]} onDiscardDraft={() => { saveDraft(session.id, null); setInput(''); if (voice.recordingDraft?.contextKey?.startsWith(session.id + ':')) voice.discardRecording(); }} textMode={textMode} setTextMode={setTextMode} transcript={transcript} showTranscript={showTranscript} hintText={hintText} comfort={comfort} setComfort={setComfort} voice={voice} audioReady={!!status?.audio.configured} onSend={() => void send(input)} onResend={resend} onAction={sessionAction} onHint={level => void action('Подбираю опору', async () => { const result = await request<{ text: string }>(`sessions/${session.id}/hint`, { level }); setHintText(result.text); })} onBack={() => navigation('today')} onSettings={() => navigation('settings')} editing={editing} setEditing={setEditing} editText={editText} setEditText={setEditText} />}
       </>}
-      </div><footer className="page-footer"><span>Своя попытка → разбор → новая практика</span><span>Личный тренинг · 0.4.2 alpha</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
-  </div>;
+      </div><footer className="page-footer"><span>Своя попытка → разбор → новая практика</span><span>Личный тренинг · 0.4.3 alpha</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
+  </div>{state && startupVisible && <StartupWelcome state={state} onReveal={() => setHomeEntry(value => value + 1)} onFinished={dismissStartup} />}</>;
 }
 
 function Activity({ state }: { state: AppState }) {

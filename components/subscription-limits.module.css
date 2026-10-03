@@ -19,7 +19,7 @@
 .refresh:disabled { opacity: 1; cursor: wait; }
 .spinner { animation: refreshSpin 650ms linear infinite; }
 @keyframes refreshSpin { to { transform: rotate(360deg); } }
-.plan { display: inline-block; margin-top: 12px; padding: 4px 10px; border-radius: 12px; background: #daf163; font-size: 11px; line-height: 1.5; }
+.plan { display: inline-block; max-width: 100%; margin-top: 12px; padding: 4px 10px; border-radius: 12px; background: #daf163; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .scope { margin-top: 10px; font-size: 12px; color: #65636a; line-height: 1.6; }
 .buckets { margin-top: 21px; }
 .bucket + .bucket { margin-top: 22px; padding-top: 22px; border-top: 1px solid #ecebed; }
@@ -28,7 +28,7 @@
 .window { min-width: 0; }
 .periodRow { min-height: 20px; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 .periodRow h4 { margin: 0; font-size: 13px; font-weight: 500; line-height: 1.5; }
-.oldBadge { padding: 3px 7px; border-radius: 9px; background: #f3f3f3; color: #65636a; font-size: 10px; }
+.oldBadge { padding: 3px 7px; border-radius: 9px; background: #f3f3f3; color: #65636a; font-size: 12px; }
 .allowance { display: flex; align-items: baseline; gap: 10px; margin: 10px 0 12px; font-variant-numeric: tabular-nums; }
 .allowance strong { font-size: 38px; font-weight: 550; letter-spacing: -1.6px; line-height: 1.18; }
 .allowance strong span { margin-left: 2px; font-size: 23px; letter-spacing: -.6px; }
@@ -40,7 +40,7 @@
 .reset { display: flex; gap: 8px; margin-top: 13px; color: #65636a; font-size: 12px; line-height: 1.6; }
 .reset > svg { flex-shrink: 0; margin-top: 3px; }
 .reset span, .reset time { display: block; }
-.reset time { font-size: 11px; }
+.reset time { font-size: 12px; }
 .resetExpired span { color: #222124; }
 .unknownPercent { margin: 13px 0 15px; color: #65636a; font-size: 16px; line-height: 1.5; }
 .noReset { margin-top: 13px; color: #65636a; font-size: 12px; line-height: 1.6; }
@@ -55,13 +55,13 @@
 .activity { margin-top: 22px; padding-top: 18px; border-top: 1px solid #ecebed; }
 .activityHeading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .activityHeading h4 { margin: 0; font-size: 13px; font-weight: 550; }
-.activityHeading > span, .activity p { font-size: 11px; color: #65636a; line-height: 1.65; }
+.activityHeading > span, .activity p { font-size: 12px; color: #65636a; line-height: 1.65; }
 .activityNumbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
 .activityNumbers div { display: flex; flex-direction: column-reverse; gap: 5px; }
-.activityNumbers dt { font-size: 11px; color: #65636a; overflow-wrap: anywhere; }
+.activityNumbers dt { font-size: 12px; color: #65636a; overflow-wrap: anywhere; }
 .activityNumbers dd { margin: 0; font-size: 26px; font-weight: 550; letter-spacing: -.7px; font-variant-numeric: tabular-nums; }
 .activity .retryNotice { color: #222124; padding: 10px 12px; border-radius: 12px; background: #bbb2f5; }
-.footer p { color: #65636a; font-size: 11px; line-height: 1.7; }
+.footer p { color: #65636a; font-size: 12px; line-height: 1.7; }
 .footer a { display: inline-flex; align-items: center; gap: 5px; min-height: 44px; padding: 7px 0; color: #575075; font-size: 12px; line-height: 1.5; }
 .footer a svg { flex-shrink: 0; transition: transform 160ms cubic-bezier(.23, 1, .32, 1); }
 .footer a:focus-visible svg { transition: none; }

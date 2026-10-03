@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Cosmetic rank thresholds mirror the existing server's 100-XP experience levels.
 /// A rank badge never changes progression or claims a language level.
@@ -42,8 +43,8 @@ enum RewardArt {
     }
 }
 
-/// The metal emblem stays anchored. Only light and its rank-specific atmosphere move.
-/// One 30-Hz canvas is active for the current rank; inactive/locked ranks remain static.
+/// Light, a small physical sway, and a fixed floor shadow give the medal weight.
+/// The current rank alone animates. Press feedback retargets a separate spring layer.
 struct RankEmblem: View {
     let level: Int
     var size: CGFloat = 124
@@ -57,6 +58,21 @@ struct RankEmblem: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !moving)) { context in
             let time = moving ? context.date.timeIntervalSinceReferenceDate : 0
+            let pose = RewardMotionPose.rank(art: rank.art, time: time, size: size, active: moving)
+            if animated {
+                Button {} label: { emblem(time: time, pose: pose) }
+                    .buttonStyle(RewardArtPressStyle())
+                    .accessibilityLabel("Ранг «\(rank.title)»")
+                    .accessibilityHint("Нажми, чтобы пошевелить значок. Опыт не меняется.")
+            } else { emblem(time: time, pose: pose).accessibilityHidden(true) }
+        }.frame(width: size, height: size)
+            .modifier(RewardVisibility(visible: $visible))
+    }
+    private func emblem(time: TimeInterval, pose: RewardMotionPose) -> some View {
+        ZStack {
+            Ellipse().fill(Theme.charcoal.opacity(pose.shadowOpacity))
+                .frame(width: size * 0.43, height: size * 0.075)
+                .scaleEffect(x: pose.shadowScale, y: 1).offset(y: size * 0.32)
             ZStack {
                 RankAtmosphere(art: rank.art, time: time)
                 Image("reward-" + rank.art + "-v041").resizable().scaledToFit()
@@ -70,9 +86,72 @@ struct RankEmblem: View {
                                 .mask(Image("reward-" + rank.art + "-v041").resizable().scaledToFit())
                         }
                     }
-            }.frame(width: size, height: size).clipped()
-        }.frame(width: size, height: size).accessibilityHidden(true)
-            .onAppear { visible = true }.onDisappear { visible = false }
+            }.scaleEffect(pose.scale).rotationEffect(.degrees(pose.rotation), anchor: UnitPoint(x: 0.5, y: 0.64)).offset(y: pose.lift)
+        }.frame(width: size, height: size).contentShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+    }
+}
+
+/// A deterministic pose has no repeat-forever tasks or queued reactions.
+/// TimelineView can stop completely while the card is offscreen.
+struct RewardMotionPose {
+    var lift: CGFloat = 0
+    var rotation: Double = 0
+    var scale: CGFloat = 1
+    var shadowScale: CGFloat = 1
+    var shadowOpacity: Double = 0.06
+    static func rank(art: String, time: TimeInterval, size: CGFloat, active: Bool) -> Self {
+        guard active else { return Self() }
+        let period: Double
+        let amplitude: Double
+        let sway: Double
+        switch art {
+        case "rank-mint": (period, amplitude, sway) = (4.6, 0.047, 3.5)
+        case "rank-sky": (period, amplitude, sway) = (4.8, 0.061, 4.0)
+        case "rank-violet": (period, amplitude, sway) = (4.2, 0.047, 4.5)
+        case "rank-rose": (period, amplitude, sway) = (3.8, 0.055, 5.0)
+        case "rank-gold": (period, amplitude, sway) = (4.0, 0.061, 4.0)
+        default: (period, amplitude, sway) = (5.4, 0.039, 3.0)
+        }
+        let wave = (1 - cos(time * 2 * .pi / period)) / 2
+        return Self(lift: -size * CGFloat(amplitude * wave), rotation: sway * (wave * 1.45 - 0.45), scale: 1 + CGFloat(wave) * 0.025, shadowScale: 1 - CGFloat(wave) * 0.16, shadowOpacity: 0.06 - wave * 0.025)
+    }
+    static func achievement(time: TimeInterval, size: CGFloat, motion: RewardImage.Motion, active: Bool) -> Self {
+        guard active, motion != .still else { return Self(shadowOpacity: 0.035) }
+        if motion == .earned {
+            let wave = (1 - cos(time * 2 * .pi / 4.4)) / 2
+            return Self(lift: -size * CGFloat(wave) * 0.061, rotation: -3 + wave * 7, scale: 1 + CGFloat(wave) * 0.045, shadowScale: 1 - CGFloat(wave) * 0.16, shadowOpacity: 0.05 - wave * 0.02)
+        }
+        // One inviting lean with a quiet pause; locked icons never pretend to be earned.
+        let phase = time.truncatingRemainder(dividingBy: 5.2) / 5.2
+        let wave = phase < 0.62 ? 0 : sin((phase - 0.62) / 0.38 * .pi)
+        return Self(lift: -size * CGFloat(wave) * 0.047, rotation: -5 * wave, scale: 1 + CGFloat(wave) * 0.05, shadowScale: 1 - CGFloat(wave) * 0.12, shadowOpacity: 0.035 - wave * 0.01)
+    }
+}
+
+private struct RewardVisibility: ViewModifier {
+    @Binding var visible: Bool
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollVisibilityChange(threshold: 0.1) { visible = $0 }.onDisappear { visible = false }
+        } else {
+            // iOS 17 fallback also stops drawings when a ScrollView moves the card away.
+            content.onGeometryChange(for: Bool.self) { proxy in
+                let frame = proxy.frame(in: .global)
+                let screen = UIScreen.main.bounds
+                return frame.intersects(screen) && frame.width > 0 && frame.height > 0
+            } action: { visible = $0 }
+                .onDisappear { visible = false }
+        }
+    }
+}
+
+struct RewardArtPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(reduceMotion ? 1 : configuration.isPressed ? 0.93 : 1)
+            .rotationEffect(.degrees(reduceMotion ? 0 : configuration.isPressed ? -4 : 0))
+            .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.68), value: configuration.isPressed)
     }
 }
 
@@ -140,10 +219,23 @@ private struct RankAtmosphere: View {
 }
 
 struct RewardImage: View {
+    enum Motion: Equatable { case still, earned, goal }
     let name: String
     var size: CGFloat = 70
+    var motion: Motion = .still
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var visible = false
+    private var moving: Bool { motion != .still && !reduceMotion && visible && scenePhase == .active }
     var body: some View {
-        Image(name).resizable().scaledToFit().frame(width: size, height: size).accessibilityHidden(true)
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !moving)) { context in
+            let pose = RewardMotionPose.achievement(time: moving ? context.date.timeIntervalSinceReferenceDate : 0, size: size, motion: motion, active: moving)
+            ZStack {
+                Ellipse().fill(Theme.charcoal.opacity(pose.shadowOpacity))
+                    .frame(width: size * 0.44, height: size * 0.07).scaleEffect(x: pose.shadowScale, y: 1).offset(y: size * 0.32)
+                Image(name).resizable().scaledToFit().scaleEffect(pose.scale).rotationEffect(.degrees(pose.rotation), anchor: UnitPoint(x: 0.5, y: 0.68)).offset(y: pose.lift)
+            }
+        }.frame(width: size, height: size).accessibilityHidden(true).modifier(RewardVisibility(visible: $visible))
     }
 }
 
@@ -191,7 +283,7 @@ struct AchievementPracticeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 16) {
-                    RewardImage(name: RewardArt.achievement(achievement.id), size: 92)
+                    RewardImage(name: RewardArt.achievement(achievement.id), size: 92, motion: achievement.unlocked ? .earned : .goal)
                     ScreenHeading(title: achievement.title, subtitle: "Твоя цель · \(achievement.current)/\(achievement.target)")
                 }
                 Text(achievement.description).font(.subheadline)

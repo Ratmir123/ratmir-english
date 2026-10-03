@@ -17,14 +17,12 @@ function ProgressLine({ current, target, label }: { current: number; target: num
   </div>;
 }
 
-/** Decorative light has its own lifetime. No work continues in a hidden tab or off screen. */
-export function RankEmblem({ level, size = 128, animated = true }: { level: number; size?: number; animated?: boolean }) {
+/** Each decoration sleeps outside the viewport, in a background window, or with reduced motion. */
+function useRewardMotion(enabled: boolean) {
   const ref = useRef<HTMLSpanElement>(null);
   const [moving, setMoving] = useState(false);
-  const band = experienceBand(level);
-  const kind = band.art.replace('rank-', '');
   useEffect(() => {
-    if (!animated || !ref.current) { setMoving(false); return; }
+    if (!enabled || !ref.current) { setMoving(false); return; }
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
     let visible = false;
     const update = () => setMoving(visible && !document.hidden && !preference.matches);
@@ -32,12 +30,33 @@ export function RankEmblem({ level, size = 128, animated = true }: { level: numb
     observer.observe(ref.current);
     document.addEventListener('visibilitychange', update); preference.addEventListener('change', update);
     return () => { observer.disconnect(); document.removeEventListener('visibilitychange', update); preference.removeEventListener('change', update); };
-  }, [animated]);
+  }, [enabled]);
+  return { ref, moving };
+}
+
+/** Ambient motion and direct press feedback have separate transforms: neither restarts the other. */
+export function RankEmblem({ level, size = 128, animated = true }: { level: number; size?: number; animated?: boolean }) {
+  const { ref, moving } = useRewardMotion(animated);
+  const [pressed, setPressed] = useState(false);
+  const band = experienceBand(level);
+  const kind = band.art.replace('rank-', '');
   const count = kind === 'gold' ? 10 : kind === 'rose' ? 6 : kind === 'sky' ? 3 : kind === 'mint' ? 2 : 4;
-  return <span ref={ref} className={styles.rankEmblem} data-rank={kind} data-moving={animated && moving} aria-hidden="true" style={{ width: size, height: size, '--rank-art': `url('/rewards-v041/${band.art}.png')`, '--rank-radius': `${size * .32}px` } as CSSProperties}>
-    <span className={styles.rankAtmosphere}>{Array.from({ length: count }, (_, index) => <i key={index} style={{ '--i': index, '--angle': `${360 * index / count - 90}deg` } as CSSProperties} />)}</span>
-    <img className={styles.rankArt} src={`/rewards-v041/${band.art}.png`} width={size} height={size} alt="" />
-    <span className={styles.rankSheen}><i /></span>
+  const art = <><span className={styles.rankFloor} /><span className={styles.rankFeedback}>
+    <span className={styles.rankFloat}>
+      <span className={styles.rankAtmosphere}>{Array.from({ length: count }, (_, index) => <i key={index} style={{ '--i': index, '--angle': `${360 * index / count - 90}deg` } as CSSProperties} />)}</span>
+      <img className={styles.rankArt} src={`/rewards-v041/${band.art}.png`} width={size} height={size} alt="" />
+      <span className={styles.rankSheen}><i /></span>
+    </span>
+  </span></>;
+  return <span ref={ref} className={styles.rankEmblem} data-rank={kind} data-moving={animated && moving} data-pressed={pressed} style={{ width: size, height: size, '--rank-art': `url('/rewards-v041/${band.art}.png')`, '--rank-radius': `${size * .32}px` } as CSSProperties}>
+    {animated ? <button type="button" className={styles.rankTouch} aria-label={`Ранг «${band.title}». Пошевелить значок`} onPointerDown={event => { if (event.pointerType !== 'mouse' || event.button === 0) { setPressed(true); event.currentTarget.setPointerCapture(event.pointerId); } }} onPointerUp={() => setPressed(false)} onPointerCancel={() => setPressed(false)} onLostPointerCapture={() => setPressed(false)} onBlur={() => setPressed(false)}>{art}</button> : <span className={styles.rankStatic} aria-hidden="true">{art}</span>}
+  </span>;
+}
+
+function AchievementEmblem({ id, size = 64, motion = 'still' }: { id: string; size?: number; motion?: 'earned' | 'goal' | 'still' }) {
+  const { ref, moving } = useRewardMotion(motion !== 'still');
+  return <span ref={ref} className={styles.achievementEmblem} data-reward-motion={motion} data-moving={moving} aria-hidden="true" style={{ width: size, height: size }}>
+    <span className={styles.achievementFloor} /><span className={styles.achievementFeedback}><img className={styles.achievementArt} src={achievementArt(id)} width={size} height={size} alt="" /></span>
   </span>;
 }
 
@@ -59,8 +78,8 @@ export function RankLadder({ value }: { value: ProgressionState }) {
 
 export function RewardsInvitation({ value, onClick }: { value: ProgressionState; onClick: () => void }) {
   return <button type="button" className={styles.rewardsInvitation} onClick={onClick} data-testid="rewards-invitation">
-    <img src={achievementArt('own-improvement')} width={50} height={50} alt="" />
-    <span><strong>Награды</strong><small>Открыто {value.achievements.filter(item => item.unlocked).length} из {value.achievements.length}</small></span><ArrowUpRightIcon size={20} aria-hidden="true" />
+    <AchievementEmblem id="own-improvement" size={50} motion="goal" />
+    <span className={styles.invitationCopy}><strong>Награды</strong><small>Открыто {value.achievements.filter(item => item.unlocked).length} из {value.achievements.length}</small></span><ArrowUpRightIcon size={20} aria-hidden="true" />
   </button>;
 }
 
@@ -70,10 +89,10 @@ export function PracticeLevel({ value, compact = false, onRewards }: { value: Pr
   const floor = (band.from - 1) * 100;
   const nextXP = next ? (next.from - 1) * 100 : undefined;
   return <section className={`${styles.level} ${compact ? styles.compact : ''}`} aria-label="Уровень практики" data-testid="practice-level">
-    <div className={styles.levelHeading}><RankEmblem level={value.level} /><div className={styles.currentRankCopy}><span className={styles.kicker}>ТВОЙ РАНГ</span><h3>{band.title}</h3><span className={styles.rankSubtitle}>Уровень опыта {value.level}</span></div><span className={styles.xp}>{value.xp} <small>XP</small></span></div>
+    <div className={styles.levelHeading}><RankEmblem level={value.level} /><div className={styles.currentRankCopy}><span className={styles.kicker}>ТВОЙ РАНГ</span><h2>{band.title}</h2><span className={styles.rankSubtitle}>Уровень опыта {value.level}</span></div><span className={styles.xp}>{value.xp} <small>XP</small></span></div>
     {next && nextXP !== undefined ? <><ProgressLine current={value.xp - floor} target={nextXP - floor} label={`Практика до ранга ${next.title}`} /><div className={styles.lineLabels}><span>До «{next.title}» ещё {Math.max(0, nextXP - value.xp)} XP</span><span>Завершено: {value.completedPractice}</span></div></> : <p className={styles.note}>Все шесть рангов открыты. Опыт практики продолжает расти.</p>}
     <p className={styles.note}>Ранги отмечают опыт практики. Языковой уровень проверяем по твоим ответам.</p>
-    {compact ? <details className={styles.rankDisclosure}><summary>Все ранги <span>6</span><ArrowRightIcon size={17} aria-hidden="true" /></summary><RankLadder value={value} /></details> : <div className={styles.rankOverview}><h4>Все ранги</h4><RankLadder value={value} /></div>}
+    <details className={styles.rankDisclosure}><summary>Все ранги <span>6</span><ArrowRightIcon size={17} aria-hidden="true" /></summary><RankLadder value={value} /></details>
     {onRewards && <RewardsInvitation value={value} onClick={onRewards} />}
   </section>;
 }
@@ -112,7 +131,7 @@ export function Achievements({ value, state, onTarget }: { value: ProgressionSta
     <div className={styles.sectionHeading}><div><span className={styles.kicker}>РУБЕЖИ ПРАКТИКИ</span><h2 id="achievement-title">Есть к чему вернуться</h2></div><MedalIcon size={25} aria-hidden="true" /></div>
     <p className={styles.note}>Каждая отметка объясняет, что именно ты сделал. Можно раскрыть её условие. Дневные рубежи считаются по UTC.</p>
     <div className={styles.achievementList}>{visible.map(item => <details key={item.id} className={styles.achievement} data-unlocked={item.unlocked}>
-      <summary><img className={styles.achievementArt} src={achievementArt(item.id)} width={64} height={64} alt="" /><span><strong>{item.title}</strong><small>{item.unlocked ? 'Получено' : `${item.current} из ${item.target}`}</small></span><span className={styles.achievementState}>{item.unlocked ? <CheckIcon size={18} /> : <LockSimpleIcon size={17} />}</span></summary>
+      <summary><AchievementEmblem id={item.id} motion={item.unlocked ? 'earned' : item.id === upcoming[0]?.id ? 'goal' : 'still'} /><span className={styles.achievementCopy}><strong>{item.title}</strong><small>{item.unlocked ? 'Получено' : `${item.current} из ${item.target}`}</small></span><span className={styles.achievementState} aria-hidden="true">{item.unlocked ? <CheckIcon size={18} /> : <LockSimpleIcon size={17} />}<ArrowRightIcon size={14} className={styles.achievementChevron} /></span></summary>
       <div className={styles.achievementDetail}><p>{item.description}</p><ProgressLine current={item.current} target={item.target} label={item.title} /><span className={styles.note}>{item.current} / {item.target}{item.unlockedAt ? ` · ${shortDate(item.unlockedAt)}` : ''}</span>{!item.unlocked && <><p className={styles.targetReason}>{achievementTarget(item.id, state).reason}</p><button className="button secondary" onClick={() => onTarget(achievementTarget(item.id, state))}><TargetIcon size={18} />{achievementTarget(item.id, state).label}<ArrowUpRightIcon size={16} /></button></>}</div>
     </details>)}</div>
     {ordered.length > 4 && <button type="button" className="text-button" onClick={() => setAll(previous => !previous)} aria-expanded={all}>{all ? 'Свернуть рубежи' : `Все рубежи (${ordered.length})`}<ArrowRightIcon size={16} /></button>}
@@ -159,6 +178,6 @@ export function SessionOutcome({ session, result, progression, confirmed, previo
     {result && <><div className={styles.resultHeading}><strong>+{result.xp} XP</strong><span>за {session.retryDeferred ? 'сохранённую' : 'завершённую'} практику</span></div><dl className={styles.facts}><div><dt>Целевых навыков с наблюдениями</dt><dd>{result.quality.observedTargets}/{result.quality.targetCount}</dd></div><div><dt>Самостоятельных успехов</dt><dd>{result.quality.independentSuccesses}</dd></div><div><dt>С опорой</dt><dd>{result.quality.supportedObservations}</dd></div><div><dt>Частично / трудность</dt><dd>{result.quality.partial} / {result.quality.difficulty}</dd></div></dl><p className={styles.note}>Наблюдение не означает, что навык освоен. Самостоятельность проверим в новых ситуациях.</p>
       {result.evidence.length > 0 && <details className={styles.resultEvidence}><summary>На каких ответах это основано</summary>{result.evidence.map((item, index) => <div key={`${item.turnId}:${item.skill}:${index}`}><strong>{SKILLS.find(skill => skill.id === item.skill)?.label}</strong><span>{item.result === 'success' ? 'Получилось' : item.result === 'partial' ? 'Частично' : 'Трудность'}{item.supported ? ' · с опорой' : ' · самостоятельно'}</span><q lang="en">{item.quote}</q></div>)}</details>}
     </>}
-    {confirmed && !session.retryDeferred && unlocked.length > 0 && <div className={styles.unlock} role="status"><img className={styles.achievementArt} src={achievementArt(unlocked[0].id)} width={64} height={64} alt="" /><span><strong>Новый рубеж: {unlocked[0].title}</strong><small>{unlocked[0].description}</small></span></div>}
+    {confirmed && !session.retryDeferred && unlocked.length > 0 && <div className={styles.unlock} role="status"><AchievementEmblem id={unlocked[0].id} motion="earned" /><span><strong>Новый рубеж: {unlocked[0].title}</strong><small>{unlocked[0].description}</small></span></div>}
   </section>;
 }

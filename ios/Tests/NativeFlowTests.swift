@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 import AVFoundation
 import UserNotifications
 import UIKit
@@ -466,17 +467,75 @@ final class ReminderScheduleTests: XCTestCase {
 }
 
 final class NativeChromeTests: XCTestCase {
-    func testPersistentSegmentLensHasAUniqueEndpointForRapidHorizontalAndVerticalSelection() {
-        let size = CGSize(width: 304, height: 72)
-        for index in [0, 2, 1, 0, 2] {
-            let frame = NativeSegmentGeometry.frame(size: size, count: 3, index: index, vertical: false)
-            XCTAssertEqual(frame.width, 96)
-            XCTAssertEqual(frame.minX, CGFloat(index * 104))
-            XCTAssertEqual(frame.height, 72)
+    func testOpeningWaitsForAccessAndForegroundButNeverBlocksProtectedFlows() {
+        func readiness(signedIn: Bool = true, loaded: Bool = true, onboarding: Bool = false, protected: Bool = false, foreground: Bool = true) -> NativeOpeningReadiness {
+            NativeOpeningReadiness(signedIn: signedIn, stateLoaded: loaded, onboardingBlocked: onboarding, protectedActivity: protected, foreground: foreground)
         }
-        let vertical = NativeSegmentGeometry.frame(size: CGSize(width: 300, height: 232), count: 3, index: 2, vertical: true)
-        XCTAssertEqual(vertical, CGRect(x: 0, y: 160, width: 300, height: 72))
-        XCTAssertEqual(NativeSegmentGeometry.frame(size: .zero, count: 0, index: 1, vertical: false), .zero)
+        for input in [readiness(signedIn: false), readiness(loaded: false), readiness(foreground: false)] {
+            var state = NativeOpeningState()
+            XCTAssertFalse(state.begin(readiness: input, reduceMotion: false))
+            XCTAssertFalse(state.consumed, "Access/state/loading is allowed to finish first")
+            XCTAssertEqual(state.phase, .waiting)
+        }
+        for input in [readiness(onboarding: true), readiness(protected: true)] {
+            var state = NativeOpeningState()
+            XCTAssertFalse(state.begin(readiness: input, reduceMotion: false))
+            XCTAssertTrue(state.consumed, "Completing onboarding or closing a conversation cannot unexpectedly play a launch greeting")
+            XCTAssertEqual(state.phase, .finished)
+            XCTAssertFalse(state.animateHome)
+        }
+    }
+
+    func testOpeningIsBoundedAndCannotReplayAfterSkipOrForegroundResume() {
+        let ready = NativeOpeningReadiness(signedIn: true, stateLoaded: true, onboardingBlocked: false, protectedActivity: false, foreground: true)
+        XCTAssertLessThanOrEqual(NativeOpeningState.greetingMilliseconds, 1_350)
+        var state = NativeOpeningState()
+        XCTAssertTrue(state.begin(readiness: ready, reduceMotion: false))
+        XCTAssertEqual(state.phase, .greeting)
+        state.finish(animated: false)
+        XCTAssertEqual(state.phase, .finished)
+        XCTAssertFalse(state.animateHome, "Tap/keyboard/cancel reveals usable Home immediately")
+        XCTAssertFalse(state.begin(readiness: ready, reduceMotion: false))
+        state.finish(animated: true)
+        XCTAssertFalse(state.animateHome, "A late auto-dismiss cannot restore an animation after skip")
+        XCTAssertEqual(state.phase, .finished)
+        var accessible = NativeOpeningState()
+        XCTAssertFalse(accessible.begin(readiness: ready, reduceMotion: true))
+        XCTAssertEqual(accessible.phase, .finished)
+        XCTAssertFalse(accessible.animateHome)
+    }
+
+    @MainActor func testSystemSegmentsKeepRealTitlesAndPlatformGlassWhileRetargeting() {
+        let options = [SelectionOption(id: "life", title: "Жизнь", icon: "bubble.left"), SelectionOption(id: "work", title: "Работа", icon: "briefcase"), SelectionOption(id: "relocation", title: "Переезд", icon: "airplane")]
+        let control = NativePracticeSegmentedControl(items: [])
+        let systemDefault = UISegmentedControl(items: [])
+        for id in ["life", "relocation", "work", "life", "work", "relocation", "life", "work"] {
+            control.apply(options: options, selectedID: id, animated: true)
+            XCTAssertEqual(control.selectedSegmentIndex, options.firstIndex { $0.id == id } ?? UISegmentedControl.noSegment)
+            XCTAssertEqual(control.numberOfSegments, 3)
+            XCTAssertEqual((0..<3).compactMap { control.titleForSegment(at: $0) }, options.map(\.title))
+            XCTAssertEqual(control.backgroundImage(for: .normal, barMetrics: .default), systemDefault.backgroundImage(for: .normal, barMetrics: .default), "A custom background must not obscure the system glass")
+            XCTAssertEqual(control.selectedSegmentTintColor, systemDefault.selectedSegmentTintColor, "The selection keeps the platform glass appearance")
+        }
+    }
+
+    @MainActor func testNativeSelectionCoordinatorKeepsOnlyValidLatestSelection() {
+        let options = [SelectionOption(id: "life", title: "Жизнь", icon: "bubble.left"), SelectionOption(id: "work", title: "Работа", icon: "briefcase"), SelectionOption(id: "relocation", title: "Переезд", icon: "airplane")]
+        let control = NativePracticeSegmentedControl(items: [])
+        var selected = "life"
+        let coordinator = NativePracticeSegments.Coordinator(selection: Binding(get: { selected }, set: { selected = $0 }), options: options)
+        control.apply(options: options, selectedID: "work", animated: false)
+        XCTAssertEqual(selected, "life", "Rendering a persisted value must not send a second selection event")
+        coordinator.changed(control)
+        XCTAssertEqual(selected, "work")
+        control.selectedSegmentIndex = UISegmentedControl.noSegment
+        coordinator.changed(control)
+        XCTAssertEqual(selected, "work", "An invalid segment is never written into the practice context")
+        for index in [2, 0, 1, 2, 1] {
+            control.selectedSegmentIndex = index
+            coordinator.changed(control)
+            XCTAssertEqual(selected, options[index].id)
+        }
     }
 
     @MainActor func testTabContrastPersistsAfterHistoryAndOtherChildSelections() {

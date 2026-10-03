@@ -250,59 +250,102 @@ struct SelectionOption: Identifiable {
     let icon: String
 }
 
+/// Let the system own the glass and the foreground together. A separately
+/// composited glass view can refract/erase sibling text even from a background.
 struct SelectionRow: View {
     @Binding var selection: String
     let options: [SelectionOption]
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var vertical: Bool { dynamicTypeSize.isAccessibilitySize }
-    private var selectedIndex: Int { options.firstIndex { $0.id == selection } ?? 0 }
     var body: some View {
-        let layout = vertical ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
-        NativeGlassGroup {
-            layout {
-                ForEach(options) { option in
-                    Button {
-                        guard selection != option.id else { return }
-                        selection = option.id
-                    } label: {
-                        VStack(spacing: 7) {
-                            Image(systemName: option.icon).font(.body)
-                            Text(option.title).font(.caption.weight(.medium)).fixedSize(horizontal: false, vertical: true)
-                        }.frame(maxWidth: .infinity, minHeight: vertical ? 68 : 54).padding(.vertical, 9)
-                            .foregroundStyle(selection == option.id ? Theme.charcoal : Theme.secondary)
-                            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    }.buttonStyle(SegmentPressButton()).accessibilityAddTraits(selection == option.id ? .isSelected : [])
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 8) {
+                    ForEach(options) { option in
+                        Button {
+                            selection = option.id
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: option.icon).frame(width: 26)
+                                Text(option.title).font(.body.weight(.medium))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                                if selection == option.id { Image(systemName: "checkmark").font(.body.weight(.semibold)) }
+                            }.foregroundStyle(Theme.charcoal).padding(16).frame(maxWidth: .infinity, minHeight: 54)
+                                .background(selection == option.id ? Theme.lavender.opacity(0.48) : Theme.surface.opacity(0.42),
+                                            in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        }.buttonStyle(SegmentPressButton()).accessibilityAddTraits(selection == option.id ? .isSelected : [])
+                    }
                 }
+            } else {
+                NativePracticeSegments(selection: $selection, options: options, reduceMotion: reduceMotion)
+                    .frame(height: 46)
             }
-            .background {
-                GeometryReader { geometry in
-                    let frame = NativeSegmentGeometry.frame(size: geometry.size, count: options.count, index: selectedIndex, vertical: vertical)
-                    Color.clear.frame(width: frame.width, height: frame.height)
-                        .modifier(LiquidChrome(radius: 20, tint: Theme.lavender.opacity(0.56), interactive: true))
-                        .offset(x: frame.minX, y: frame.minY)
-                        .animation(reduceMotion ? nil : NativeMotion.selection, value: selectedIndex)
-                        .animation(nil, value: vertical)
-                }.allowsHitTesting(false)
-            }
-            .background(Theme.surface.opacity(0.38), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        }
-        .sensoryFeedback(.selection, trigger: selection)
+        }.sensoryFeedback(.selection, trigger: selection)
     }
 }
 
-/// One persistent lens moves between fixed labels. No conditional insertion or
-/// opacity transition can replay when the user taps again before it settles.
-enum NativeSegmentGeometry {
-    static func frame(size: CGSize, count: Int, index: Int, vertical: Bool, spacing: CGFloat = 8) -> CGRect {
-        guard count > 0 else { return .zero }
-        let selected = min(count - 1, max(0, index))
-        if vertical {
-            let height = max(0, (size.height - spacing * CGFloat(count - 1)) / CGFloat(count))
-            return CGRect(x: 0, y: CGFloat(selected) * (height + spacing), width: size.width, height: height)
+/// UISegmentedControl adopts the same system Liquid Glass interaction as the
+/// native navigation controls when built with the current SDK. Do not set custom
+/// background/divider images, colored selected backgrounds, or sibling overlays.
+struct NativePracticeSegments: UIViewRepresentable {
+    @Binding var selection: String
+    let options: [SelectionOption]
+    var reduceMotion = false
+    func makeCoordinator() -> Coordinator { Coordinator(selection: $selection, options: options) }
+    func makeUIView(context: Context) -> NativePracticeSegmentedControl {
+        let control = NativePracticeSegmentedControl(items: options.map(\.title))
+        control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        control.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
+        control.apply(options: options, selectedID: selection, animated: false)
+        return control
+    }
+    func updateUIView(_ control: NativePracticeSegmentedControl, context: Context) {
+        context.coordinator.selection = $selection
+        context.coordinator.options = options
+        control.isEnabled = context.environment.isEnabled
+        control.apply(options: options, selectedID: selection, animated: !reduceMotion)
+    }
+    final class Coordinator: NSObject {
+        var selection: Binding<String>
+        var options: [SelectionOption]
+        init(selection: Binding<String>, options: [SelectionOption]) { self.selection = selection; self.options = options }
+        @objc func changed(_ control: UISegmentedControl) {
+            guard options.indices.contains(control.selectedSegmentIndex) else { return }
+            let next = options[control.selectedSegmentIndex].id
+            if selection.wrappedValue != next { selection.wrappedValue = next }
         }
-        let width = max(0, (size.width - spacing * CGFloat(count - 1)) / CGFloat(count))
-        return CGRect(x: CGFloat(selected) * (width + spacing), y: 0, width: width, height: size.height)
+    }
+}
+
+final class NativePracticeSegmentedControl: UISegmentedControl {
+    private var configuredIDs: [String] = []
+    func apply(options: [SelectionOption], selectedID: String, animated: Bool) {
+        let nextIDs = options.map(\.id)
+        if configuredIDs != nextIDs || numberOfSegments != options.count {
+            removeAllSegments()
+            for (index, option) in options.enumerated() { insertSegment(withTitle: option.title, at: index, animated: false) }
+            configuredIDs = nextIDs
+        } else {
+            for (index, option) in options.enumerated() where titleForSegment(at: index) != option.title {
+                setTitle(option.title, forSegmentAt: index)
+            }
+        }
+        let foreground = UIColor(red: 34 / 255, green: 33 / 255, blue: 36 / 255, alpha: 1)
+        let normalFont = UIFont.preferredFont(forTextStyle: .subheadline)
+        let selectedFont = UIFont.systemFont(ofSize: normalFont.pointSize, weight: .semibold)
+        setTitleTextAttributes([.foregroundColor: foreground.withAlphaComponent(0.74), .font: normalFont], for: .normal)
+        setTitleTextAttributes([.foregroundColor: foreground, .font: selectedFont], for: .selected)
+        let nextIndex = options.firstIndex { $0.id == selectedID } ?? UISegmentedControl.noSegment
+        guard selectedSegmentIndex != nextIndex else { return }
+        // Programmatic preview/state changes retarget the current native transition.
+        // Real touches and dragging keep the platform's built-in glass physics.
+        if animated, window != nil, !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: 0.26, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut]) {
+                self.selectedSegmentIndex = nextIndex
+                self.layoutIfNeeded()
+            }
+        } else { selectedSegmentIndex = nextIndex }
     }
 }
 
@@ -460,5 +503,85 @@ struct ActivityPanel: View {
         }.padding(18).background(Color.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 23, style: .continuous))
             .contentTransition(.opacity)
             .accessibilityElement(children: .combine)
+    }
+}
+
+
+/// Launch decoration never waits on a model or owns navigation. An interrupted
+/// launch is consumed, so foreground/background changes cannot replay it.
+struct NativeOpeningReadiness: Hashable {
+    let signedIn: Bool
+    let stateLoaded: Bool
+    let onboardingBlocked: Bool
+    let protectedActivity: Bool
+    let foreground: Bool
+    var ready: Bool { signedIn && stateLoaded && foreground }
+    var allowed: Bool { ready && !onboardingBlocked && !protectedActivity }
+}
+
+struct NativeOpeningState {
+    enum Phase: Equatable { case waiting, greeting, finished }
+    private(set) var phase = Phase.waiting
+    private(set) var consumed = false
+    private(set) var animateHome = false
+    static let greetingMilliseconds = 1_350
+    mutating func begin(readiness: NativeOpeningReadiness, reduceMotion: Bool) -> Bool {
+        guard readiness.ready, !consumed else { return false }
+        consumed = true
+        animateHome = readiness.allowed && !reduceMotion
+        phase = animateHome ? .greeting : .finished
+        return phase == .greeting
+    }
+    mutating func finish(animated: Bool) {
+        guard consumed else { return }
+        animateHome = animateHome && animated
+        phase = .finished
+    }
+}
+
+struct NativeHomeEntrance: ViewModifier {
+    let visible: Bool
+    let animated: Bool
+    let index: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func body(content: Content) -> some View {
+        content.opacity(visible || reduceMotion ? 1 : 0)
+            .offset(y: visible || reduceMotion ? 0 : 12)
+            .animation(animated && !reduceMotion ? .timingCurve(0.23, 1, 0.32, 1, duration: 0.28).delay(Double(min(5, max(0, index))) * 0.05) : nil, value: visible)
+    }
+}
+
+/// No visible continue button: the entire greeting can be tapped or escaped.
+/// The model, learning state, and Home content are already ready underneath it.
+struct NativeOpeningGreeting: View {
+    let name: String
+    let sentence: String
+    let skip: () -> Void
+    @State private var entered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        Button(action: skip) {
+            VStack(spacing: 18) {
+                Spacer(minLength: 18)
+                VoiceOrb(mode: .ready, level: 0, mood: .friendly)
+                    .frame(width: 164, height: 164).allowsHitTesting(false).accessibilityHidden(true)
+                    .scaleEffect(entered ? 1 : 0.96)
+                Text("Привет, \(name).")
+                    .font(.system(.largeTitle, design: .rounded).weight(.semibold)).tracking(-0.7)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                Text(sentence).font(.body).foregroundStyle(Theme.secondary)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 360)
+                    .opacity(entered ? 1 : 0).offset(y: entered ? 0 : 6)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.22).delay(0.12), value: entered)
+                Spacer(minLength: 18)
+                Spacer(minLength: 0).frame(height: 42)
+            }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .foregroundStyle(Theme.charcoal).background(Theme.surface)
+        }.buttonStyle(.plain).ignoresSafeArea()
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("Привет, " + name + ". " + sentence)
+            .accessibilityHint("Коснись, чтобы сразу открыть главную.")
+            .task { withAnimation(reduceMotion ? nil : NativeMotion.settle) { entered = true } }
     }
 }

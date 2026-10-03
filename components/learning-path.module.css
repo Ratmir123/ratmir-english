@@ -1,15 +1,25 @@
 .kicker { color: var(--muted); font-size: 11px; letter-spacing: 1.3px; font-weight: 600; }
 .note { color: var(--muted); font-size: 13px; line-height: 1.6; }
-.level { padding: 24px; background: var(--graphite); color: var(--surface); border-radius: 26px; }
-.levelHeading { display: flex; align-items: center; gap: 14px; margin: -8px -6px 18px; }
+.level { min-width: 0; container-type: inline-size; container-name: rank-card; padding: 24px; background: var(--graphite); color: var(--surface); border-radius: 26px; }
+.levelHeading { display: grid; grid-template-columns: 128px minmax(0, 1fr) auto; align-items: center; gap: 14px; margin: -8px -6px 18px; }
 .rankArt { flex: 0 0 auto; object-fit: contain; filter: drop-shadow(0 5px 9px #0003); }
-.rankEmblem { --rank-accent: #bcc2df; display: inline-block; flex: 0 0 auto; position: relative; isolation: isolate; }
-.rankEmblem > .rankArt { position: absolute; inset: 0; width: 100%; height: 100%; }
-.rankEmblem[data-rank='mint'] { --rank-accent: #43cda2; }
-.rankEmblem[data-rank='sky'] { --rank-accent: #54baf1; }
-.rankEmblem[data-rank='violet'] { --rank-accent: #bbb2f5; }
-.rankEmblem[data-rank='rose'] { --rank-accent: #f47c9c; }
-.rankEmblem[data-rank='gold'] { --rank-accent: #fac65f; }
+.rankEmblem { --rank-accent: #bcc2df; --rank-lift: -5px; --rank-sway: 3deg; --rank-period: 5.4s; display: inline-block; flex: 0 0 auto; position: relative; isolation: isolate; }
+.rankTouch, .rankStatic { display: block; position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 24%; background: transparent; color: inherit; }
+.rankTouch { cursor: pointer; touch-action: manipulation; }
+.rankTouch:focus-visible { outline: 2px solid var(--lime); outline-offset: -8px; }
+.rankFeedback, .rankFloat { position: absolute; display: block; inset: 0; pointer-events: none; }
+.rankFeedback { transition: transform 200ms cubic-bezier(.23,1,.32,1); }
+.rankEmblem[data-pressed='true'] .rankFeedback { transform: translateY(3px) scale(.93,.96) rotate(-4deg); transition-duration: 100ms; }
+.rankFloat { transform-origin: 50% 64%; }
+.rankFloat > .rankArt { position: absolute; inset: 0; width: 100%; height: 100%; }
+.rankEmblem[data-moving='true'] .rankFloat { animation: rank-float var(--rank-period) cubic-bezier(.45,0,.55,1) infinite; }
+.rankFloor { position: absolute; left: 26%; bottom: 10%; width: 48%; height: 9%; border-radius: 50%; background: radial-gradient(ellipse, #22212432, transparent 70%); pointer-events: none; }
+.rankEmblem[data-moving='true'] .rankFloor { animation: rank-ground var(--rank-period) cubic-bezier(.45,0,.55,1) infinite; }
+.rankEmblem[data-rank='mint'] { --rank-accent: #43cda2; --rank-lift: -6px; --rank-sway: 3.5deg; --rank-period: 4.6s; }
+.rankEmblem[data-rank='sky'] { --rank-accent: #54baf1; --rank-lift: -8px; --rank-sway: 4deg; --rank-period: 4.8s; }
+.rankEmblem[data-rank='violet'] { --rank-accent: #bbb2f5; --rank-lift: -6px; --rank-sway: 4.5deg; --rank-period: 4.2s; }
+.rankEmblem[data-rank='rose'] { --rank-accent: #f47c9c; --rank-lift: -7px; --rank-sway: 5deg; --rank-period: 3.8s; }
+.rankEmblem[data-rank='gold'] { --rank-accent: #fac65f; --rank-lift: -8px; --rank-sway: 4deg; --rank-period: 4s; }
 .rankAtmosphere, .rankSheen { position: absolute; inset: 0; pointer-events: none; }
 .rankAtmosphere i { position: absolute; display: block; color: var(--rank-accent); }
 .rankSheen { mask-image: var(--rank-art); mask-size: contain; mask-repeat: no-repeat; mask-position: center; overflow: hidden; }
@@ -34,7 +44,7 @@
 .rankEmblem[data-rank='rose'][data-moving='true'] .rankAtmosphere i { animation: rank-flare 3.4s cubic-bezier(.45,0,.55,1) infinite; }
 .rankEmblem[data-rank='gold'][data-moving='true'] .rankAtmosphere i { height: 2px; animation: rank-radiance 4s cubic-bezier(.45,0,.55,1) infinite; }
 .currentRankCopy { min-width: 0; }
-.levelHeading .currentRankCopy h3 { font-size: 29px; margin: 5px 0 6px; letter-spacing: -.8px; }
+.levelHeading .currentRankCopy h2 { font-size: 29px; margin: 5px 0 6px; letter-spacing: -.8px; overflow-wrap: anywhere; }
 .rankSubtitle { color: #c2bfc8; font-size: 13px; }
 .rankDisclosure { margin: 18px 0 0; border-top: 1px solid #ffffff20; }
 .rankDisclosure > summary { display: flex; align-items: center; gap: 12px; min-height: 48px; cursor: pointer; list-style: none; font-size: 14px; font-weight: 550; color: var(--surface); }
@@ -43,39 +53,47 @@
 .rankDisclosure > summary > span { margin-left: auto; color: #c2bfc8; font-size: 12px; }
 .rankDisclosure > summary > svg { transition: transform 180ms cubic-bezier(.23,1,.32,1); }
 .rankDisclosure[open] > summary > svg { transform: rotate(90deg); }
-.rankOverview { margin-top: 24px; border-top: 1px solid #ffffff20; padding-top: 18px; }
-.rankOverview h4 { font-size: 15px; font-weight: 550; margin-bottom: 12px; }
-.rankLadder { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 20px; }
+.rankLadder { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 6px 20px; }
 .rankLadder > li { position: relative; display: flex; align-items: center; gap: 5px; min-width: 0; padding: 12px 4px; border-bottom: 1px solid #ffffff16; }
 .rankLadder > li[data-current='true'] { background: #bbb2f518; border-radius: 18px; border-color: transparent; }
 .rankCopy { min-width: 0; }
 .rankCopy > strong, .rankCopy > span, .rankCopy > small { display: block; }
-.rankCopy > strong { font-size: 16px; font-weight: 550; margin-bottom: 5px; }
-.rankCopy > span { font-size: 11px; line-height: 1.45; color: #c2bfc8; font-variant-numeric: tabular-nums; }
-.rankCopy > small { margin-top: 5px; font-size: 11px; line-height: 1.45; color: #c2bfc8; font-variant-numeric: tabular-nums; }
+.rankCopy > strong { font-size: 16px; font-weight: 550; margin-bottom: 5px; overflow-wrap: anywhere; }
+.rankCopy > span { font-size: 12px; line-height: 1.45; color: #c2bfc8; font-variant-numeric: tabular-nums; }
+.rankCopy > small { margin-top: 5px; font-size: 12px; line-height: 1.45; color: #c2bfc8; font-variant-numeric: tabular-nums; }
 .rankLadder > li[data-current='true'] .rankCopy > small { color: var(--lime); }
 .rankStatus { margin-left: auto; margin-right: 6px; color: #c2bfc8; }
 .rankStatus > span { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--lime); }
 .rewardsInvitation { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 64px; padding: 7px 14px; margin-top: 12px; border: 1px solid #ffffffa8; border-radius: 21px; background: var(--lime); color: var(--graphite); text-align: left; transition: transform 150ms cubic-bezier(.23,1,.32,1); }
-.rewardsInvitation > img { flex: 0 0 auto; object-fit: contain; }
-.rewardsInvitation > span { flex: 1; }
+.invitationCopy { min-width: 0; flex: 1; }
 .rewardsInvitation strong, .rewardsInvitation small { display: block; }
 .rewardsInvitation strong { font-size: 16px; font-weight: 600; }
 .rewardsInvitation small { font-size: 12px; margin-top: 4px; opacity: .76; }
 .rewardsInvitation > svg { flex: 0 0 auto; }
 .rewardsInvitation:active { transform: scale(.975); }
+@keyframes rank-float { 0%,100% { transform: translateY(0) rotate(calc(var(--rank-sway) * -.45)) scale(1); } 50% { transform: translateY(var(--rank-lift)) rotate(var(--rank-sway)) scale(1.025); } }
+@keyframes rank-ground { 0%,100% { transform: scaleX(1); opacity: .65; } 50% { transform: scaleX(.84); opacity: .4; } }
 @keyframes rank-sheen { from { transform: translateX(0) rotate(24deg); } to { transform: translateX(770%) rotate(24deg); } }
 @keyframes rank-spark { 0%, 100% { transform: scale(.82); opacity: .18; } 50% { transform: scale(1.24); opacity: .65; } }
 @keyframes rank-rhythm { 0% { transform: scale(.85,.66); opacity: .35; } 100% { transform: scale(1.58,1.23); opacity: 0; } }
 @keyframes rank-air { 0% { transform: translateY(20px) rotate(-12deg); opacity: 0; } 45% { opacity: .38; } 100% { transform: translateY(-28px) rotate(-12deg); opacity: 0; } }
 @keyframes rank-flare { 0%, 100% { transform: rotate(var(--angle)) translateX(var(--rank-radius)) scaleX(.75); opacity: .20; } 50% { transform: rotate(var(--angle)) translateX(calc(var(--rank-radius) + 4px)) scaleX(1.1); opacity: .5; } }
 @keyframes rank-radiance { 0%, 100% { transform: rotate(var(--angle)) translateX(var(--rank-radius)) scaleX(.8); opacity: .23; } 50% { transform: rotate(var(--angle)) translateX(calc(var(--rank-radius) + 3px)) scaleX(1.5); opacity: .58; } }
-.achievementArt { flex: 0 0 auto; object-fit: contain; }
-.achievement summary > span:nth-child(2) { flex: 1; }
+.achievementArt { display: block; width: 100%; height: 100%; object-fit: contain; transform-origin: 50% 68%; }
+.achievementEmblem { position: relative; display: inline-block; flex: 0 0 auto; pointer-events: none; isolation: isolate; }
+.achievementFeedback { position: absolute; inset: 0; display: block; transition: transform 200ms cubic-bezier(.23,1,.32,1); }
+.achievementFloor { position: absolute; left: 25%; bottom: 10%; width: 50%; height: 8%; border-radius: 50%; background: radial-gradient(ellipse, #2221241f, transparent 70%); }
+.achievementEmblem[data-moving='true'][data-reward-motion='earned'] .achievementArt { animation: reward-float 4.4s cubic-bezier(.45,0,.55,1) infinite; }
+.achievementEmblem[data-moving='true'][data-reward-motion='goal'] .achievementArt { animation: reward-goal 5.2s cubic-bezier(.45,0,.55,1) infinite; }
+.achievementEmblem[data-moving='true'] .achievementFloor { animation: rank-ground 4.4s cubic-bezier(.45,0,.55,1) infinite; }
+.achievement:nth-child(even) .achievementArt { animation-delay: -1.6s; }
+.achievement summary:active .achievementFeedback, .rewardsInvitation:active .achievementFeedback { transform: scale(.92) rotate(-5deg); transition-duration: 100ms; }
+@keyframes reward-float { 0%,100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-4px) rotate(4deg) scale(1.045); } }
+@keyframes reward-goal { 0%,62%,100% { transform: translateY(0) rotate(0); } 75% { transform: translateY(-3px) rotate(-5deg) scale(1.05); } 88% { transform: translateY(-1px) rotate(3deg); } }
 .targetReason { color: var(--muted); margin: 12px 0; line-height: 1.55; }
-.achievementDetail .button { min-height: 44px; width: fit-content; }
+.achievementDetail :global(.button) { min-height: 44px; width: fit-content; max-width: 100%; flex-wrap: wrap; text-align: left; }
 .levelMark { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 16px; background: var(--lavender); color: var(--graphite); font-size: 22px; font-weight: 600; }
-.levelHeading h3 { font-size: 17px; margin-top: 2px; }
+.levelHeading h2 { font-size: 17px; margin-top: 2px; }
 .level .kicker, .level .note, .level .lineLabels { color: #c2bfc8; }
 .xp { margin-left: auto; font-size: 19px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .xp small { color: #c2bfc8; font-size: 12px; }
@@ -85,15 +103,17 @@
 .lineLabels { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 12px; margin: 10px 0 14px; }
 .compact { margin-top: 22px; padding: 20px; }
 .compact .levelHeading { gap: 10px; }
-.compact .levelHeading .currentRankCopy h3 { font-size: 27px; }
+.compact .levelHeading .currentRankCopy h2 { font-size: 27px; }
 .compact .kicker { font-size: 9px; letter-spacing: .9px; }
 .compact .xp { font-size: 16px; }
 .compact .rankLadder { grid-template-columns: 1fr; }
 .compact .rankLadder > li { padding-block: 7px; }
 .compact .rankCopy > strong { font-size: 15px; }
-.curriculum, .achievements { margin-top: 22px; padding: 26px; background: var(--surface); border-radius: 28px; }
+.curriculum, .achievements { min-width: 0; margin-top: 22px; padding: 26px; background: var(--surface); border-radius: 28px; }
+.achievements { container-type: inline-size; container-name: reward-card; }
 .sectionHeading { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
-.sectionHeading h2 { font-size: 23px; margin-top: 6px; }
+.sectionHeading h2 { font-size: 23px; margin-top: 6px; overflow-wrap: anywhere; }
+.sectionHeading > div { min-width: 0; }
 .sectionHeading > svg { flex-shrink: 0; color: var(--muted); }
 .trackList { margin: 22px 0 16px; }
 .trackRow { display: flex; gap: 13px; align-items: center; padding: 17px 0; border: none; border-top: 1px solid var(--line-soft); width: 100%; text-align: left; background: transparent; border-radius: 0; }
@@ -116,16 +136,19 @@
 .achievementList { margin: 18px 0 7px; }
 .achievement { border-top: 1px solid var(--line-soft); }
 .achievement:last-child { border-bottom: 1px solid var(--line-soft); }
-.achievement summary { display: flex; min-height: 78px; align-items: center; gap: 12px; cursor: pointer; list-style: none; }
+.achievement summary { display: flex; min-height: 86px; align-items: center; gap: 12px; padding: 10px 0; cursor: pointer; list-style: none; color: var(--text); }
 .achievement summary::-webkit-details-marker { display: none; }
-.achievement summary > span:nth-child(2) { min-width: 0; flex: 1; }
+.achievement summary::after { display: none; }
+.achievementCopy { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .achievement strong, .achievement small { display: block; }
 .achievement strong { font-size: 14px; font-weight: 550; }
 .achievement small { font-size: 12px; color: var(--muted); margin-top: 3px; }
 .achievementIcon { display: grid; place-items: center; width: 37px; height: 37px; flex-shrink: 0; background: var(--raised); border-radius: 13px; color: var(--muted); }
 .achievement[data-unlocked='true'] .achievementIcon { background: var(--lime); color: var(--graphite); }
-.achievementState { color: var(--muted); }
-.achievementDetail { padding: 0 0 17px 49px; font-size: 13px; }
+.achievementState { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.achievementChevron { transition: transform 180ms cubic-bezier(.23,1,.32,1); }
+.achievement[open] > summary .achievementChevron { transform: rotate(90deg); }
+.achievementDetail { padding: 0 0 17px 76px; font-size: 13px; overflow-wrap: anywhere; }
 .achievementDetail .line { margin: 12px 0 8px; }
 .outcome { position: relative; margin-bottom: 25px; padding: 27px; border-radius: 28px; background: #bbb2f540; }
 .outcomeHeading { display: flex; align-items: center; gap: 13px; margin-bottom: 22px; }
@@ -149,7 +172,7 @@
 .resultEvidence q { display: block; font-size: 15px; margin-top: 8px; }
 .outcomeActions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin: 20px 0 24px; }
 .unlock { display: flex; align-items: center; gap: 12px; padding-top: 19px; margin-top: 16px; border-top: 1px solid #22212414; }
-.unlock > img { flex-shrink: 0; }
+.unlock > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .unlock strong, .unlock small { display: block; }
 .unlock strong { font-size: 14px; font-weight: 550; }
 .unlock small { color: var(--muted); font-size: 12px; margin-top: 4px; }
@@ -160,14 +183,18 @@
 .burst i:nth-child(even) { background: var(--lavender); }
 @keyframes confirmed { from { transform: scale(.86); opacity: .5; } to { transform: scale(1); opacity: 1; } }
 @keyframes unlock-burst { 0% { transform: translate(0, 0) rotate(0); opacity: 0; } 20% { opacity: 1; } 100% { transform: translate(var(--dx),var(--dy)) rotate(var(--rotation)); opacity: 0; } }
-@media (hover:hover) and (pointer:fine) { .trackRow:hover > svg { transform: translate(2px,-2px); } .trackRow:hover .trackCopy strong { color: var(--accent-ink); } }
-@media (max-width: 1100px) { .rankLadder { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (hover:hover) and (pointer:fine) { .trackRow:hover > svg { transform: translate(2px,-2px); } .trackRow:hover .trackCopy strong { color: var(--accent-ink); } .rankTouch:hover .rankFeedback { transform: translateY(-2px) scale(1.05) rotate(-3deg); } .rankEmblem[data-pressed='true'] .rankFeedback { transform: translateY(3px) scale(.93,.96) rotate(-4deg); } .achievement summary:hover .achievementFeedback, .rewardsInvitation:hover .achievementFeedback { transform: translateY(-2px) scale(1.08) rotate(-5deg); } .achievement summary:active .achievementFeedback, .rewardsInvitation:active .achievementFeedback { transform: scale(.92) rotate(-5deg); } }
+@container rank-card (max-width: 420px) { .levelHeading { grid-template-columns: 112px minmax(0, 1fr); gap: 10px; margin-inline: -4px; } .levelHeading > .rankEmblem { width: 112px !important; height: 112px !important; } .levelHeading .xp { grid-column: 2; margin: -18px 0 0; justify-self: start; font-size: 17px; } .levelHeading .currentRankCopy h2 { font-size: 27px; } }
+@container rank-card (max-width: 280px) { .levelHeading { grid-template-columns: 108px minmax(0,1fr); } .levelHeading > .rankEmblem { width: 108px !important; height: 108px !important; } .levelHeading .currentRankCopy h2 { font-size: 23px; } .rankSubtitle { font-size: 12px; } .levelHeading .xp { margin-top: -8px; } .rankLadder > li { gap: 4px; } .rankLadder > li > .rankEmblem { width: 72px !important; height: 72px !important; } }
+@container reward-card (max-width: 310px) { .achievement summary { gap: 8px; } .achievement summary > .achievementEmblem { width: 52px !important; height: 52px !important; } .achievementState { gap: 4px; } .achievementDetail { padding-left: 0; } }
 @media (max-width: 800px) { .coverage { grid-template-columns: 1fr; } }
-@media (max-width: 650px) { .rankLadder { grid-template-columns: 1fr; gap: 2px; } .levelHeading { flex-wrap: wrap; column-gap: 6px; } .levelHeading .currentRankCopy h3 { font-size: 27px; } .levelHeading .xp { font-size: 17px; } .rankStatus { margin-right: 10px; } }
+@media (max-width: 650px) { .rankLadder { gap: 2px; } .rankStatus { margin-right: 10px; } }
 @media (max-width: 500px) { .curriculum, .achievements { padding: 22px; } .sectionHeading h2 { font-size: 21px; } .trackCount { font-size: 15px; } .trackRow > svg { display: none; } .trackCopy small { font-size: 12px; } .outcome { padding: 22px; } .outcome h2 { font-size: 25px; } .outcome .facts { grid-template-columns: 1fr 1fr; } .outcomeHeading { gap: 9px; } .outcomeHeading .kicker { font-size: 9px; } .outcomeActions .button { width: 100%; } }
-@media (prefers-reduced-motion: reduce) { .line span, .trackRow > svg, .rankDisclosure > summary > svg, .rewardsInvitation { transition: none; } .burst { display: none; } .outcomeMark > svg, .rankEmblem * { animation: none !important; } .rewardsInvitation:active { transform: none; } .rankSheen { display: none; } }
+@media (prefers-reduced-motion: reduce) { .line span, .trackRow > svg, .rankDisclosure > summary > svg, .rewardsInvitation, .rankFeedback, .achievementFeedback, .achievementChevron { transition: none; } .burst { display: none; } .outcomeMark > svg, .rankEmblem *, .achievementEmblem * { animation: none !important; } .rankFeedback, .achievementFeedback, .rewardsInvitation:active { transform: none !important; } .rankSheen { display: none; } }
 @media (prefers-contrast: more) { .rankAtmosphere, .rankSheen { display: none; } .rankCopy > span, .rankCopy > small, .rankSubtitle { color: #e1e1e1; } }
 :global(html[data-input='keyboard']) .line span { transition: none; }
 :global(html[data-input='keyboard']) .trackRow > svg { transition: none; transform: none; }
-:global(html[data-input='keyboard']) .rankEmblem * { animation: none; }
+:global(html[data-input='keyboard']) .rankEmblem * { animation: none !important; }
 :global(html[data-input='keyboard']) .rewardsInvitation { transition: none; }
+:global(html[data-input='keyboard']) .achievementEmblem * { animation: none !important; }
+:global(html[data-input='keyboard']) .rankFeedback, :global(html[data-input='keyboard']) .achievementFeedback, :global(html[data-input='keyboard']) .achievementChevron { transition: none; transform: none !important; }

@@ -67,6 +67,7 @@ struct PreviewAccessibility: ViewModifier {
             conversation["turns"] = [["id": "a1", "role": "assistant", "text": reading ? "Read the short passage, then explain what surprised the organisers." : "Write your paragraph below. Take a moment to decide what example you want to use."]]
         }
         var state: [String: Any] = ["profile": ["name": "Alex", "dailyMinutes": 15], "sessions": [conversation], "skills": [["id": "reciprocity", "state": "provisional", "independentSuccesses": 2, "transfer": false, "retention": false, "lastChecked": now, "examples": [["sessionId": conversation["id"]!, "quote": "What got you into climbing?", "reason": "Вопрос продолжил тему собеседника."]]], ["id": "clarity", "state": "unknown", "independentSuccesses": 0, "transfer": false, "retention": false]], "xp": 120, "completed": 6, "audioUsage": ["usedUsd": 1.28, "estimated": true, "budgetUsd": 35, "recordedMinutes": 42.5, "spokenCharacters": 6200]]
+        if screen == "opening" || screen == "selector-rapid" { state["sessions"] = [] }
         state["progression"] = PreviewProgression.make(sessionId: conversation["id"] as! String, now: now, deferred: screen == "saved-deferred")
         if ["intro", "baseline", "baseline-report"].contains(screen) {
             let ready = screen == "baseline-report"
