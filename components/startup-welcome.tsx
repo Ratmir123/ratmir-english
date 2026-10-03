@@ -24,8 +24,8 @@ export function StartupWelcome({ state, onReveal, onFinished }: StartupWelcomePr
   const finish = useCallback((immediate = false) => {
     if (finished.current) { if (immediate) { clear(); callbacks.current.onFinished(); } return; }
     finished.current = true; clear();
-    callbacks.current.onReveal();
     if (immediate) { callbacks.current.onFinished(); return; }
+    callbacks.current.onReveal();
     setLeaving(true);
     timers.current.push(setTimeout(() => callbacks.current.onFinished(), 620));
   }, [clear]);
@@ -54,7 +54,7 @@ export function StartupWelcome({ state, onReveal, onFinished }: StartupWelcomePr
         <h1>{copy.greeting}</h1>
         <p aria-label={copy.motivation}>{copy.motivation.split(' ').map((word, index) => <span aria-hidden="true" key={index} style={{ '--word-delay': (480 + index * 45) + 'ms' } as CSSProperties}>{word}{' '}</span>)}</p>
       </div>
-      <span className={styles.wordmark} aria-hidden="true">smooth english</span>
+      <span className={styles.wordmark} aria-hidden="true"><span>smooth english</span></span>
     </div>
     <button className={styles.skip} onClick={() => finish(true)}>Перейти к главной</button>
   </div>;
