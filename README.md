@@ -1,4 +1,4 @@
-# Ratmir English
+# Smooth English
 
 Open-source English conversation trainer with native SwiftUI and Windows clients and a private self-hosted backend. The application practises dialogue, provides feedback, and derives skill observations from the learner's own attempts. It does not certify a CEFR level or infer pronunciation from a transcript.
 

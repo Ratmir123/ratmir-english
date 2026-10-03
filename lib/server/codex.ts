@@ -77,7 +77,7 @@ class CodexBridge {
       catch { this.close(new Error('Codex вернул некорректное сообщение протокола.')); }
     });
     this.ready = this.request('initialize', {
-      clientInfo: { name: 'ratmir_english_local', title: 'Ratmir English', version: '0.1.0' },
+      clientInfo: { name: 'ratmir_english_local', title: 'Smooth English', version: '0.1.0' },
       capabilities: { experimentalApi: false },
     }).then(() => { this.write({ method: 'initialized', params: {} }); this.touch(); });
     // A spawn failure can occur before the first caller awaits initialization.

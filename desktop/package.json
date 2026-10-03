@@ -1,8 +1,8 @@
 {
   "name": "ratmir-english-desktop",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "description": "Desktop companion for personal English practice",
-  "author": "Ratmir English",
+  "author": "Smooth English",
   "main": "main.cjs"
 }

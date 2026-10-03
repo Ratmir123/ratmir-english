@@ -1,12 +1,35 @@
 {
   "appId": "com.ratmir.english",
-  "productName": "Ratmir English",
-  "copyright": "Ratmir English",
-  "directories": { "app": "desktop", "output": ".runtime/desktop-dist" },
-  "files": ["*.cjs", "package.json", "!node_modules{,/**/*}"],
+  "productName": "Smooth English",
+  "copyright": "Smooth English",
+  "directories": {
+    "app": "desktop",
+    "output": ".runtime/desktop-dist"
+  },
+  "files": [
+    "*.cjs",
+    "package.json",
+    "!node_modules{,/**/*}"
+  ],
   "beforeBuild": "scripts/desktop-before-build.cjs",
-  "extraFiles": [{ "from": "public/icon-pearl-v04.ico", "to": "resources/app-icons/icon.ico" }],
-  "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "public/icon-pearl-v04.ico" },
+  "extraFiles": [
+    {
+      "from": "public/icon-smooth-v042.ico",
+      "to": "resources/app-icons/icon.ico"
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "icon": "public/icon-smooth-v042.ico",
+    "executableName": "Ratmir English"
+  },
   "nsis": {
     "oneClick": true,
     "perMachine": false,
@@ -14,7 +37,7 @@
     "runAfterFinish": false,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "Ratmir English",
-    "artifactName": "Ratmir English Setup.${ext}"
+    "shortcutName": "Smooth English",
+    "artifactName": "Smooth English Setup.${ext}"
   }
 }

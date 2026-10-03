@@ -26,6 +26,8 @@ import motionStyles from './training-app.module.css';
 import { Achievements, CurriculumOverview, EvidenceCoverage, PracticeLevel, SessionOutcome } from './learning-path';
 import { SpeechTimingPanel } from './speech-timing';
 import { LiveCaptions } from './live-captions';
+import { PracticeTrackSwitch } from './practice-track-switch';
+import { ReminderSettings } from './reminder-settings';
 import type { AchievementTarget } from '@/lib/achievement-targets';
 
 type Tab = 'today' | 'practice' | 'progress' | 'history' | 'settings' | 'session';
@@ -151,6 +153,7 @@ export function TrainingApp() {
   const [topic, setTopic] = useState('');
   const [selectedFamily, setSelectedFamily] = useState('');
   const [selectedTrack, setSelectedTrack] = useState<LearningTrackId | 'all'>('all');
+  const [rewardsRequested, setRewardsRequested] = useState(false);
   const [completionMoment, setCompletionMoment] = useState<{ sessionId: string; previousUnlocks: string[] } | null>(null);
   const [search, setSearch] = useState('');
   const [key, setKey] = useState('');
@@ -169,6 +172,14 @@ export function TrainingApp() {
   const desktopNavigation = useNavigationHighlight(tab);
   const mobileNavigation = useNavigationHighlight(tab);
   useLayoutEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }); }, [tab]);
+  useEffect(() => {
+    if (!rewardsRequested || tab !== 'progress') return;
+    const target = document.getElementById('practice-achievements');
+    if (!target) return;
+    target.scrollIntoView({ block: 'start', behavior: document.documentElement.dataset.input === 'keyboard'
+      || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    setRewardsRequested(false);
+  }, [rewardsRequested, tab]);
   useEffect(() => {
     const entry = new URLSearchParams(window.location.search).get('entry');
     setStartupVisible(entry === 'startup');
@@ -441,7 +452,7 @@ export function TrainingApp() {
 
   if (needLogin) return (
     <main className="login-screen">
-      <div className="brand-symbol">R<span>·</span></div>
+      <h2>Smooth English</h2>
       <h1>Твой английский. Твоя практика.</h1>
       <p>Введи личный код, который настроен на компьютере.</p>
       <form onSubmit={event => {
@@ -462,7 +473,7 @@ export function TrainingApp() {
 
   return <div className={`app-shell ${motionStyles.motionShell}`}>
     <aside className="sidebar">
-      <a href="/" className="brand"><span className="brand-symbol">R<span>·</span></span><span>ratmir<span>english</span></span></a>
+      <a href="/" className="brand"><span>smooth<span>english</span></span></a>
       <div className="sidebar-caption">ТВОЯ ПРОГРАММА</div>
       <nav ref={desktopNavigation.nav} className="desktop-navigation" aria-label="Основная навигация">
         <span ref={desktopNavigation.highlight} className="navigation-highlight" aria-hidden="true" />
@@ -480,10 +491,10 @@ export function TrainingApp() {
       </div>
     </aside>
     <div className="workspace"><div className="workspace-content">
-      <header className="topbar">
+      {tab !== 'today' && <header className="topbar">
         <span className="eyebrow">ЛИЧНАЯ ПРАКТИКА АНГЛИЙСКОГО</span>
         <div><span className="private-label"><ShieldCheck size={14} /> Только для тебя</span><time>{day}</time></div>
-      </header>
+      </header>}
       {error && <div className="message-banner error" role="alert"><CircleHelp size={18} /><span>{error}</span><button onClick={() => setError('')} aria-label="Закрыть сообщение"><X size={18} /></button></div>}
       {notice && <div className="message-banner success" role="status"><Check size={18} /><span>{notice}</span><button onClick={() => setNotice('')} aria-label="Закрыть сообщение"><X size={18} /></button></div>}
       <div ref={screenRef} className="screen-content" data-screen={startupVisible ? 'startup' : tab}>
@@ -552,7 +563,7 @@ export function TrainingApp() {
                 </div>
                 <div><h2>{state.profile.name}</h2><span className="profile-level">{calibration < 3 ? 'Калибруем навыки' : 'Калибровка завершена'}</span><p className="caption">{calibration < 3 ? 'Сначала реальные попытки, затем оценка.' : 'Следующие занятия уточняют профиль.'}</p></div>
               </div>
-              {state.progression ? <PracticeLevel value={state.progression} compact /> : <div className="profile-stats"><div><strong>{state.xp}<small> XP</small></strong><span>за практику</span></div><div><strong>{state.completed}</strong><span>занятий завершено</span></div></div>}
+              {state.progression ? <PracticeLevel value={state.progression} compact onRewards={() => { setRewardsRequested(true); navigation('progress'); }} /> : <div className="profile-stats"><div><strong>{state.xp}<small> XP</small></strong><span>за практику</span></div><div><strong>{state.completed}</strong><span>занятий завершено</span></div></div>}
             </section>
             <SubscriptionLimits usage={subscriptionUsage} loading={usageLoading} onRefresh={() => void refreshUsage(true)} compact />
             <section className="skills-panel">
@@ -566,10 +577,7 @@ export function TrainingApp() {
       </>}
       {tab === 'practice' && (!state.onboarding || state.onboarding.status === 'ready') && <>
         <div className="page-heading"><div><h1>Выбери практику</h1><p>Ситуация твоя. Задачу и сложность подберёт Sol.</p></div><ModeSwitch mode={mode} setMode={setMode} /></div>
-        <div className={motionStyles.pathSelector} role="group" aria-label="Направление практики">
-          <button className={selectedTrack === 'all' ? motionStyles.selectedPath : ''} aria-pressed={selectedTrack === 'all'} onClick={() => { setSelectedTrack('all'); setSelectedFamily(''); }}>Все направления</button>
-          {LEARNING_TRACKS.map(track => <button key={track.id} className={selectedTrack === track.id ? motionStyles.selectedPath : ''} aria-pressed={selectedTrack === track.id} onClick={() => { setSelectedTrack(track.id); setSelectedFamily(''); }}>{track.title}</button>)}
-        </div>
+        <PracticeTrackSwitch value={selectedTrack} onChange={track => { setSelectedTrack(track); setSelectedFamily(''); }} />
         {selectedTrack !== 'all' && <div className={motionStyles.pathPurpose}><strong>{LEARNING_TRACKS.find(track => track.id === selectedTrack)?.title}</strong><p>{LEARNING_TRACKS.find(track => track.id === selectedTrack)?.description}</p>{state.progression?.tracks.find(track => track.id === selectedTrack) && <><span className="caption">Завершено: {state.progression.tracks.find(track => track.id === selectedTrack)?.completedSessions}. Стартовый ориентир: {state.progression.tracks.find(track => track.id === selectedTrack)?.targetSessions}. Это счётчик практики, не оценка уровня.</span>{selectedTrack === 'ielts-foundation' && <div className={motionStyles.activityMilestones} aria-label="Практика основ IELTS">{state.progression.tracks.find(track => track.id === selectedTrack)?.activities.map(activity => <span key={activity.id}><strong>{activity.title}</strong>Завершено: {activity.completedSessions} / {activity.targetSessions}</span>)}</div>}</>}</div>}
         <div className="topic-bar">
           <Lightbulb size={18} />
@@ -696,6 +704,7 @@ export function TrainingApp() {
             </section>
           </div>
 
+          <ReminderSettings />
           <section className="settings-section settings-profile">
             <div className="section-title"><h2>Твоя программа</h2><Target size={20} /></div>
             <p className="caption">Следующие занятия учитывают этот профиль и твои реальные попытки.</p>
@@ -741,7 +750,7 @@ export function TrainingApp() {
       </>}
       {tab === 'session' && session && <SessionView session={session} result={state.progression?.recentResults.find(result => result.sessionId === session.id)} progression={state.progression} confirmedCompletion={completionMoment?.sessionId === session.id} previousUnlocks={completionMoment?.sessionId === session.id ? completionMoment.previousUnlocks : []} onNext={() => navigation("practice")} onDone={() => navigation("today")} setSession={setSession} busy={busy} busySince={busySince} input={input} setInput={changeInput} draft={drafts[session.id]} onDiscardDraft={() => { saveDraft(session.id, null); setInput(''); if (voice.recordingDraft?.contextKey?.startsWith(session.id + ':')) voice.discardRecording(); }} textMode={textMode} setTextMode={setTextMode} transcript={transcript} showTranscript={showTranscript} hintText={hintText} comfort={comfort} setComfort={setComfort} voice={voice} audioReady={!!status?.audio.configured} onSend={() => void send(input)} onResend={resend} onAction={sessionAction} onHint={level => void action('Подбираю опору', async () => { const result = await request<{ text: string }>(`sessions/${session.id}/hint`, { level }); setHintText(result.text); })} onBack={() => navigation('today')} onSettings={() => navigation('settings')} editing={editing} setEditing={setEditing} editText={editText} setEditText={setEditText} />}
       </>}
-      </div><footer className="page-footer"><span>Своя попытка → разбор → новая практика</span><span>Личный тренинг · 0.4.1 alpha</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
+      </div><footer className="page-footer"><span>Своя попытка → разбор → новая практика</span><span>Личный тренинг · 0.4.2 alpha</span></footer></div></div>{tab !== 'session' && <nav ref={mobileNavigation.nav} className="mobile-nav" aria-label="Навигация телефона"><span ref={mobileNavigation.highlight} className="navigation-highlight" aria-hidden="true" />{NAV.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => navigation(item.id)} aria-current={tab === item.id ? 'page' : undefined}><item.icon size={21} /><span>{item.name}</span></button>)}<button className={tab === 'settings' ? 'active' : ''} onClick={() => navigation('settings')} aria-current={tab === 'settings' ? 'page' : undefined}><Settings size={21} /><span>Настройки</span></button></nav>}
   </div>;
 }
 

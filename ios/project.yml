@@ -18,13 +18,13 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.ratmirenglish.personal
-        MARKETING_VERSION: '0.4.1'
-        CURRENT_PROJECT_VERSION: '7'
+        MARKETING_VERSION: '0.4.2'
+        CURRENT_PROJECT_VERSION: '8'
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Info.plist
       properties:
-        CFBundleDisplayName: Ratmir English
+        CFBundleDisplayName: Smooth English
         CFBundleShortVersionString: '$(MARKETING_VERSION)'
         CFBundleVersion: '$(CURRENT_PROJECT_VERSION)'
         NSMicrophoneUsageDescription: Записывать твои ответы для английской практики и разбора.

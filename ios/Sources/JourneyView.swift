@@ -34,38 +34,126 @@ struct JourneyProgressBar: View {
 
 struct JourneySummary: View {
     let progression: ProgressionState
+    private var rank: PracticeRank { RewardArt.practiceRank(progression.level) }
+    private var nextRank: PracticeRank? { RewardArt.nextRank(progression.level) }
     var body: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 14) {
-                    RewardImage(name: "reward-" + RewardArt.rank(progression.level).art + "-v041", size: 76)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(progression.levelTitle).font(.title3.weight(.semibold))
-                        Text(RewardArt.rank(progression.level).title + " · опыт практики").font(.caption).foregroundStyle(Theme.secondary)
-                    }
-                    Spacer(minLength: 0)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { RankEmblem(level: progression.level); rankHeading; Spacer(minLength: 0) }
+                    VStack(alignment: .leading, spacing: 10) { RankEmblem(level: progression.level); rankHeading }
                 }
                 HStack {
                     Text("\(progression.xp) XP").font(.subheadline.weight(.semibold)).monospacedDigit()
                     Spacer()
-                    Text("Ещё \(progression.xpToNextLevel) до следующего").font(.caption).foregroundStyle(Theme.secondary)
+                    Text("Уровень опыта \(progression.level)").font(.caption).foregroundStyle(Theme.secondary)
                 }
-                JourneyProgressBar(current: progression.xpInLevel, target: progression.nextLevelXP - progression.levelFloorXP)
-                Text("XP показывает выполненную практику. Это не CEFR и не оценка английского.")
+                if let nextRank {
+                    JourneyProgressBar(current: progression.xp - rank.minimumXP, target: nextRank.minimumXP - rank.minimumXP, color: Theme.lavender)
+                    Text("До «\(nextRank.title)» ещё \(max(0, nextRank.minimumXP - progression.xp)) XP")
+                        .font(.footnote).foregroundStyle(Theme.secondary).monospacedDigit()
+                } else {
+                    Text("Все шесть рангов открыты. Опыт практики продолжает расти.").font(.footnote).foregroundStyle(Theme.secondary)
+                }
+                Text("Ранги отмечают опыт практики. Языковой уровень проверяем по твоим ответам.")
                     .font(.caption).foregroundStyle(Theme.secondary)
-                Divider().opacity(0.5)
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 16) { journeyLinks }
-                    VStack(alignment: .leading, spacing: 8) { journeyLinks }
+                NavigationLink { RankLadderView() } label: {
+                    HStack { Text("Все ранги").font(.subheadline.weight(.medium)); Spacer(); Text("6").font(.caption).foregroundStyle(Theme.secondary); Image(systemName: "chevron.right").font(.caption.weight(.semibold)) }
+                        .frame(minHeight: 44).contentShape(Rectangle())
                 }
+                .buttonStyle(PressButton()).foregroundStyle(Theme.charcoal)
+                NavigationLink { AchievementsView() } label: {
+                    RewardInvitation(unlocked: progression.achievements.filter { $0.unlocked }.count, total: progression.achievements.count)
+                }.buttonStyle(PressButton())
+                NavigationLink { CurriculumView() } label: { Label("Твой путь", systemImage: "map").font(.footnote.weight(.medium)).frame(minHeight: 44) }
+                    .foregroundStyle(Theme.charcoal)
             }
         }
     }
-    @ViewBuilder private var journeyLinks: some View {
-        NavigationLink { CurriculumView() } label: { Label("Твой путь", systemImage: "map").frame(minHeight: 44) }
-        NavigationLink { AchievementsView() } label: {
-            Label("Награды \(progression.achievements.filter { $0.unlocked }.count)/\(progression.achievements.count)", systemImage: "seal")
-                .frame(minHeight: 44)
+    private var rankHeading: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("ТВОЙ РАНГ").font(.caption2.weight(.semibold)).tracking(1).foregroundStyle(Theme.secondary)
+            Text(rank.title).font(.title.weight(.semibold))
+            Text("Опыт практики").font(.footnote).foregroundStyle(Theme.secondary)
+        }
+    }
+}
+
+/// A clear invitation, without a fake unread counter or a distracting blinking dot.
+struct RewardInvitation: View {
+    let unlocked: Int
+    let total: Int
+    var body: some View {
+        HStack(spacing: 12) {
+            RewardImage(name: RewardArt.achievement("own-improvement"), size: 50)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Награды").font(.headline)
+                Text("Открыто \(unlocked) из \(total)").font(.caption).foregroundStyle(Theme.charcoal.opacity(0.74))
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "arrow.up.right").font(.subheadline.weight(.semibold))
+        }.foregroundStyle(Theme.charcoal).padding(.horizontal, 14).padding(.vertical, 8)
+            .background(Theme.lime, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.white.opacity(0.68), lineWidth: 1).allowsHitTesting(false) }
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .accessibilityElement(children: .combine)
+    }
+}
+
+struct RankLadderView: View {
+    @EnvironmentObject private var client: TrainingClient
+    private var progression: ProgressionState? { client.state?.progression }
+    var body: some View {
+        ScrollViewReader { proxy in ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                ScreenHeading(title: "Все ранги", subtitle: "Шесть ступеней опыта: от первой попытки до устойчивой практики.")
+                Text("Ранги открываются за XP из завершённых занятий. Они не равны CEFR или оценке IELTS.")
+                    .font(.subheadline).foregroundStyle(Theme.secondary)
+                if let progression { RankLadder(progression: progression) }
+                Color.clear.frame(height: 1).id("rank-ladder-bottom")
+            }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
+        }
+#if DEBUG
+            .task {
+                if PreviewFixtures.screen == "ranks-bottom" {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    proxy.scrollTo("rank-ladder-bottom", anchor: .bottom)
+                }
+            }
+#endif
+        }.modifier(ReadingCanvas()).navigationTitle("Ранги").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+    }
+}
+
+struct RankLadder: View {
+    let progression: ProgressionState
+    private var current: PracticeRank { RewardArt.practiceRank(progression.level) }
+    private var next: PracticeRank? { RewardArt.nextRank(progression.level) }
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(RewardArt.ranks) { rank in
+                let isCurrent = rank.id == current.id
+                let isNext = rank.id == next?.id
+                let unlocked = progression.level >= rank.from
+                HStack(spacing: 12) {
+                    RankEmblem(level: rank.from, size: 94, animated: isCurrent)
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 8) {
+                            Text(rank.title).font(.title3.weight(.semibold))
+                            if isCurrent { Text("Твой ранг").font(.caption2.weight(.semibold)).padding(.horizontal, 7).padding(.vertical, 4).background(Theme.lime, in: Capsule()) }
+                        }
+                        Text("Уровень \(rank.from) · от \(rank.minimumXP) XP").font(.caption).foregroundStyle(Theme.secondary).monospacedDigit()
+                        Text(isCurrent ? "\(progression.xp) XP сейчас" : isNext ? "Ещё \(max(0, rank.minimumXP - progression.xp)) XP" : unlocked ? "Уже открыт" : "Впереди")
+                            .font(.footnote.weight(isNext ? .medium : .regular)).foregroundStyle(isNext ? Theme.charcoal : Theme.secondary).monospacedDigit()
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: isCurrent ? "circle.inset.filled" : unlocked ? "checkmark" : "lock")
+                        .font(.caption.weight(.semibold)).foregroundStyle(isCurrent ? Theme.charcoal : Theme.secondary)
+                }.padding(.vertical, 9).padding(.horizontal, 10)
+                    .background(isCurrent ? Theme.lavender.opacity(0.24) : Color.clear, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(rank.title), от \(rank.minimumXP) XP. " + (isCurrent ? "Твой текущий ранг, \(progression.xp) XP." : unlocked ? "Уже открыт." : isNext ? "Следующий ранг, ещё \(max(0, rank.minimumXP - progression.xp)) XP." : "Пока впереди."))
+                if rank.id != RewardArt.ranks.last?.id { Divider().padding(.leading, 116).padding(.trailing, 10).opacity(0.45) }
+            }
         }
     }
 }

@@ -34,11 +34,11 @@ export function useContentEntrance<T extends HTMLElement>(key: string, distance 
     if (!element) return;
     const interrupted = animation.current?.playState === 'running';
     const current = interrupted ? getComputedStyle(element) : null;
-    const from = { opacity: current?.opacity || '0.84', transform: current?.transform || `translateY(${distance}px)` };
+    const from = { transform: current?.transform || `translateY(${distance}px)` };
     animation.current?.cancel();
     if (document.hidden || document.documentElement.dataset.input === 'keyboard'
       || window.matchMedia('(prefers-reduced-motion: reduce)').matches || !element.animate) return;
-    const next = element.animate([from, { opacity: 1, transform: 'translateY(0)' }], {
+    const next = element.animate([from, { transform: 'translateY(0)' }], {
       duration, easing: EASE_OUT,
     });
     animation.current = next;

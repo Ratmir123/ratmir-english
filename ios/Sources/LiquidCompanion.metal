@@ -28,9 +28,9 @@ using namespace metal;
     float3 reflection = mix(float3(0.72, 0.92, 1.0), float3(0.91, 0.86, 1.0), 0.5 + 0.5 * sin(time * 0.32 + p.y * 2.0));
     float edge = exp(-abs(distance - 0.969) * 108.0);
     float upper = smoothstep(0.30, 0.95, -p.y - p.x * 0.35);
-    float caustic = exp(-pow((p.y - 0.66 + p.x * 0.14 + sin(time * 0.42) * 0.04) * 17.0, 2.0)) * (1.0 - smoothstep(0.18, 0.90, abs(p.x))) * 0.18;
     float3 result = mix(tint * (0.70 + z * 0.28), reflection, fresnel * 0.47);
-    result += float3(specular * 0.64 + upper * edge * 0.44 + caustic);
+    // The upper reflection and rim define the glass; no artificial light bar across its belly.
+    result += float3(specular * 0.64 + upper * edge * 0.44);
     result += float3(0.18, 0.24, 0.32) * edge * smoothstep(-0.25, 0.7, p.x + p.y) * 0.55;
     return half4(half3(clamp(result, 0.0, 1.0) * alpha), half(alpha));
 }

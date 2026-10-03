@@ -104,7 +104,7 @@ async function handle(req: NextRequest, route: Route) {
   ensureWorker();
   if (req.method === 'GET') {
     if (path[0] === 'state') { cleanAudio(getAppState().profile.audioRetentionDays); return json(safeState(getAppState())); }
-    if (path[0] === 'status') return json({ app: { version: '0.4.1', channel: 'alpha' }, brain: await getBrainStatus(), hosting: process.env.TRAINING_DEPLOYMENT === 'server' ? 'server' : 'local', audio: { configured: audioConfigured(), model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts' } });
+    if (path[0] === 'status') return json({ app: { version: '0.4.2', channel: 'alpha' }, brain: await getBrainStatus(), hosting: process.env.TRAINING_DEPLOYMENT === 'server' ? 'server' : 'local', audio: { configured: audioConfigured(), model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts' } });
     if (path[0] === 'families') return json({ families: FAMILIES, calibration: CALIBRATION_OPTIONS });
     if (path[0] === 'sessions' && path[1]) return json(safeSession(session(path[1])));
     if (path[0] === 'audio' && path[1]) {

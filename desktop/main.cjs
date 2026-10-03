@@ -1,7 +1,7 @@
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, globalShortcut, Notification, ipcMain, clipboard, dialog, nativeImage, shell, session } = require('electron');
-const { mkdirSync, writeFileSync, renameSync } = require('node:fs');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, Notification, ipcMain, clipboard, dialog, nativeImage, shell, session, powerMonitor } = require('electron');
+const { mkdirSync, writeFileSync, renameSync, readFileSync, statSync, existsSync } = require('node:fs');
 const { join } = require('node:path');
 const {
   SHORTCUT, USAGE_URL, IPC, isAllowedExternalLink,
@@ -9,7 +9,9 @@ const {
   validReminderMinutes, safeNetworkError,
 } = require('./runtime.cjs');
 
-app.setName('Ratmir English');
+const { createDailyReminderScheduler, normalizeReminderSettings } = require('./daily-reminders.cjs');
+app.setName('Smooth English');
+// Preserve the installed profile, cookies and remote origin across the brand rename.
 const userDataPath = join(app.getPath('appData'), 'Ratmir English');
 mkdirSync(userDataPath, { recursive: true });
 app.setPath('userData', userDataPath);
@@ -24,6 +26,8 @@ let ready = false;
 let shortcutRegistered = false;
 let reminderTimer = null;
 let reminderNotification = null;
+let dailyReminders = null;
+let reminderLoadWarning = null;
 let pendingQuick = false;
 let mainLoaded = false;
 let quickLoaded = false;
@@ -39,7 +43,7 @@ const windowDiagnostics = {
 const diagnosticPath = join(userDataPath, 'desktop-status.json');
 const iconPath = app.isPackaged
   ? join(process.resourcesPath, 'app-icons', 'icon.ico')
-  : join(app.getAppPath(), '..', 'public', 'icon-pearl-v04.ico');
+  : join(app.getAppPath(), '..', 'public', 'icon-smooth-v042.ico');
 const preloadPath = join(__dirname, 'preload.cjs');
 
 if (!app.requestSingleInstanceLock()) {
@@ -52,6 +56,7 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true;
     clearTimeout(reminderTimer);
     reminderTimer = null;
+    dailyReminders?.stop();
     globalShortcut.unregisterAll();
     shortcutRegistered = false;
     if (tray) { tray.destroy(); tray = null; }
@@ -60,7 +65,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => { writeDiagnostics(); await boot(); }).catch((error) => {
     bootErrorCode = ['DESKTOP_CONFIG_INVALID', 'DESKTOP_WORKSPACE_INVALID', 'DESKTOP_NODE_INVALID', 'DESKTOP_SERVER_UNAVAILABLE'].includes(error?.message) ? error.message : 'APP_BOOT_FAILED';
     writeDiagnostics();
-    dialog.showErrorBox('Ratmir English', applicationPolicy?.mode === 'remote'
+    dialog.showErrorBox('Smooth English', applicationPolicy?.mode === 'remote'
       ? 'Не удалось открыть подключение к серверу тренинга. Проверь настройки приложения и доступ к интернету.'
       : 'Не удалось открыть тренинг. Проверь установку через Install Desktop.cmd и наличие Node.js 24 или новее. Личные ключи и записи остаются в папке тренинга.');
     app.quit();
@@ -174,7 +179,7 @@ function makeWindow(quick) {
   diagnostics.event = 'creating';
   writeDiagnostics();
   const window = new BrowserWindow({
-    title: quick ? 'Ratmir English · Быстрый разбор' : 'Ratmir English',
+    title: quick ? 'Smooth English · Быстрый разбор' : 'Smooth English',
     width: quick ? 420 : 1280,
     height: quick ? 720 : 920,
     minWidth: quick ? 360 : 820,
@@ -257,7 +262,7 @@ function makeWindow(quick) {
     if (diagnostics.event !== 'loaded') { diagnostics.event = 'load-resolved'; writeDiagnostics(); }
   }).catch(() => {
     if (diagnostics.event !== 'load-failed') { diagnostics.event = 'load-rejected'; writeDiagnostics(); }
-    dialog.showErrorBox('Ratmir English', applicationPolicy.mode === 'remote'
+    dialog.showErrorBox('Smooth English', applicationPolicy.mode === 'remote'
       ? 'Сервер тренинга не ответил. Проверь интернет и попробуй открыть приложение снова из значка рядом с часами.'
       : 'Окно тренинга не загрузилось. Попробуй открыть его снова из значка рядом с часами.');
   });
@@ -322,7 +327,7 @@ function scheduleReminder(minutes) {
     if (quitting) return;
     if (reminderNotification) reminderNotification.close();
     reminderNotification = new Notification({
-      title: 'Ratmir English',
+      title: 'Smooth English',
       body: 'Есть пять минут? Начни с одного короткого ответа по-английски.',
       icon: iconPath,
     });
@@ -361,6 +366,37 @@ function registerIpc() {
   handle(IPC.openQuick, () => { showQuick(); return { opened: true }; });
   handle(IPC.hideQuick, () => { hideWindow(quickWindow, windowDiagnostics.quick); return { hidden: true }; });
   handle(IPC.reminder, (_event, minutes) => scheduleReminder(minutes));
+  handle(IPC.reminderSettings, () => ({ ...dailyReminders.getSettings(), ...(reminderLoadWarning ? { warning: reminderLoadWarning } : {}) }));
+  handle(IPC.saveReminderSettings, (_event, settings) => { const result = dailyReminders.save(settings); reminderLoadWarning = null; return result; });
+}
+
+function setupDailyReminders() {
+  const path = join(userDataPath, 'daily-reminders.json');
+  let initial = { enabled: false, times: ['19:00'] };
+  if (existsSync(path)) {
+    try {
+      if (statSync(path).size > 4096) throw new Error('Reminder settings are too large.');
+      initial = normalizeReminderSettings(JSON.parse(readFileSync(path, 'utf8')));
+    } catch { reminderLoadWarning = 'Не удалось прочитать прежнее расписание. Напоминания приостановлены. Выбери времена и сохрани их заново.'; }
+  }
+  dailyReminders = createDailyReminderScheduler({
+    initial,
+    persist(settings) {
+      const temporary = path + '.tmp';
+      writeFileSync(temporary, JSON.stringify(settings), { mode: 0o600 });
+      renameSync(temporary, path);
+    },
+    notify() {
+      if (quitting || !Notification.isSupported()) return;
+      if (reminderNotification) reminderNotification.close();
+      reminderNotification = new Notification({ title: 'Smooth English', body: 'Твои 10 минут английского. Начнём с одного ответа?', icon: iconPath });
+      reminderNotification.on('click', showTraining);
+      reminderNotification.on('failed', () => { reminderNotification = null; });
+      reminderNotification.show();
+    },
+  });
+  dailyReminders.start();
+  powerMonitor.on('resume', () => dailyReminders.resume());
 }
 
 async function boot() {
@@ -378,9 +414,10 @@ async function boot() {
   await configureDesktopSession();
   startupStage = 'native-controls';
   writeDiagnostics();
+  setupDailyReminders();
   registerIpc();
   tray = new Tray(nativeImage.createFromPath(iconPath));
-  tray.setToolTip('Ratmir English · Ctrl+Alt+E');
+  tray.setToolTip('Smooth English · Ctrl+Alt+E');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Открыть тренинг', click: showTraining },
     { label: 'Быстрый разбор · Ctrl+Alt+E', click: showQuick },

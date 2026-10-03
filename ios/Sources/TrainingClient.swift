@@ -9,6 +9,69 @@ enum ClientError: LocalizedError {
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
 
+struct PracticeReminder: Codable, Identifiable, Equatable {
+    var id: String
+    var hour: Int
+    var minute: Int
+    var enabled: Bool
+    init(id: String = "smooth-practice-" + UUID().uuidString.lowercased(), hour: Int, minute: Int, enabled: Bool = true) {
+        self.id = id; self.hour = hour; self.minute = minute; self.enabled = enabled
+    }
+    var minuteOfDay: Int { hour * 60 + minute }
+    var timeLabel: String { String(format: "%02d:%02d", hour, minute) }
+    static let storageKey = "practice-reminder-schedule-v2"
+    static func owns(_ identifier: String) -> Bool { identifier == "daily-practice" || identifier.hasPrefix("smooth-practice-") }
+    static func ordered(_ values: [PracticeReminder]) -> [PracticeReminder] {
+        values.sorted { $0.minuteOfDay == $1.minuteOfDay ? $0.id < $1.id : $0.minuteOfDay < $1.minuteOfDay }
+    }
+    static func checked(_ values: [PracticeReminder]) throws -> [PracticeReminder] {
+        guard values.count <= 12, Set(values.map(\.id)).count == values.count,
+              values.allSatisfy({ owns($0.id) && (0...23).contains($0.hour) && (0...59).contains($0.minute) }) else {
+            throw ClientError.message("Выбери корректное время. Можно сохранить до 12 напоминаний.")
+        }
+        guard Set(values.map(\.minuteOfDay)).count == values.count else {
+            throw ClientError.message("Это время уже есть. Выбери другое или измени существующее напоминание.")
+        }
+        return ordered(values)
+    }
+    func request() -> UNNotificationRequest {
+        let content = UNMutableNotificationContent()
+        content.title = "Smooth English"
+        content.body = "Есть 15 минут? Давай одну ситуацию на английском."
+        content.sound = .default
+        content.threadIdentifier = "ratmir-practice"
+        content.userInfo = ["appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"]
+        return UNNotificationRequest(identifier: id, content: content,
+            trigger: UNCalendarNotificationTrigger(dateMatching: DateComponents(hour: hour, minute: minute), repeats: true))
+    }
+}
+
+/// The OS queue is the source of actual delivery readiness; persisted times are
+/// kept even if authorization is revoked. Tests inject a private in-memory queue.
+protocol PracticeReminderCenter {
+    func authorization() async -> String
+    func requestAuthorization() async throws
+    func pending() async -> [UNNotificationRequest]
+    func add(_ request: UNNotificationRequest) async throws
+    func remove(_ identifiers: [String]) async
+}
+
+struct SystemPracticeReminderCenter: PracticeReminderCenter {
+    func authorization() async -> String {
+        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+        case .notDetermined: return "notDetermined"
+        case .denied: return "denied"
+        case .authorized: return "authorized"
+        case .provisional, .ephemeral: return "provisional"
+        @unknown default: return "unavailable"
+        }
+    }
+    func requestAuthorization() async throws { _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
+    func pending() async -> [UNNotificationRequest] { await UNUserNotificationCenter.current().pendingNotificationRequests() }
+    func add(_ request: UNNotificationRequest) async throws { try await UNUserNotificationCenter.current().add(request) }
+    func remove(_ identifiers: [String]) async { UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: identifiers) }
+}
+
 private final class PlaybackDelegate: NSObject, AVAudioPlayerDelegate {
     let finished: (Bool) -> Void
     init(finished: @escaping (Bool) -> Void) { self.finished = finished }
@@ -92,8 +155,10 @@ enum AccessKey {
     @Published var reminderHour = 19
     @Published var reminderMinute = 0
     @Published var reminderBusy = false
-    @Published var reminderTestMessage: String?
+    @Published var reminders: [PracticeReminder] = []
     @Published var reminderDiagnostic: String?
+    private let reminderCenter: any PracticeReminderCenter
+    private let reminderDefaults: UserDefaults
     @Published var hasUnuploadedRecording = false
     @Published var orphanedRecording = false
     @Published var originalTranscript = ""
@@ -138,7 +203,12 @@ enum AccessKey {
         return URLSession(configuration: config)
     }()
 
-    init() {
+    init(reminderCenter: any PracticeReminderCenter = SystemPracticeReminderCenter(), reminderDefaults: UserDefaults = .standard) {
+        self.reminderCenter = reminderCenter
+        self.reminderDefaults = reminderDefaults
+        if let data = reminderDefaults.data(forKey: PracticeReminder.storageKey),
+           let stored = try? JSONDecoder().decode([PracticeReminder].self, from: data),
+           let checked = try? PracticeReminder.checked(stored) { reminders = checked }
         UNUserNotificationCenter.current().delegate = ReminderPresentation.shared
         interrupted = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,
             object: nil, queue: .main) { [weak self] notification in
@@ -682,7 +752,7 @@ enum AccessKey {
         let currentSession = conversation?.id
         defer { microphoneStarting = false }
         let allowed = await AVAudioApplication.requestRecordPermission()
-        guard allowed else { error = "Микрофон отключён. Открой настройки Ratmir English и разреши доступ."; return }
+        guard allowed else { error = "Микрофон отключён. Открой настройки Smooth English и разреши доступ."; return }
         guard !busy, conversationPresented, conversation?.id == currentSession, !Task.isCancelled else { return }
         do {
             stopSpeaking()
@@ -821,171 +891,148 @@ enum AccessKey {
         liveFinalText = nil; liveSessionID = nil; liveTranscript = ""; originalTranscript = ""; draft = ""
     }
 
+    var remindersAuthorized: Bool { notificationState == "authorized" || notificationState == "provisional" }
     func refreshReminderStatus() async {
-        let center = UNUserNotificationCenter.current()
-        let settings = await center.notificationSettings()
-        switch settings.authorizationStatus {
-        case .notDetermined: notificationState = "notDetermined"
-        case .denied: notificationState = "denied"
-        case .authorized: notificationState = "authorized"
-        case .provisional: notificationState = "provisional"
-        case .ephemeral: notificationState = "provisional"
-        @unknown default: notificationState = "unavailable"
+        guard !reminderBusy else { return }
+#if DEBUG
+        if previewMode && PreviewFixtures.screen != nil {
+            if reminders.isEmpty {
+                reminders = [PracticeReminder(id: "daily-practice", hour: 9, minute: 30),
+                             PracticeReminder(id: "smooth-practice-preview-evening", hour: 19, minute: 0)]
+            }
+            notificationState = PreviewFixtures.screen == "reminder-denied" ? "denied" : "authorized"
+            reminderEnabled = remindersAuthorized && reminders.contains(where: \.enabled)
+            return
         }
-        let pending = await center.pendingNotificationRequests()
-        let reminder = pending.first { $0.identifier == "daily-practice" }
-        reminderEnabled = reminder != nil && (settings.authorizationStatus == .authorized
-            || settings.authorizationStatus == .provisional || settings.authorizationStatus == .ephemeral)
-        if let calendar = reminder?.trigger as? UNCalendarNotificationTrigger {
-            reminderHour = calendar.dateComponents.hour ?? 19
-            reminderMinute = calendar.dateComponents.minute ?? 0
+#endif
+        await reloadReminderStatus()
+    }
+    private func reloadReminderStatus() async {
+        notificationState = await reminderCenter.authorization()
+        let pending = await reminderCenter.pending()
+        if reminderDefaults.data(forKey: PracticeReminder.storageKey) == nil {
+            // Keep the legacy request identifier. Updating the app does not lose
+            // a previously configured daily time or the user's authorization.
+            let migrated = pending.compactMap { request -> PracticeReminder? in
+                guard PracticeReminder.owns(request.identifier),
+                      let trigger = request.trigger as? UNCalendarNotificationTrigger,
+                      trigger.repeats, let hour = trigger.dateComponents.hour,
+                      let minute = trigger.dateComponents.minute else { return nil }
+                return PracticeReminder(id: request.identifier, hour: hour, minute: minute)
+            }
+            if let checked = try? PracticeReminder.checked(migrated), !checked.isEmpty { persistReminders(checked) }
+        }
+        reminderEnabled = remindersAuthorized && reminders.contains { value in
+            value.enabled && pending.contains { request in
+                guard request.identifier == value.id, let trigger = request.trigger as? UNCalendarNotificationTrigger else { return false }
+                return trigger.repeats && trigger.dateComponents.hour == value.hour && trigger.dateComponents.minute == value.minute
+            }
+        }
+        if let first = reminders.first { reminderHour = first.hour; reminderMinute = first.minute }
+    }
+    private func persistReminders(_ values: [PracticeReminder]) {
+        reminders = PracticeReminder.ordered(values)
+#if DEBUG
+        if previewMode && PreviewFixtures.screen != nil { return }
+#endif
+        if let data = try? JSONEncoder().encode(reminders) { reminderDefaults.set(data, forKey: PracticeReminder.storageKey) }
+    }
+    private func requireReminderAuthorization() async throws {
+        var authorization = await reminderCenter.authorization()
+        if authorization == "notDetermined" {
+            try await reminderCenter.requestAuthorization()
+            authorization = await reminderCenter.authorization()
+        }
+        notificationState = authorization
+        guard authorization == "authorized" || authorization == "provisional" else {
+            throw ClientError.message("Уведомления выключены в iPhone. Открой настройки Smooth English и включи «Допуск уведомлений».")
         }
     }
-    func remindAt19() async { await scheduleReminder(hour: 19, minute: 0) }
-    func scheduleReminder(hour: Int, minute: Int) async {
-        guard !reminderBusy else { return }
+    @discardableResult func saveReminder(id: String? = nil, hour: Int, minute: Int) async -> Bool {
+        guard !reminderBusy else { return false }
         reminderBusy = true; error = nil
         defer { reminderBusy = false }
-        let center = UNUserNotificationCenter.current()
+        let existing = id.flatMap { identifier in reminders.first { $0.id == identifier } }
+        guard id == nil || existing != nil else { error = "Это напоминание уже удалено."; return false }
+        let updated = PracticeReminder(id: existing?.id ?? "smooth-practice-" + UUID().uuidString.lowercased(),
+                                       hour: hour, minute: minute, enabled: existing?.enabled ?? true)
+        var attemptedScheduling = false
         do {
-            var settings = await center.notificationSettings()
-            if settings.authorizationStatus == .notDetermined {
-                _ = try await center.requestAuthorization(options: [.alert, .sound])
-                settings = await center.notificationSettings()
+            let desired = try PracticeReminder.checked(reminders.filter { $0.id != updated.id } + [updated])
+#if DEBUG
+            if previewMode && PreviewFixtures.screen != nil {
+                persistReminders(desired); reminderEnabled = remindersAuthorized && desired.contains(where: \.enabled)
+                return true
             }
-            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
-                await refreshReminderStatus()
-                throw ClientError.message("iPhone не разрешил уведомления. Открой настройки Ratmir English, включи «Допуск уведомлений» и вернись сюда.")
+#endif
+            if updated.enabled {
+                try await requireReminderAuthorization()
+                attemptedScheduling = true
+                try await reminderCenter.add(updated.request())
+                let pending = await reminderCenter.pending()
+                guard pending.contains(where: { request in
+                    guard request.identifier == updated.id, let trigger = request.trigger as? UNCalendarNotificationTrigger else { return false }
+                    return trigger.repeats && trigger.dateComponents.hour == hour && trigger.dateComponents.minute == minute
+                }) else {
+                    throw ClientError.message("iPhone не сохранил новое время. Прежние напоминания остаются на месте. Попробуй ещё раз.")
+                }
             }
-            let content = UNMutableNotificationContent()
-            content.title = "Есть 15 минут?"
-            content.body = "Давай одну ситуацию на английском. Начнём с короткого ответа."
-            content.sound = .default
-            content.threadIdentifier = "ratmir-practice"
-            content.userInfo = ["appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"]
-            let hour = min(23, max(0, hour)); let minute = min(59, max(0, minute))
-            try await center.add(UNNotificationRequest(identifier: "daily-practice", content: content,
-                trigger: UNCalendarNotificationTrigger(dateMatching: DateComponents(hour: hour, minute: minute), repeats: true)))
-            await refreshReminderStatus()
-            guard reminderEnabled else {
-                throw ClientError.message("iPhone не сохранил напоминание. Проверь разрешение на уведомления в настройках приложения и попробуй ещё раз.")
-            }
+            persistReminders(desired)
             reminderDiagnostic = nil
-        } catch let error as ClientError {
-            let authorized = await snapshotReminderFailure(nil, identifier: "daily-practice", kind: "daily-calendar")
-            self.error = authorized
-                ? "Разрешение включено, но напоминание не появилось в очереди iPhone. Состояние сохранено в диагностике ниже."
-                : error.localizedDescription
-        }
-        catch {
-            await refreshReminderStatus()
-            let authorized = await snapshotReminderFailure(error, identifier: "daily-practice", kind: "daily-calendar")
-            self.error = authorized
-                ? "Разрешение на уведомления включено, но iPhone отклонил напоминание. Подробности сохранены в диагностике ниже."
-                : "iPhone не разрешил сохранить напоминание. Открой настройки Ratmir English и проверь «Уведомления»."
-        }
-    }
-    func disableReminder() async {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["daily-practice"])
-        await refreshReminderStatus()
-    }
-    func testReminder() async {
-        guard !reminderBusy else { return }
-        reminderBusy = true; error = nil; reminderTestMessage = nil
-        defer { reminderBusy = false }
-        let center = UNUserNotificationCenter.current()
-        do {
-            var settings = await center.notificationSettings()
-            if settings.authorizationStatus == .notDetermined {
-                _ = try await center.requestAuthorization(options: [.alert, .sound])
-                settings = await center.notificationSettings()
-            }
-            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
-                await refreshReminderStatus()
-                _ = await snapshotReminderFailure(nil, identifier: "practice-reminder-test", kind: "test-interval")
-                reminderTestMessage = "Уведомления не разрешены. Открой настройки Ratmir English и включи «Допуск уведомлений»."
-                return
-            }
-            let content = UNMutableNotificationContent()
-            content.title = "Проверка напоминания"
-            content.body = "Если видишь это сообщение, уведомления Ratmir English доходят до iPhone."
-            content.sound = .default
-            content.threadIdentifier = "ratmir-practice"
-            content.userInfo = ["appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"]
-            let identifier = "practice-reminder-test"
-            center.removeDeliveredNotifications(withIdentifiers: [identifier])
-            try await center.add(UNNotificationRequest(identifier: identifier, content: content,
-                trigger: UNTimeIntervalNotificationTrigger(timeInterval: 10, repeats: false)))
-            let pending = await center.pendingNotificationRequests()
-            await refreshReminderStatus()
-            guard pending.contains(where: { $0.identifier == identifier }) else {
-                let authorized = await snapshotReminderFailure(nil, identifier: identifier, kind: "test-interval")
-                reminderTestMessage = authorized
-                    ? "Разрешение включено, но проверочное уведомление не появилось в очереди iPhone. Открой диагностику ниже и повтори тест."
-                    : "iPhone не разрешил проверочное уведомление. Проверь уведомления в настройках приложения."
-                return
-            }
-            reminderDiagnostic = nil
-            reminderTestMessage = settings.authorizationStatus == .provisional
-                ? "Проверка запланирована на 10 секунд. Сверни приложение и открой Центр уведомлений: при тихом разрешении баннер может не появиться."
-                : "Проверка запланирована на 10 секунд. Сверни приложение и проверь уведомление. Его показ зависит от настроек iPhone и режима фокусирования."
+            await reloadReminderStatus()
+            return true
         } catch {
-            await refreshReminderStatus()
-            let authorized = await snapshotReminderFailure(error, identifier: "practice-reminder-test", kind: "test-interval")
-            reminderTestMessage = authorized
-                ? "Разрешение включено, но iPhone отклонил проверочное уведомление. Открой диагностику ниже: она поможет разобраться с регистрацией приложения."
-                : "iPhone не разрешил сохранить проверочное уведомление. Проверь «Уведомления» в настройках Ratmir English."
+            if attemptedScheduling {
+                if let existing, existing.enabled { try? await reminderCenter.add(existing.request()) }
+                else { await reminderCenter.remove([updated.id]) }
+            }
+            self.error = (error as? ClientError)?.localizedDescription ?? "iPhone отклонил напоминание. Проверь «Уведомления» в настройках Smooth English и попробуй ещё раз."
+            return false
         }
     }
-    /// Local, user-visible diagnostics only. No error descriptions, userInfo dump, keys or remote logging.
-    private func snapshotReminderFailure(_ failure: Error?, identifier: String, kind: String) async -> Bool {
-        let center = UNUserNotificationCenter.current()
-        let settings = await center.notificationSettings()
-        let pending = await center.pendingNotificationRequests()
-        let delivered = await center.deliveredNotifications()
-        let request = pending.first { $0.identifier == identifier }
-        func setting(_ value: UNNotificationSetting) -> String {
-            switch value {
-            case .enabled: return "enabled"
-            case .disabled: return "disabled"
-            case .notSupported: return "notSupported"
-            @unknown default: return "unknown(\(value.rawValue))"
+    func setReminderEnabled(id: String, enabled: Bool) async {
+        guard !reminderBusy, let index = reminders.firstIndex(where: { $0.id == id }), reminders[index].enabled != enabled else { return }
+        reminderBusy = true; error = nil
+        defer { reminderBusy = false }
+        var updated = reminders[index]; updated.enabled = enabled
+        var attemptedScheduling = false
+        do {
+#if DEBUG
+            if previewMode && PreviewFixtures.screen != nil {
+                var desired = reminders; desired[index] = updated; persistReminders(desired)
+                reminderEnabled = remindersAuthorized && desired.contains(where: \.enabled)
+                return
             }
+#endif
+            if enabled {
+                try await requireReminderAuthorization()
+                attemptedScheduling = true
+                try await reminderCenter.add(updated.request())
+                guard await reminderCenter.pending().contains(where: { $0.identifier == id }) else {
+                    throw ClientError.message("iPhone не сохранил напоминание. Попробуй включить его ещё раз.")
+                }
+            } else { await reminderCenter.remove([id]) }
+            var desired = reminders; desired[index] = updated; persistReminders(desired)
+            await reloadReminderStatus()
+        } catch {
+            if attemptedScheduling { await reminderCenter.remove([id]) }
+            self.error = (error as? ClientError)?.localizedDescription ?? "Не удалось изменить напоминание. Прежнее состояние сохранено."
         }
-        let authorized = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
-        var lines = [
-            "Checked: \(ISO8601DateFormatter().string(from: Date()))",
-            "Bundle: \(Bundle.main.bundleIdentifier ?? "unknown")",
-            "App: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown") / \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")",
-            "iOS: \(UIDevice.current.systemVersion)",
-            "Request: \(kind)",
-            "Authorization raw value: \(settings.authorizationStatus.rawValue)",
-            "Scheduling authorized: \(authorized)",
-            "Alert: \(setting(settings.alertSetting)); sound: \(setting(settings.soundSetting)); badge: \(setting(settings.badgeSetting))",
-            "Notification center: \(setting(settings.notificationCenterSetting)); lock screen: \(setting(settings.lockScreenSetting))",
-            "Pending count: \(pending.count); requested identifier present: \(request != nil)",
-            "Delivered and still in Notification Center: \(delivered.count); requested identifier present: \(delivered.contains { $0.request.identifier == identifier })"
-        ]
-        if let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: Any],
-           let primary = icons["CFBundlePrimaryIcon"] as? [String: Any] {
-            lines.append("Primary app icon: \(primary["CFBundleIconName"] as? String ?? "unknown")")
+    }
+    func deleteReminder(id: String) async {
+        guard !reminderBusy, reminders.contains(where: { $0.id == id }) else { return }
+        reminderBusy = true
+        defer { reminderBusy = false }
+#if DEBUG
+        if previewMode && PreviewFixtures.screen != nil {
+            persistReminders(reminders.filter { $0.id != id })
+            reminderEnabled = remindersAuthorized && reminders.contains(where: \.enabled)
+            return
         }
-        let next: Date?
-        if let trigger = request?.trigger as? UNCalendarNotificationTrigger { next = trigger.nextTriggerDate() }
-        else if let trigger = request?.trigger as? UNTimeIntervalNotificationTrigger { next = trigger.nextTriggerDate() }
-        else { next = nil }
-        if let next {
-            lines.append("Saved next trigger: \(ISO8601DateFormatter().string(from: next))")
-        } else { lines.append("Saved next trigger: none") }
-        if let failure {
-            let native = failure as NSError
-            lines.append("Error: \(native.domain) / \(native.code)")
-            if let underlying = native.userInfo[NSUnderlyingErrorKey] as? NSError {
-                lines.append("Underlying: \(underlying.domain) / \(underlying.code)")
-            }
-        } else { lines.append("Error: no NSError; authorization or pending-request verification failed") }
-        reminderDiagnostic = lines.joined(separator: "\n")
-        return authorized
+#endif
+        await reminderCenter.remove([id])
+        persistReminders(reminders.filter { $0.id != id })
+        await reloadReminderStatus()
     }
     func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }

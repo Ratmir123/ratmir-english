@@ -32,10 +32,15 @@ struct RootView: View {
                         if let onboarding = client.state?.onboarding, onboarding.status != "ready" {
                             OnboardingView(onboarding: onboarding)
                         } else { HomeView(onProgress: { selectedTab = 1 }) }
-                    }.tabItem { Label("Сегодня", systemImage: "sun.max") }.tag(0)
-                    ProgressViewScreen().tabItem { Label("Прогресс", systemImage: "chart.xyaxis.line") }.tag(1)
-                    HistoryView().tabItem { Label("История", systemImage: "clock.arrow.circlepath") }.tag(2)
-                    SettingsView().tabItem { Label("Настройки", systemImage: "slider.horizontal.3") }.tag(3)
+                    }.background(StableTabBarAppearance(selection: selectedTab))
+                        .toolbarColorScheme(.light, for: .tabBar)
+                        .tabItem { Label("Сегодня", systemImage: "sun.max") }.tag(0)
+                    ProgressViewScreen().background(StableTabBarAppearance(selection: selectedTab)).toolbarColorScheme(.light, for: .tabBar)
+                        .tabItem { Label("Прогресс", systemImage: "chart.xyaxis.line") }.tag(1)
+                    HistoryView().background(StableTabBarAppearance(selection: selectedTab)).toolbarColorScheme(.light, for: .tabBar)
+                        .tabItem { Label("История", systemImage: "clock.arrow.circlepath") }.tag(2)
+                    SettingsView().background(StableTabBarAppearance(selection: selectedTab)).toolbarColorScheme(.light, for: .tabBar)
+                        .tabItem { Label("Настройки", systemImage: "slider.horizontal.3") }.tag(3)
                 }.tint(Theme.charcoal).toolbarColorScheme(.light, for: .tabBar)
             } else { LoginView() }
         }
@@ -43,7 +48,15 @@ struct RootView: View {
 #if DEBUG
             if PreviewFixtures.screen == "settings" { selectedTab = 3 }
             if PreviewFixtures.screen == "progress" || PreviewFixtures.screen == "baseline-report" { selectedTab = 1 }
-            if ["curriculum", "achievements", "ielts-track"].contains(PreviewFixtures.screen ?? "") { selectedTab = 1 }
+            if ["curriculum", "achievements", "ielts-track", "ranks", "ranks-bottom"].contains(PreviewFixtures.screen ?? "") { selectedTab = 1 }
+            if PreviewFixtures.screen == "history" { selectedTab = 2 }
+            if PreviewFixtures.screen == "reminder-editor" || PreviewFixtures.screen == "reminder-denied" { selectedTab = 3 }
+            if PreviewFixtures.screen == "tab-history-round-trip" {
+                for tab in [2, 0, 1, 2, 3, 0, 2, 1, 3, 2, 0, 2] {
+                    try? await Task.sleep(for: .milliseconds(650))
+                    selectedTab = tab
+                }
+            }
 #endif
         }
         .sheet(isPresented: $client.conversationPresented) {
@@ -119,15 +132,6 @@ struct HomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    HStack {
-                        BrandMark(size: 38)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("ratmir english").font(.headline)
-                            Text("Личная практика").font(.caption).foregroundStyle(Theme.secondary)
-                        }
-                        Spacer()
-                        Text(Date(), format: .dateTime.day().month(.abbreviated)).font(.caption).foregroundStyle(Theme.secondary)
-                    }.padding(.bottom, 4)
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Привет, \(client.state?.profile.name ?? "ты").")
                             .font(.system(.largeTitle, design: .rounded).weight(.semibold)).tracking(-0.7)
@@ -682,6 +686,7 @@ struct ProgressViewScreen: View {
 #if DEBUG
         if PreviewFixtures.screen == "curriculum" { CurriculumView() }
         else if PreviewFixtures.screen == "achievements" { AchievementsView() }
+        else if ["ranks", "ranks-bottom"].contains(PreviewFixtures.screen ?? "") { RankLadderView() }
         else if PreviewFixtures.screen == "ielts-track" { PracticeTrackView(trackID: "ielts-foundation") }
         else { progressScroll }
 #else
@@ -818,7 +823,9 @@ struct HistoryView: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var client: TrainingClient
-    @State private var reminderDate = Calendar.current.date(from: DateComponents(hour: 19, minute: 0)) ?? Date()
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var reminderEditor: ReminderEditorSelection?
+    @State private var reminderToDelete: PracticeReminder?
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -869,8 +876,25 @@ struct SettingsView: View {
             }.modifier(ReadingCanvas()).navigationBarHidden(true)
                 .task {
                     await client.refreshReminderStatus()
-                    reminderDate = Calendar.current.date(from: DateComponents(hour: client.reminderHour, minute: client.reminderMinute)) ?? Date()
+#if DEBUG
+                    if PreviewFixtures.screen == "reminder-editor" {
+                        reminderEditor = ReminderEditorSelection(reminder: client.reminders.first)
+                    }
+#endif
                 }
+                .sheet(item: $reminderEditor) { selection in
+                    ReminderTimeEditor(reminder: selection.reminder).environmentObject(client)
+                        .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.height(500), .large]).presentationDragIndicator(.visible)
+                }
+                .confirmationDialog("Удалить напоминание?", isPresented: Binding(get: { reminderToDelete != nil }, set: { if !$0 { reminderToDelete = nil } }), titleVisibility: .visible) {
+                    if let reminderToDelete {
+                        Button("Удалить время \(reminderToDelete.timeLabel)", role: .destructive) {
+                            let id = reminderToDelete.id; self.reminderToDelete = nil
+                            Task { await client.deleteReminder(id: id) }
+                        }
+                    }
+                    Button("Оставить", role: .cancel) { reminderToDelete = nil }
+                } message: { Text("Другие времена останутся без изменений.") }
         }
     }
     private var quotaContent: some View {
@@ -925,59 +949,105 @@ struct SettingsView: View {
     }
     private var reminders: some View {
         SurfaceCard {
-            VStack(alignment: .leading, spacing: 16) {
-                Label("Твои 15 минут", systemImage: "bell").font(.headline)
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Label("Время для английского", systemImage: "bell").font(.headline)
+                    Spacer()
+                    if client.reminderBusy { ProgressView().tint(Theme.charcoal) }
+                }
                 if client.notificationState == "denied" {
-                    Text("Уведомления отключены в настройках iPhone.").font(.subheadline).foregroundStyle(Theme.secondary)
-                    Button { client.openSystemSettings() } label: { Label("Разрешить уведомления", systemImage: "arrow.up.right") }.buttonStyle(SecondaryButton())
-                } else if client.notificationState == "unavailable" || client.notificationState == "unsupported" {
-                    Text("Не удалось сохранить напоминание. Проверь разрешение на уведомления и попробуй ещё раз.")
-                        .font(.subheadline).foregroundStyle(Theme.secondary)
-                    Button { client.openSystemSettings() } label: { Label("Проверить настройки iPhone", systemImage: "arrow.up.right") }.buttonStyle(QuietButton())
-                    Button {
-                        let parts = Calendar.current.dateComponents([.hour, .minute], from: reminderDate)
-                        Task { await client.scheduleReminder(hour: parts.hour ?? 19, minute: parts.minute ?? 0) }
-                    } label: { Label("Повторить включение", systemImage: "arrow.clockwise") }
-                        .buttonStyle(SecondaryButton()).disabled(client.reminderBusy)
-                } else {
-                    Toggle("Ежедневное напоминание", isOn: Binding(get: { client.reminderEnabled }, set: { enabled in
-                        Task {
-                            if enabled {
-                                let parts = Calendar.current.dateComponents([.hour, .minute], from: reminderDate)
-                                await client.scheduleReminder(hour: parts.hour ?? 19, minute: parts.minute ?? 0)
-                            } else { await client.disableReminder() }
-                        }
-                    })).tint(Theme.charcoal).font(.subheadline).disabled(client.reminderBusy)
-                    HStack {
-                        Text("Время").font(.subheadline).foregroundStyle(Theme.secondary)
-                        Spacer()
-                        DatePicker("Время напоминания", selection: $reminderDate, displayedComponents: .hourAndMinute).labelsHidden().tint(Theme.charcoal)
-                    }.disabled(client.reminderBusy)
-                    .onChange(of: reminderDate) { _, date in
-                        guard client.reminderEnabled else { return }
-                        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
-                        Task { await client.scheduleReminder(hour: parts.hour ?? 19, minute: parts.minute ?? 0) }
-                    }
-                    Text(client.reminderEnabled ? "Напоминание включено. Время местное для этого iPhone." : "Выбери время, когда тебе удобно начать разговор.")
+                    Text("Уведомления выключены в iPhone. Твои времена сохранены.")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
+                    Button { client.openSystemSettings() } label: { Label("Разрешить уведомления", systemImage: "arrow.up.right") }
+                        .buttonStyle(SecondaryButton())
+                } else if client.notificationState == "unavailable" {
+                    Text("iPhone не передал состояние уведомлений. Попробуй открыть настройки приложения.")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
+                    Button { client.openSystemSettings() } label: { Label("Настройки iPhone", systemImage: "arrow.up.right") }.buttonStyle(QuietButton())
+                } else if client.notificationState == "provisional" {
+                    Text("Разрешена тихая доставка. Чтобы видеть баннеры, включи их в настройках iPhone.")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
+                    Button { client.openSystemSettings() } label: { Label("Настройки iPhone", systemImage: "arrow.up.right") }.buttonStyle(QuietButton())
+                }
+                if client.reminders.isEmpty {
+                    Text("Выбери одно или несколько удобных времён. Напоминания приходят по местному времени этого iPhone.")
                         .font(.footnote).foregroundStyle(Theme.secondary)
                 }
-                Divider().opacity(0.5)
-                Button { Task { await client.testReminder() } } label: {
-                    HStack {
-                        Label("Проверить уведомление", systemImage: "bell.badge")
-                        Spacer()
-                        if client.reminderBusy { ProgressView().tint(Theme.charcoal) }
-                    }
-                }.buttonStyle(QuietButton()).disabled(client.reminderBusy)
-                Text(client.reminderTestMessage ?? "Тест отправит одно уведомление через 10 секунд.")
-                    .font(.footnote).foregroundStyle(Theme.secondary)
-                if let diagnostic = client.reminderDiagnostic {
-                    DisclosureGroup {
-                        Text(diagnostic).font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(Theme.secondary).textSelection(.enabled).padding(.top, 8)
-                    } label: { Text("Данные для проверки").font(.footnote.weight(.medium)) }
+                ForEach(client.reminders) { reminder in
+                    HStack(spacing: 12) {
+                        Button { reminderEditor = ReminderEditorSelection(reminder: reminder) } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 8) {
+                                    Text(reminder.timeLabel).font(.system(.title2, design: .rounded).weight(.semibold)).monospacedDigit()
+                                    Image(systemName: "pencil").font(.caption.weight(.medium)).foregroundStyle(Theme.secondary)
+                                }
+                                Text(reminder.enabled ? "Каждый день" : "На паузе").font(.caption).foregroundStyle(Theme.secondary)
+                            }.foregroundStyle(Theme.charcoal).frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                        }.buttonStyle(PressButton()).accessibilityLabel("Изменить напоминание в " + reminder.timeLabel)
+                        Toggle("Напоминание в " + reminder.timeLabel, isOn: Binding(get: { reminder.enabled }, set: { value in
+                            Task { await client.setReminderEnabled(id: reminder.id, enabled: value) }
+                        })).labelsHidden().tint(Theme.charcoal).fixedSize()
+                        Button { reminderToDelete = reminder } label: {
+                            Image(systemName: "trash").font(.subheadline).frame(width: 44, height: 44)
+                                .foregroundStyle(Theme.secondary).modifier(LiquidChrome(radius: 16, interactive: true))
+                        }.buttonStyle(PressButton()).accessibilityLabel("Удалить напоминание в " + reminder.timeLabel)
+                    }.disabled(client.reminderBusy)
+                    if reminder.id != client.reminders.last?.id { Divider().opacity(0.45) }
+                }
+                Button { reminderEditor = ReminderEditorSelection(reminder: nil) } label: {
+                    Label("Добавить время", systemImage: "plus").frame(maxWidth: .infinity)
+                }.buttonStyle(SecondaryButton()).disabled(client.reminderBusy || client.reminders.count >= 12)
+                if !client.reminders.isEmpty {
+                    Text("Время следует часовому поясу iPhone. Можно менять, отключать или удалять каждое напоминание отдельно.")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
                 }
             }
+        }
+    }
+}
+
+private struct ReminderEditorSelection: Identifiable {
+    let id = UUID()
+    let reminder: PracticeReminder?
+}
+
+private struct ReminderTimeEditor: View {
+    @EnvironmentObject private var client: TrainingClient
+    @Environment(\.dismiss) private var dismiss
+    let reminder: PracticeReminder?
+    @State private var date: Date
+    @State private var saveError: String?
+    init(reminder: PracticeReminder?) {
+        self.reminder = reminder
+        _date = State(initialValue: Calendar.current.date(from: DateComponents(hour: reminder?.hour ?? 19, minute: reminder?.minute ?? 0)) ?? Date())
+    }
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                DatePicker("Каждый день в", selection: $date, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel).labelsHidden().frame(maxWidth: .infinity).frame(height: 180)
+                    .accessibilityLabel("Время ежедневного напоминания")
+                Text("По местному времени iPhone. После переезда напоминание останется в это же время.")
+                    .font(.footnote).foregroundStyle(Theme.secondary)
+                if let saveError { Text(saveError).font(.footnote).foregroundStyle(Theme.charcoal).accessibilityLabel("Не сохранено. " + saveError) }
+                Button {
+                    saveError = nil
+                    let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                    Task {
+                        let accepted = await client.saveReminder(id: reminder?.id, hour: parts.hour ?? 19, minute: parts.minute ?? 0)
+                        if accepted { dismiss() }
+                        else { saveError = client.error ?? "Не удалось сохранить время."; client.error = nil }
+                    }
+                } label: {
+                    HStack { Text(client.reminderBusy ? "Сохраняем" : "Сохранить время"); Spacer(); if client.reminderBusy { ProgressView().tint(Theme.lime) } else { Image(systemName: "checkmark") } }
+                }.buttonStyle(PrimaryButton()).disabled(client.reminderBusy)
+            }.padding(24)
+            }.modifier(ReadingCanvas())
+                .navigationTitle(reminder == nil ? "Новое напоминание" : "Изменить время")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Отмена") { dismiss() }.disabled(client.reminderBusy) } }
+                .interactiveDismissDisabled(client.reminderBusy)
         }
     }
 }

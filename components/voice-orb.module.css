@@ -11,10 +11,10 @@
 .orb:focus-visible { outline: 2px solid var(--accent-ink, #575075); outline-offset: 3px; border-radius: 36px; }
 .body { position: relative; isolation: isolate; transform-origin: 50% 58%; }
 .lens { display: block; position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.shadow { position: absolute; width: 72%; height: 14%; bottom: 4%; border-radius: 50%; background: radial-gradient(ellipse, #657bc438, #657bc410 43%, transparent 72%); pointer-events: none; }
+.shadow { position: absolute; width: 72%; height: 14%; bottom: 4%; left: 14%; border-radius: 50%; background: radial-gradient(ellipse, #657bc438, #657bc410 43%, transparent 72%); transform-origin: 50% 50%; pointer-events: none; }
 .fallback {
   position: absolute; inset: 4.5%; border-radius: 43% 46% 43% 45%;
-  background: radial-gradient(ellipse at 23% 17%, #f4fcffcc, transparent 30%), radial-gradient(ellipse at 30% 85%, #bceefdd9, transparent 50%), linear-gradient(135deg, #55dbe8, #7060e7 55%, #82d7e8);
+  background: radial-gradient(ellipse at 23% 17%, #f4fcffcc, transparent 30%), linear-gradient(135deg, #55dbe8, #7060e7 55%, #82d7e8);
   box-shadow: inset 1px 2px 3px #ffffffa0, inset -4px -7px 13px #423a965e, inset 8px 8px 25px #a8f5ff70;
 }
 .orb[data-lens-ready='true'] .fallback { visibility: hidden; }
@@ -25,6 +25,7 @@
 /* The fallback also remains legible when WebGL is disabled or a context is lost. */
 .orb[data-state='paused'] .body { filter: saturate(.72); }
 @media (prefers-reduced-motion: reduce) {
-  .body, .face { transform: none !important; }
+  .body, .face, .shadow { transform: none !important; }
+  .shadow { opacity: 1 !important; }
   .orb { transition: none; }
 }

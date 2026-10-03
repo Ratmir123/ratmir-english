@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ArrowRightIcon, ArrowUpRightIcon, CheckIcon, FlagIcon, LockSimpleIcon, MedalIcon, TargetIcon, XIcon } from '@phosphor-icons/react';
 import { SKILLS, type AppState, type LearningTrackId, type PracticeResult, type ProgressionState, type Session } from '@/lib/types';
-import { achievementArt, achievementTarget, experienceBand, type AchievementTarget } from '@/lib/achievement-targets';
+import { achievementArt, achievementTarget, EXPERIENCE_BANDS, experienceBand, type AchievementTarget } from '@/lib/achievement-targets';
 import styles from './learning-path.module.css';
 import { VoiceOrb } from './voice-orb';
 
@@ -17,13 +17,64 @@ function ProgressLine({ current, target, label }: { current: number; target: num
   </div>;
 }
 
-export function PracticeLevel({ value, compact = false }: { value: ProgressionState; compact?: boolean }) {
+/** Decorative light has its own lifetime. No work continues in a hidden tab or off screen. */
+export function RankEmblem({ level, size = 128, animated = true }: { level: number; size?: number; animated?: boolean }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [moving, setMoving] = useState(false);
+  const band = experienceBand(level);
+  const kind = band.art.replace('rank-', '');
+  useEffect(() => {
+    if (!animated || !ref.current) { setMoving(false); return; }
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let visible = false;
+    const update = () => setMoving(visible && !document.hidden && !preference.matches);
+    const observer = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; update(); });
+    observer.observe(ref.current);
+    document.addEventListener('visibilitychange', update); preference.addEventListener('change', update);
+    return () => { observer.disconnect(); document.removeEventListener('visibilitychange', update); preference.removeEventListener('change', update); };
+  }, [animated]);
+  const count = kind === 'gold' ? 10 : kind === 'rose' ? 6 : kind === 'sky' ? 3 : kind === 'mint' ? 2 : 4;
+  return <span ref={ref} className={styles.rankEmblem} data-rank={kind} data-moving={animated && moving} aria-hidden="true" style={{ width: size, height: size, '--rank-art': `url('/rewards-v041/${band.art}.png')`, '--rank-radius': `${size * .32}px` } as CSSProperties}>
+    <span className={styles.rankAtmosphere}>{Array.from({ length: count }, (_, index) => <i key={index} style={{ '--i': index, '--angle': `${360 * index / count - 90}deg` } as CSSProperties} />)}</span>
+    <img className={styles.rankArt} src={`/rewards-v041/${band.art}.png`} width={size} height={size} alt="" />
+    <span className={styles.rankSheen}><i /></span>
+  </span>;
+}
+
+export function RankLadder({ value }: { value: ProgressionState }) {
+  const current = experienceBand(value.level);
+  const next = EXPERIENCE_BANDS.find(band => band.from > value.level);
+  return <ol className={styles.rankLadder} aria-label="Все шесть рангов опыта" data-testid="rank-ladder">{EXPERIENCE_BANDS.map(band => {
+    const minimumXP = (band.from - 1) * 100;
+    const isCurrent = band.art === current.art;
+    const isNext = band.art === next?.art;
+    const unlocked = value.level >= band.from;
+    return <li key={band.art} data-current={isCurrent} data-unlocked={unlocked}>
+      <RankEmblem level={band.from} size={90} animated={isCurrent} />
+      <div className={styles.rankCopy}><strong>{band.title}</strong><span>Уровень {band.from} · от {minimumXP} XP</span><small>{isCurrent ? `Твой ранг · ${value.xp} XP сейчас` : isNext ? `Следующий · ещё ${Math.max(0, minimumXP - value.xp)} XP` : unlocked ? 'Уже открыт' : 'Впереди'}</small></div>
+      <span className={styles.rankStatus} aria-hidden="true">{isCurrent ? <span /> : unlocked ? <CheckIcon size={16} /> : <LockSimpleIcon size={15} />}</span>
+    </li>;
+  })}</ol>;
+}
+
+export function RewardsInvitation({ value, onClick }: { value: ProgressionState; onClick: () => void }) {
+  return <button type="button" className={styles.rewardsInvitation} onClick={onClick} data-testid="rewards-invitation">
+    <img src={achievementArt('own-improvement')} width={50} height={50} alt="" />
+    <span><strong>Награды</strong><small>Открыто {value.achievements.filter(item => item.unlocked).length} из {value.achievements.length}</small></span><ArrowUpRightIcon size={20} aria-hidden="true" />
+  </button>;
+}
+
+export function PracticeLevel({ value, compact = false, onRewards }: { value: ProgressionState; compact?: boolean; onRewards?: () => void }) {
   const band = experienceBand(value.level);
+  const next = EXPERIENCE_BANDS.find(item => item.from > value.level);
+  const floor = (band.from - 1) * 100;
+  const nextXP = next ? (next.from - 1) * 100 : undefined;
   return <section className={`${styles.level} ${compact ? styles.compact : ''}`} aria-label="Уровень практики" data-testid="practice-level">
-    <div className={styles.levelHeading}><img className={styles.rankArt} src={`/rewards-v041/${band.art}.png`} width={76} height={76} alt="" /><div><span className={styles.kicker}>{band.title.toUpperCase()} · ОПЫТ ПРАКТИКИ</span><h3>{value.levelTitle}</h3></div><span className={styles.xp}>{value.xp} <small>XP</small></span></div>
-    <ProgressLine current={value.xpInLevel} target={value.nextLevelXP - value.levelFloorXP} label="Практика до следующего уровня" />
-    <div className={styles.lineLabels}><span>{value.xpToNextLevel} XP до следующего уровня</span><span>Завершено: {value.completedPractice}</span></div>
-    <p className={styles.note}>XP отмечает практику. Языковой уровень подтверждают твои ответы.</p>
+    <div className={styles.levelHeading}><RankEmblem level={value.level} /><div className={styles.currentRankCopy}><span className={styles.kicker}>ТВОЙ РАНГ</span><h3>{band.title}</h3><span className={styles.rankSubtitle}>Уровень опыта {value.level}</span></div><span className={styles.xp}>{value.xp} <small>XP</small></span></div>
+    {next && nextXP !== undefined ? <><ProgressLine current={value.xp - floor} target={nextXP - floor} label={`Практика до ранга ${next.title}`} /><div className={styles.lineLabels}><span>До «{next.title}» ещё {Math.max(0, nextXP - value.xp)} XP</span><span>Завершено: {value.completedPractice}</span></div></> : <p className={styles.note}>Все шесть рангов открыты. Опыт практики продолжает расти.</p>}
+    <p className={styles.note}>Ранги отмечают опыт практики. Языковой уровень проверяем по твоим ответам.</p>
+    {compact ? <details className={styles.rankDisclosure}><summary>Все ранги <span>6</span><ArrowRightIcon size={17} aria-hidden="true" /></summary><RankLadder value={value} /></details> : <div className={styles.rankOverview}><h4>Все ранги</h4><RankLadder value={value} /></div>}
+    {onRewards && <RewardsInvitation value={value} onClick={onRewards} />}
   </section>;
 }
 
@@ -57,7 +108,7 @@ export function Achievements({ value, state, onTarget }: { value: ProgressionSta
   const ordered = [...unlocked, ...upcoming];
   const recent = unlocked.slice(0, 2);
   const visible = all ? ordered : [...recent, ...upcoming.slice(0, 4 - recent.length)];
-  return <section className={styles.achievements} aria-labelledby="achievement-title" data-testid="achievements">
+  return <section id="practice-achievements" className={styles.achievements} aria-labelledby="achievement-title" data-testid="achievements">
     <div className={styles.sectionHeading}><div><span className={styles.kicker}>РУБЕЖИ ПРАКТИКИ</span><h2 id="achievement-title">Есть к чему вернуться</h2></div><MedalIcon size={25} aria-hidden="true" /></div>
     <p className={styles.note}>Каждая отметка объясняет, что именно ты сделал. Можно раскрыть её условие. Дневные рубежи считаются по UTC.</p>
     <div className={styles.achievementList}>{visible.map(item => <details key={item.id} className={styles.achievement} data-unlocked={item.unlocked}>

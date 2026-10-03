@@ -1,0 +1,10 @@
+.section { margin-top: 24px; max-width: 720px; }
+.toggle { display: flex; align-items: center; gap: 12px; min-height: 44px; font-size: 15px; }
+.toggle input { accent-color: #575075; width: 20px; height: 20px; }
+.times { margin: 12px 0; }
+.times > div { display: flex; align-items: flex-end; gap: 10px; padding: 8px 0; border-bottom: 1px solid #22212415; }
+.times label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: #66616e; }
+.times input { font-size: 18px; color: #222124; min-height: 46px; min-width: 155px; border-radius: 15px; background: #f8f7fa; border: 1px solid #22212420; padding: 8px 14px; }
+.times button { color: #66616e; min-width: 44px; }
+.actions { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.message { margin-top: 12px; font-size: 14px; }

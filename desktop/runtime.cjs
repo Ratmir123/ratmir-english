@@ -19,6 +19,8 @@ const IPC = Object.freeze({
   openQuick: 'ratmir-desktop:open-quick',
   hideQuick: 'ratmir-desktop:hide-quick',
   reminder: 'ratmir-desktop:reminder',
+  reminderSettings: 'ratmir-desktop:reminder-settings',
+  saveReminderSettings: 'ratmir-desktop:save-reminder-settings',
 });
 
 function isAllowedPageUrl(value, expectedOrigin = APP_ORIGIN) {
@@ -235,7 +237,7 @@ async function waitForTraining(fetchFunction = fetch, options = {}) {
     try {
       const response = await fetchFunction(APP_ORIGIN + '/manifest.webmanifest', { redirect: 'error', signal: AbortSignal.timeout(2000) });
       const manifest = await readManifest(response);
-      if (manifest?.name === 'Ratmir English' && manifest.display === 'standalone') return;
+      if (['Smooth English', 'Ratmir English'].includes(manifest?.name) && manifest.display === 'standalone') return;
     } catch { }
     await pause(250);
   }

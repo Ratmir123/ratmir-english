@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum Theme {
     static let charcoal = Color(red: 34.0 / 255, green: 33.0 / 255, blue: 36.0 / 255)
@@ -84,30 +85,29 @@ struct ComposerBackdrop: ViewModifier {
         content.frame(maxWidth: .infinity)
             .background {
                 if reduceTransparency || contrast == .increased {
-                    Theme.surface.ignoresSafeArea(.container, edges: .bottom)
+                    UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
+                        .fill(Theme.surface).ignoresSafeArea(.container, edges: .bottom)
                 } else {
-                    Rectangle().fill(.regularMaterial)
-                        .overlay(Color.white.opacity(0.58))
+                    UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
+                        .fill(.regularMaterial)
+                        .overlay {
+                            UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
+                                .fill(Color.white.opacity(0.58))
+                        }
                         .ignoresSafeArea(.container, edges: .bottom)
                 }
             }
-            .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.76)).frame(height: 1).allowsHitTesting(false) }
             .environment(\.colorScheme, .light)
     }
 }
 
-/// Unlike an inset alone, the native bar extends the scroll edge effect through
-/// the complete control area and home-indicator safe area on the modern SDK.
+/// The backing owns the whole bottom edge. A safeAreaBar adds another system
+/// surface below the custom composer, so the inset intentionally has no gap.
 struct ConversationDock<Dock: View>: ViewModifier {
     let dock: Dock
     init(@ViewBuilder dock: () -> Dock) { self.dock = dock() }
     @ViewBuilder func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.safeAreaBar(edge: .bottom, spacing: 0) { dock }
-                .scrollEdgeEffectStyle(.hard, for: .bottom)
-        } else {
-            content.safeAreaInset(edge: .bottom, spacing: 0) { dock }
-        }
+        content.safeAreaInset(edge: .bottom, spacing: 0) { dock }
     }
 }
 
@@ -145,10 +145,10 @@ enum NativeDate {
 struct BrandMark: View {
     let size: CGFloat
     var body: some View {
-        Text("R·").font(.system(size: size * 0.55, weight: .bold, design: .rounded))
+        Text("S·").font(.system(size: size * 0.55, weight: .bold, design: .rounded))
             .foregroundStyle(Theme.charcoal).frame(width: size, height: size)
             .background(Theme.lime, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
-            .accessibilityLabel("Ratmir English")
+            .accessibilityLabel("Smooth English")
     }
 }
 
@@ -215,33 +215,93 @@ struct SelectionRow: View {
     let options: [SelectionOption]
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var lens
+    private var vertical: Bool { dynamicTypeSize.isAccessibilitySize }
+    private var selectedIndex: Int { options.firstIndex { $0.id == selection } ?? 0 }
     var body: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: dynamicTypeSize.isAccessibilitySize ? 1 : options.count)
-        LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(options) { option in
-                Button {
-                    guard selection != option.id else { return }
-                    withAnimation(reduceMotion ? nil : NativeMotion.selection) { selection = option.id }
-                } label: {
-                    VStack(spacing: 7) {
-                        Image(systemName: option.icon).font(.body)
-                        Text(option.title).font(.caption.weight(.medium))
-                    }.frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 13)
-                        .foregroundStyle(selection == option.id ? Theme.charcoal : Theme.secondary)
-                        .background {
-                            RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.surface.opacity(0.38))
-                            if selection == option.id {
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .fill(Theme.lavender.opacity(0.55))
-                                    .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(0.8), lineWidth: 1) }
-                                    .matchedGeometryEffect(id: "selected-lens", in: lens)
-                            }
-                        }.contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }.buttonStyle(PressButton()).accessibilityAddTraits(selection == option.id ? .isSelected : [])
+        let layout = vertical ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        NativeGlassGroup {
+            layout {
+                ForEach(options) { option in
+                    Button {
+                        guard selection != option.id else { return }
+                        selection = option.id
+                    } label: {
+                        VStack(spacing: 7) {
+                            Image(systemName: option.icon).font(.body)
+                            Text(option.title).font(.caption.weight(.medium)).fixedSize(horizontal: false, vertical: true)
+                        }.frame(maxWidth: .infinity, minHeight: vertical ? 68 : 54).padding(.vertical, 9)
+                            .foregroundStyle(selection == option.id ? Theme.charcoal : Theme.secondary)
+                            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    }.buttonStyle(SegmentPressButton()).accessibilityAddTraits(selection == option.id ? .isSelected : [])
+                }
             }
+            .background {
+                GeometryReader { geometry in
+                    let frame = NativeSegmentGeometry.frame(size: geometry.size, count: options.count, index: selectedIndex, vertical: vertical)
+                    Color.clear.frame(width: frame.width, height: frame.height)
+                        .modifier(LiquidChrome(radius: 20, tint: Theme.lavender.opacity(0.56), interactive: true))
+                        .offset(x: frame.minX, y: frame.minY)
+                        .animation(reduceMotion ? nil : NativeMotion.selection, value: selectedIndex)
+                        .animation(nil, value: vertical)
+                }.allowsHitTesting(false)
+            }
+            .background(Theme.surface.opacity(0.38), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .sensoryFeedback(.selection, trigger: selection)
+    }
+}
+
+/// One persistent lens moves between fixed labels. No conditional insertion or
+/// opacity transition can replay when the user taps again before it settles.
+enum NativeSegmentGeometry {
+    static func frame(size: CGSize, count: Int, index: Int, vertical: Bool, spacing: CGFloat = 8) -> CGRect {
+        guard count > 0 else { return .zero }
+        let selected = min(count - 1, max(0, index))
+        if vertical {
+            let height = max(0, (size.height - spacing * CGFloat(count - 1)) / CGFloat(count))
+            return CGRect(x: 0, y: CGFloat(selected) * (height + spacing), width: size.width, height: height)
+        }
+        let width = max(0, (size.width - spacing * CGFloat(count - 1)) / CGFloat(count))
+        return CGRect(x: CGFloat(selected) * (width + spacing), y: 0, width: width, height: size.height)
+    }
+}
+
+struct SegmentPressButton: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.scaleEffect(configuration.isPressed && !reduceMotion ? 0.965 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
+    }
+}
+
+/// SwiftUI child navigation stacks can reset the tab-item tint on selection.
+/// Pin item colors on this controller only, keeping the native glass background.
+struct StableTabBarAppearance: UIViewControllerRepresentable {
+    let selection: Int
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) { controller.apply() }
+    final class Controller: UIViewController {
+        override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); apply() }
+        override func didMove(toParent parent: UIViewController?) { super.didMove(toParent: parent); apply() }
+        func apply() {
+            guard let tab = tabBarController else { return }
+            let selected = UIColor(red: 34 / 255, green: 33 / 255, blue: 36 / 255, alpha: 1)
+            let normal = selected.withAlphaComponent(0.62)
+            func configure(_ source: UITabBarAppearance) -> UITabBarAppearance {
+                let result = source.copy() as! UITabBarAppearance
+                for item in [result.stackedLayoutAppearance, result.inlineLayoutAppearance, result.compactInlineLayoutAppearance] {
+                    item.selected.iconColor = selected
+                    item.selected.titleTextAttributes = [.foregroundColor: selected]
+                    item.normal.iconColor = normal
+                    item.normal.titleTextAttributes = [.foregroundColor: normal]
+                }
+                return result
+            }
+            tab.tabBar.tintColor = selected
+            tab.tabBar.unselectedItemTintColor = normal
+            tab.tabBar.standardAppearance = configure(tab.tabBar.standardAppearance)
+            tab.tabBar.scrollEdgeAppearance = configure(tab.tabBar.scrollEdgeAppearance ?? tab.tabBar.standardAppearance)
+        }
     }
 }
 

@@ -11,4 +11,6 @@ contextBridge.exposeInMainWorld('ratmirDesktop', Object.freeze({
   openQuick: () => ipcRenderer.invoke('ratmir-desktop:open-quick'),
   hideQuick: () => ipcRenderer.invoke('ratmir-desktop:hide-quick'),
   remindLater: (minutes = 30) => ipcRenderer.invoke('ratmir-desktop:reminder', minutes),
+  getReminderSettings: () => ipcRenderer.invoke('ratmir-desktop:reminder-settings'),
+  saveReminderSettings: (settings) => ipcRenderer.invoke('ratmir-desktop:save-reminder-settings', settings),
 }));

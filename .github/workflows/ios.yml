@@ -22,7 +22,7 @@ jobs:
         run: |
           brew install xcodegen
           cd ios
-          test -f Resources/Assets.xcassets/AppIcon.appiconset/icon-pearl-v04-1024.png
+          test -f Resources/Assets.xcassets/AppIcon.appiconset/icon-smooth-v042-1024.png
           xcodegen generate
       - name: Build unsigned device app
         run: |
@@ -56,18 +56,30 @@ jobs:
           xcrun simctl launch "$device" app.ratmirenglish.personal
           sleep 3
           xcrun simctl io "$device" screenshot iPhone11-login.png
-          for screen in intro baseline baseline-report home practice dictation-preview listening analysing review preview-timing celebrate completed saved-deferred progress curriculum achievements ielts-track ielts-reading ielts-writing settings; do
+          for screen in intro baseline baseline-report home practice dictation-preview listening analysing review preview-timing celebrate completed saved-deferred progress curriculum achievements ranks ranks-bottom history reminder-editor reminder-denied ielts-track ielts-reading ielts-writing settings; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3
             xcrun simctl io "$device" screenshot "iPhone11-$screen.png"
           done
           xcrun simctl ui "$device" appearance dark
-          for screen in home practice dictation-preview review achievements settings; do
+          for screen in home practice dictation-preview review achievements ranks history settings; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3
             xcrun simctl io "$device" screenshot "iPhone11-$screen-dark.png"
+          done
+          xcrun simctl ui "$device" appearance light
+          for appearance in light dark; do
+            xcrun simctl ui "$device" appearance "$appearance"
+            xcrun simctl terminate "$device" app.ratmirenglish.personal || true
+            xcrun simctl launch "$device" app.ratmirenglish.personal --preview=tab-history-round-trip
+            xcrun simctl io "$device" recordVideo --codec=h264 "iPhone11-history-$appearance-motion.mp4" &
+            recorder=$!
+            sleep 9
+            kill -INT "$recorder"
+            wait "$recorder" || true
+            xcrun simctl io "$device" screenshot "iPhone11-tab-history-round-trip-$appearance.png"
           done
           xcrun simctl ui "$device" appearance light
           xcrun simctl terminate "$device" app.ratmirenglish.personal || true
@@ -93,13 +105,13 @@ jobs:
           python3 - <<'PY'
           import json
           summary = json.load(open('native-tests-summary.json'))
-          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 25, summary
-          assert type(summary['passedTests']) is int and summary['passedTests'] == 25, summary
+          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 33, summary
+          assert type(summary['passedTests']) is int and summary['passedTests'] == 33, summary
           assert summary['failedTests'] == 0 and summary['skippedTests'] == 0, summary
           assert not summary['testFailures'] and summary.get('expectedFailures', 0) == 0, summary
-          print('Verified native tests: 25 passed, none failed or skipped')
+          print('Verified native tests: 33 passed, none failed or skipped')
           PY
-          for screen in achievements completed preview-timing dictation-preview; do
+          for screen in achievements ranks ranks-bottom reminder-editor completed review preview-timing dictation-preview; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen" --large-type
             sleep 3

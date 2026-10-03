@@ -18,16 +18,21 @@ function subscribeReducedMotion(onChange:()=>void){const query=window.matchMedia
 function reducedMotion(){return window.matchMedia('(prefers-reduced-motion: reduce)').matches;}
 function serverMotion(){return false;}
 const spring=(value=0):Spring=>({value,velocity:0});
+// A smooth, brief expression between blinks; no random success signal or abrupt pose swap.
+function expressionPulse(time:number,period:number,centre:number,radius:number){
+  const distance=Math.abs(time%period-centre);
+  return distance<radius?Math.pow((1+Math.cos(distance/radius*Math.PI))*.5,2):0;
+}
 
 export const VoiceOrb=memo(function VoiceOrb({state,volume=0,meterStore,emotion,statusDescription}:VoiceOrbProps){
   const visible=useSyncExternalStore(subscribeVisibility,pageVisible,serverVisible);
   const reduced=useSyncExternalStore(subscribeReducedMotion,reducedMotion,serverMotion);
   const measured=useSyncExternalStore(meterStore?.subscribe??noMeter,meterStore?.getSnapshot??silentMeter,silentMeter);
-  const button=useRef<HTMLButtonElement>(null),canvas=useRef<HTMLCanvasElement>(null),body=useRef<HTMLDivElement>(null),face=useRef<HTMLDivElement>(null);
+  const button=useRef<HTMLButtonElement>(null),canvas=useRef<HTMLCanvasElement>(null),body=useRef<HTMLDivElement>(null),face=useRef<HTMLDivElement>(null),shadow=useRef<HTMLDivElement>(null);
   const paths=useRef<(SVGPathElement|null)[]>([]),eyeElements=useRef<(SVGSVGElement|null)[]>([]);
   const bounds=useRef<DOMRect|null>(null);
   const [inView,setInView]=useState(true),[lensReady,setLensReady]=useState(false);
-  const interaction=useRef({pressed:false,winkUntil:0,gazeX:0,gazeY:0,keyboard:false});
+  const interaction=useRef({pressed:false,winkUntil:0,gazeX:0,gazeY:0,keyboard:false,reaction:0});
   const input=useRef({state,emotion:emotion??expressions[state],level:0,visible:true,reduced:false});
   const springs=useRef({energy:spring(),press:spring(),x:spring(),y:spring(),joy:[spring(),spring()],open:[spring(1),spring(1)],tilt:[spring(),spring()]});
   const live=state==='listening'||state==='speaking';
@@ -39,13 +44,18 @@ export const VoiceOrb=memo(function VoiceOrb({state,volume=0,meterStore,emotion,
   },[]);
   useEffect(()=>{
     if(visible&&inView)return;
-    interaction.current={pressed:false,winkUntil:0,gazeX:0,gazeY:0,keyboard:false};bounds.current=null;
+    interaction.current={...interaction.current,pressed:false,winkUntil:0,gazeX:0,gazeY:0,keyboard:false};bounds.current=null;
   },[visible,inView]);
   useEffect(()=>{
     const lens=canvas.current,container=body.current;if(!lens||!container)return;
     let renderer=createLensRenderer(lens),frame=0,last=0,phase=0,lastPaint=0;
     setLensReady(!!renderer);
-    const size=()=>{const box=container.getBoundingClientRect();renderer?.resize(box.width,box.height);};
+    const size=()=>{
+      const box=container.getBoundingClientRect();renderer?.resize(box.width,box.height);
+      // Resizing clears a WebGL buffer, including when reduced motion has stopped the RAF.
+      const value=input.current,s=springs.current;
+      renderer?.draw(value.reduced||value.state==='paused'?0:phase,s.energy.value,s.x.value,s.y.value);
+    };
     const observer=new ResizeObserver(size);observer.observe(container);size();
     function lost(event:Event){event.preventDefault();setLensReady(false);renderer?.dispose();renderer=null;}
     function restored(){renderer=createLensRenderer(lens!);setLensReady(!!renderer);size();}
@@ -63,18 +73,29 @@ export const VoiceOrb=memo(function VoiceOrb({state,volume=0,meterStore,emotion,
       move(s.x,value.reduced?0:gesture.gazeX,145,19);move(s.y,value.reduced?0:gesture.gazeY,145,19);
       const wink=now<gesture.winkUntil;
       const blinkPhase=phase%6.7,blink=motion?1-Math.exp(-Math.pow((blinkPhase-6.43)/.075,2))*.90:1;
+      const reaction=wink?gesture.reaction%3+1:0;
+      const interested=motion?expressionPulse(phase,17.4,8.2,1.8):0;
+      const curious=reaction===3?1:interested*(value.state==='listening'||value.state==='thinking'||value.state==='transcribing'?.9:.6);
+      const spontaneousJoy=motion?expressionPulse(phase,value.state==='speaking'?8.6:13.1,value.state==='speaking'?2.4:4.4,1.1)*(value.state==='listening'?.18:.76):0;
       for(let i=0;i<2;i++){
-        const mood=wink&&i===0&&value.emotion==='pleased'?'friendly':value.emotion;
-        const open=mood==='attentive'?1.10:mood==='curious'?(i===0?1.02:.64):mood==='supportive'?.78:1;
-        const tilt=mood==='curious'?(i===0?-9:10):mood==='supportive'?(i===0?-10:10):mood==='friendly'?(i===0?-4:4):0;
-        move(s.joy[i],(wink&&i===1)||mood==='pleased'?1:0,205,23);move(s.open[i],open,205,23);move(s.tilt[i],tilt,205,23);
+        const mood=value.emotion;
+        const open=(mood==='attentive'?1.10:mood==='curious'?(i===0?1.02:.64):mood==='supportive'?.78:1)+curious*(i===0?.16:-.24);
+        const tilt=(mood==='curious'?(i===0?-9:10):mood==='supportive'?(i===0?-10:10):mood==='friendly'?(i===0?-4:4):0)+curious*(i===0?-13:12);
+        const joy=reaction===2?1:reaction===1?(i===1?1:.18):mood==='pleased'?1:mood==='supportive'||value.state==='thinking'||value.state==='transcribing'?0:spontaneousJoy;
+        move(s.joy[i],joy,205,23);move(s.open[i],open,205,23);move(s.tilt[i],tilt,205,23);
         paths.current[i]?.setAttribute('d',eyePath(s.open[i].value*blink,s.joy[i].value));
         eyeElements.current[i]?.style.setProperty('transform',`rotate(${s.tilt[i].value}deg)`);
       }
       const breath=motion?Math.sin(phase*1.45):0,sway=motion?Math.sin(phase*.91):0;
       const scaleX=1+breath*.018+s.energy.value*.055+s.press.value*.055;
       const scaleY=1-breath*.016+s.energy.value*.085-s.press.value*.09;
-      container!.style.transform=`translate(${s.x.value*7}px,${breath*4-s.energy.value*3+s.y.value*3}px) rotate(${sway*(value.state==='thinking'?4.5:1.6)+s.x.value*4}deg) scale(${scaleX},${scaleY})`;
+      const floating=breath*4-s.energy.value*3;
+      container!.style.transform=`translate(${s.x.value*7}px,${floating+s.y.value*3}px) rotate(${sway*(value.state==='thinking'?4.5:1.6)+s.x.value*4}deg) scale(${scaleX},${scaleY})`;
+      if(shadow.current){
+        const height=Math.max(-1,Math.min(1,-floating/7));
+        shadow.current.style.transform=`scale(${1+height*.07+s.press.value*.04},${1+height*.13-s.press.value*.04})`;
+        shadow.current.style.opacity=String(1-height*.18+s.press.value*.08);
+      }
       if(face.current)face.current.style.transform=`translate(${s.x.value*8+(value.state==='thinking'?sway*2:0)}px,${s.y.value*5}px)`;
       // Idle breathing is painted at 30Hz; voice and physical touch at up to 60Hz.
       if(now-lastPaint>=(value.state==='idle'&&!wink&&!gesture.pressed?32:15)||value.reduced){renderer?.draw(motion?phase:0,s.energy.value,s.x.value,s.y.value);lastPaint=now;}
@@ -98,13 +119,13 @@ export const VoiceOrb=memo(function VoiceOrb({state,volume=0,meterStore,emotion,
     interaction.current.gazeY=Math.max(-1,Math.min(1,(event.clientY-box.top)/box.height*2-1));
   }
   function release(){interaction.current.pressed=false;interaction.current.gazeX=0;interaction.current.gazeY=0;bounds.current=null;}
-  function greet(event:MouseEvent<HTMLButtonElement>){interaction.current.winkUntil=performance.now()+740;interaction.current.keyboard=event.detail===0;}
+  function greet(event:MouseEvent<HTMLButtonElement>){interaction.current.reaction+=1;interaction.current.winkUntil=performance.now()+740;interaction.current.keyboard=event.detail===0;}
   return <button type="button" ref={button} className={`voice-orb ${styles.orb}`} data-state={state} data-emotion={emotion??expressions[state]} data-lens-ready={lensReady} data-page-hidden={!visible||!inView}
-    aria-label={`Твой собеседник. ${statusDescription??descriptions[state]}. Поздороваться: подмигнёт.`} title="Коснись, и я подмигну"
+    aria-label={`Твой собеседник. ${statusDescription??descriptions[state]}. Коснись, чтобы поздороваться.`} title="Коснись, чтобы поздороваться"
     onClick={greet} onPointerEnter={event=>{bounds.current=event.currentTarget.getBoundingClientRect();look(event);}}
     onPointerMove={look} onPointerDown={event=>{if(event.isPrimary&&event.button===0){bounds.current=event.currentTarget.getBoundingClientRect();interaction.current.keyboard=false;interaction.current.pressed=true;look(event);}}}
     onPointerUp={()=>{interaction.current.pressed=false;}} onPointerCancel={release} onPointerLeave={release} onBlur={release}>
-      <div className={styles.shadow} aria-hidden="true"/>
+      <div ref={shadow} className={styles.shadow} aria-hidden="true"/>
       <div ref={body} className={`orb-body ${styles.body}`} aria-hidden="true">
         <div className={styles.fallback}/>
         <canvas ref={canvas} className={styles.lens}/>

@@ -88,7 +88,7 @@ export async function probeEndpoint(port = 3000, timeout = 1800) {
     const response = await fetch(`http://127.0.0.1:${port}/manifest.webmanifest`, { signal: AbortSignal.timeout(timeout), redirect: 'error' });
     if (!response.ok || !response.headers.get('content-type')?.includes('json')) return 'occupied';
     const manifest = await response.json();
-    return manifest.name === 'Ratmir English' ? 'training' : 'occupied';
+    return ['Smooth English', 'Ratmir English'].includes(manifest.name) ? 'training' : 'occupied';
   } catch { return 'occupied'; }
 }
 

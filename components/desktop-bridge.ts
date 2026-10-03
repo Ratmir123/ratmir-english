@@ -6,6 +6,8 @@ export interface DesktopStatus {
 }
 
 export interface DesktopBridge {
+  getReminderSettings?(): Promise<DailyReminderSettings>;
+  saveReminderSettings?(settings: DailyReminderSettings): Promise<DailyReminderSettings>;
   readClipboard(): Promise<string>;
   openTraining(): Promise<void>;
   openQuick(): Promise<void>;
@@ -13,6 +15,8 @@ export interface DesktopBridge {
   remindLater(minutes: number): Promise<{ scheduled: true; minutes: number } | { scheduled: false; reason: string }>;
   getStatus(): Promise<DesktopStatus>;
 }
+
+export interface DailyReminderSettings { enabled: boolean; times: string[]; warning?: string }
 
 declare global {
   interface Window { ratmirDesktop?: DesktopBridge }
