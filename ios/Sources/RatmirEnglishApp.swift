@@ -42,6 +42,7 @@ struct RootView: View {
             foreground: scenePhase == .active)
     }
     private var openingVisible: Bool { opening.phase != .finished && openingReadiness.displayEligible && !reduceMotion && !voiceOver }
+    private var homeEntryVisible: Bool { !openingVisible || opening.phase == .handoff }
     private var openingSentence: String {
         if client.state?.sessions.contains(where: { ($0.baseline == nil || client.state?.onboarding?.status != "ready") && ($0.status != "completed" || $0.retryDeferred == true) }) == true {
             return "Разговор на месте. Давай дожмём мысль."
@@ -58,7 +59,7 @@ struct RootView: View {
                     Group {
                         if let onboarding = client.state?.onboarding, onboarding.status != "ready" {
                             OnboardingView(onboarding: onboarding)
-                        } else { HomeView(onProgress: { selectedTab = 1 }, entryVisible: !openingVisible, animateEntry: opening.animateHome) }
+                        } else { HomeView(onProgress: { selectedTab = 1 }, entryVisible: homeEntryVisible, animateEntry: opening.animateHome) }
                     }.background(StableTabBarAppearance(selection: selectedTab))
                         .toolbarColorScheme(.light, for: .tabBar)
                         .tabItem { Label("Сегодня", systemImage: "sun.max") }.tag(0)
@@ -76,14 +77,19 @@ struct RootView: View {
         })
         .overlay {
             if openingVisible {
-                NativeOpeningGreeting(name: client.state?.profile.name ?? "ты", sentence: openingSentence) { finishOpening(animated: false) }
-                    .transition(reduceMotion ? .identity : .opacity.combined(with: .offset(y: -10)).combined(with: .scale(scale: 0.985)))
+                NativeOpeningGreeting(name: client.state?.profile.name ?? "ты", sentence: openingSentence,
+                    active: opening.phase == .greeting, leaving: opening.phase == .handoff) { finishOpening(animated: false) }
+                    .transition(.identity)
                     .zIndex(10)
             }
         }
         .task(id: openingReadiness) {
             guard opening.begin(readiness: openingReadiness, reduceMotion: reduceMotion || voiceOver) else { return }
-            do { try await Task.sleep(for: .milliseconds(NativeOpeningState.greetingMilliseconds)) }
+            do {
+                try await Task.sleep(for: .milliseconds(NativeOpeningState.greetingMilliseconds))
+                guard opening.beginHandoff() else { return }
+                try await Task.sleep(for: .seconds(NativeOpeningState.handoffSeconds))
+            }
             catch { finishOpening(animated: false); return }
             finishOpening(animated: true)
         }
@@ -119,7 +125,7 @@ struct RootView: View {
         .onChange(of: client.homeRequest) { _, _ in selectedTab = 0 }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await client.refreshReminderStatus() } }
-            else if opening.phase == .greeting { finishOpening(animated: false) }
+            else if opening.phase == .greeting || opening.phase == .handoff { finishOpening(animated: false) }
         }
         .onChange(of: reduceMotion) { _, reduced in if reduced { finishOpening(animated: false) } }
         .onChange(of: voiceOver) { _, enabled in if enabled { finishOpening(animated: false) } }
@@ -129,9 +135,9 @@ struct RootView: View {
         } message: { Text(client.error ?? "") }
     }
     private func finishOpening(animated: Bool) {
-        withAnimation(animated && !reduceMotion ? .timingCurve(0.32, 0.72, 0, 1, duration: NativeOpeningState.handoffSeconds) : nil) {
-            opening.finish(animated: animated)
-        }
+        // Handoff opacity and Home entrance are already controlled together by
+        // the shared phase. Removing its completed backing adds no new exit.
+        opening.finish(animated: animated)
     }
 }
 

@@ -527,7 +527,7 @@ struct NativeOpeningReadiness: Hashable {
 }
 
 struct NativeOpeningState {
-    enum Phase: Equatable { case waiting, greeting, finished }
+    enum Phase: Equatable { case waiting, greeting, handoff, finished }
     private(set) var phase = Phase.waiting
     private(set) var consumed = false
     private(set) var animateHome = false
@@ -546,6 +546,11 @@ struct NativeOpeningState {
         guard consumed else { return }
         animateHome = animateHome && animated
         phase = .finished
+    }
+    mutating func beginHandoff() -> Bool {
+        guard consumed, phase == .greeting, animateHome else { return false }
+        phase = .handoff
+        return true
     }
 }
 
@@ -569,9 +574,10 @@ struct NativeHomeEntrance: ViewModifier {
 struct NativeOpeningGreeting: View {
     let name: String
     let sentence: String
+    let active: Bool
+    let leaving: Bool
     let skip: () -> Void
     @State private var entered = false
-    @State private var leaving = false
     @State private var played = false
     @State private var pose = VoiceOrbGreetingPose.arriving
     @State private var mood = VoiceOrbMood.friendly
@@ -585,7 +591,7 @@ struct NativeOpeningGreeting: View {
                     .frame(width: 176, height: 184).allowsHitTesting(false).accessibilityHidden(true)
                     .opacity(entered && !leaving ? 1 : 0)
                     .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.62), value: entered)
-                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.38), value: leaving)
+                    .animation(reduceMotion ? nil : .timingCurve(0.4, 0, 0.6, 1, duration: 0.38), value: leaving)
                 Text("Привет, \(name).")
                     .font(.system(.largeTitle, design: .rounded).weight(.semibold)).tracking(-0.7)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
@@ -601,13 +607,18 @@ struct NativeOpeningGreeting: View {
                 Spacer(minLength: 18)
                 Spacer(minLength: 0).frame(height: 42)
             }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
-                .foregroundStyle(Theme.charcoal).background(Theme.surface)
+                .foregroundStyle(Theme.charcoal)
+                .background {
+                    Theme.surface.opacity(leaving ? 0 : 1)
+                        .animation(reduceMotion ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: NativeOpeningState.handoffSeconds), value: leaving)
+                }
         }.buttonStyle(.plain).ignoresSafeArea()
+            .allowsHitTesting(!leaving)
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Привет, " + name + ". " + sentence)
             .accessibilityHint("Коснись, чтобы сразу открыть главную.")
-            .task(id: scenePhase) {
-                guard scenePhase == .active, !played else { return }
+            .task(id: active) {
+                guard active, scenePhase == .active, !played else { return }
                 played = true
                 entered = true
                 pose = .neutral
@@ -620,10 +631,6 @@ struct NativeOpeningGreeting: View {
                     pose = .landing
                     try await Task.sleep(for: .milliseconds(640))
                     pose = .neutral
-                    // Clear words before the opaque background yields to Home,
-                    // so two readable text layers cannot occupy the same frame.
-                    try await Task.sleep(for: .milliseconds(820))
-                    leaving = true
                 } catch { return }
             }
     }
