@@ -612,8 +612,7 @@ struct NativeOpeningGreeting: View {
                     Theme.surface.opacity(leaving ? 0 : 1)
                         .animation(reduceMotion ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: NativeOpeningState.handoffSeconds), value: leaving)
                 }
-        }.buttonStyle(.plain).ignoresSafeArea()
-            .allowsHitTesting(!leaving)
+        }.buttonStyle(.plain).contentShape(Rectangle()).ignoresSafeArea()
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Привет, " + name + ". " + sentence)
             .accessibilityHint("Коснись, чтобы сразу открыть главную.")
