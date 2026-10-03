@@ -389,7 +389,6 @@ struct ConversationView: View {
             else if value.status == "completed" {
                 Button { client.returnToHome() } label: { Label("На главную", systemImage: "house") }
                     .buttonStyle(PrimaryButton()).padding(.horizontal, 20).padding(.vertical, 14)
-                    .modifier(ComposerBackdrop())
             }
         }
     }
@@ -599,7 +598,7 @@ struct ConversationView: View {
                     HStack { Text("На сегодня всё"); Spacer(); Image(systemName: "house") }.frame(maxWidth: .infinity)
                 }.buttonStyle(QuietButton()).disabled(!canSaveCompletion)
             }
-        }}.padding(.horizontal, 20).padding(.vertical, 14).modifier(ComposerBackdrop())
+        }}.padding(.horizontal, 20).padding(.vertical, 14)
             .animation(reduceMotion ? nil : NativeMotion.reveal, value: mayComplete)
     }
     private var composer: some View {
@@ -614,7 +613,7 @@ struct ConversationView: View {
             if conversation?.baseline != nil {
                 Text("Своих ответов голосом без опоры: \(baselineReplies)/2. Хорошая оценка не обязательна.").font(.caption).foregroundStyle(Theme.secondary)
             }
-        }}.padding(.horizontal, 20).padding(.vertical, 14).modifier(ComposerBackdrop())
+        }}.padding(.horizontal, 20).padding(.vertical, 14)
     }
     private func composerContent(retry: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {

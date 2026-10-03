@@ -127,6 +127,7 @@ struct RankLadderView: View {
 
 struct RankLadder: View {
     let progression: ProgressionState
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var current: PracticeRank { RewardArt.practiceRank(progression.level) }
     private var next: PracticeRank? { RewardArt.nextRank(progression.level) }
     var body: some View {
@@ -135,26 +136,63 @@ struct RankLadder: View {
                 let isCurrent = rank.id == current.id
                 let isNext = rank.id == next?.id
                 let unlocked = progression.level >= rank.from
-                HStack(spacing: 12) {
-                    RankEmblem(level: rank.from, size: 94, animated: isCurrent)
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 8) {
-                            Text(rank.title).font(.title3.weight(.semibold))
-                            if isCurrent { Text("Твой ранг").font(.caption2.weight(.semibold)).padding(.horizontal, 7).padding(.vertical, 4).background(Theme.lime, in: Capsule()) }
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                RankEmblem(level: rank.from, size: 94, animated: isCurrent)
+                                Spacer(minLength: 0)
+                                rankStatus(isCurrent: isCurrent, unlocked: unlocked)
+                            }
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(rank.title).font(.title3.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                                if isCurrent { currentRankBadge }
+                                rankDetails(rank, isCurrent: isCurrent, isNext: isNext, unlocked: unlocked)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        Text("Уровень \(rank.from) · от \(rank.minimumXP) XP").font(.caption).foregroundStyle(Theme.secondary).monospacedDigit()
-                        Text(isCurrent ? "\(progression.xp) XP сейчас" : isNext ? "Ещё \(max(0, rank.minimumXP - progression.xp)) XP" : unlocked ? "Уже открыт" : "Впереди")
-                            .font(.footnote.weight(isNext ? .medium : .regular)).foregroundStyle(isNext ? Theme.charcoal : Theme.secondary).monospacedDigit()
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: isCurrent ? "circle.inset.filled" : unlocked ? "checkmark" : "lock")
-                        .font(.caption.weight(.semibold)).foregroundStyle(isCurrent ? Theme.charcoal : Theme.secondary)
-                }.padding(.vertical, 9).padding(.horizontal, 10)
+                    } else {
+                        HStack(spacing: 12) {
+                            RankEmblem(level: rank.from, size: 94, animated: isCurrent)
+                            VStack(alignment: .leading, spacing: 5) {
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 8) {
+                                        Text(rank.title).font(.title3.weight(.semibold)).fixedSize()
+                                        if isCurrent { currentRankBadge.fixedSize() }
+                                    }
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        Text(rank.title).font(.title3.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                                        if isCurrent { currentRankBadge }
+                                    }
+                                }
+                                rankDetails(rank, isCurrent: isCurrent, isNext: isNext, unlocked: unlocked)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                            rankStatus(isCurrent: isCurrent, unlocked: unlocked)
+                        }
+                    }
+                }.padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 16 : 9).padding(.horizontal, 10)
                     .background(isCurrent ? Theme.lavender.opacity(0.24) : Color.clear, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("\(rank.title), от \(rank.minimumXP) XP. " + (isCurrent ? "Твой текущий ранг, \(progression.xp) XP." : unlocked ? "Уже открыт." : isNext ? "Следующий ранг, ещё \(max(0, rank.minimumXP - progression.xp)) XP." : "Пока впереди."))
-                if rank.id != RewardArt.ranks.last?.id { Divider().padding(.leading, 116).padding(.trailing, 10).opacity(0.45) }
+                if rank.id != RewardArt.ranks.last?.id { Divider().padding(.leading, dynamicTypeSize.isAccessibilitySize ? 10 : 116).padding(.trailing, 10).opacity(0.45) }
             }
         }
+    }
+    private var currentRankBadge: some View {
+        Text("Твой ранг").font(.caption2.weight(.semibold))
+            .padding(.horizontal, 9).padding(.vertical, 5).background(Theme.lime, in: Capsule())
+            .fixedSize(horizontal: false, vertical: true)
+    }
+    private func rankDetails(_ rank: PracticeRank, isCurrent: Bool, isNext: Bool, unlocked: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Уровень \(rank.from) · от \(rank.minimumXP) XP").font(.caption).foregroundStyle(Theme.secondary).monospacedDigit()
+            Text(isCurrent ? "\(progression.xp) XP сейчас" : isNext ? "Ещё \(max(0, rank.minimumXP - progression.xp)) XP" : unlocked ? "Уже открыт" : "Впереди")
+                .font(.footnote.weight(isNext ? .medium : .regular)).foregroundStyle(isNext ? Theme.charcoal : Theme.secondary).monospacedDigit()
+        }.fixedSize(horizontal: false, vertical: true)
+    }
+    private func rankStatus(isCurrent: Bool, unlocked: Bool) -> some View {
+        Image(systemName: isCurrent ? "circle.inset.filled" : unlocked ? "checkmark" : "lock")
+            .font(.caption.weight(.semibold)).foregroundStyle(isCurrent ? Theme.charcoal : Theme.secondary)
+            .fixedSize()
     }
 }
 

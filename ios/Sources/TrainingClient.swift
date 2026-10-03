@@ -20,6 +20,8 @@ struct PracticeReminder: Codable, Identifiable, Equatable {
     var minuteOfDay: Int { hour * 60 + minute }
     var timeLabel: String { String(format: "%02d:%02d", hour, minute) }
     static let storageKey = "practice-reminder-schedule-v2"
+    static let notificationTitle = "Smooth English"
+    static var notificationVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown" }
     static func owns(_ identifier: String) -> Bool { identifier == "daily-practice" || identifier.hasPrefix("smooth-practice-") }
     static func ordered(_ values: [PracticeReminder]) -> [PracticeReminder] {
         values.sorted { $0.minuteOfDay == $1.minuteOfDay ? $0.id < $1.id : $0.minuteOfDay < $1.minuteOfDay }
@@ -36,11 +38,11 @@ struct PracticeReminder: Codable, Identifiable, Equatable {
     }
     func request() -> UNNotificationRequest {
         let content = UNMutableNotificationContent()
-        content.title = "Smooth English"
+        content.title = Self.notificationTitle
         content.body = "Есть 15 минут? Давай одну ситуацию на английском."
         content.sound = .default
         content.threadIdentifier = "ratmir-practice"
-        content.userInfo = ["appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"]
+        content.userInfo = ["appVersion": Self.notificationVersion]
         return UNNotificationRequest(identifier: id, content: content,
             trigger: UNCalendarNotificationTrigger(dateMatching: DateComponents(hour: hour, minute: minute), repeats: true))
     }
@@ -905,11 +907,13 @@ enum AccessKey {
             return
         }
 #endif
+        reminderBusy = true
+        defer { reminderBusy = false }
         await reloadReminderStatus()
     }
     private func reloadReminderStatus() async {
         notificationState = await reminderCenter.authorization()
-        let pending = await reminderCenter.pending()
+        var pending = await reminderCenter.pending()
         if reminderDefaults.data(forKey: PracticeReminder.storageKey) == nil {
             // Keep the legacy request identifier. Updating the app does not lose
             // a previously configured daily time or the user's authorization.
@@ -922,6 +926,7 @@ enum AccessKey {
             }
             if let checked = try? PracticeReminder.checked(migrated), !checked.isEmpty { persistReminders(checked) }
         }
+        pending = await refreshReminderBranding(in: pending)
         reminderEnabled = remindersAuthorized && reminders.contains { value in
             value.enabled && pending.contains { request in
                 guard request.identifier == value.id, let trigger = request.trigger as? UNCalendarNotificationTrigger else { return false }
@@ -929,6 +934,47 @@ enum AccessKey {
             }
         }
         if let first = reminders.first { reminderHour = first.hour; reminderMinute = first.minute }
+    }
+    private func refreshReminderBranding(in requests: [UNNotificationRequest]) async -> [UNNotificationRequest] {
+        // A renamed app does not update the content of an already queued request.
+        // Refresh only enabled, owned, matching requests; never prompt for permission
+        // or recreate a missing schedule while passively opening Settings.
+        guard remindersAuthorized else { return requests }
+        var pending = requests
+        for original in requests {
+            guard PracticeReminder.owns(original.identifier),
+                  let reminder = reminders.first(where: { $0.id == original.identifier && $0.enabled }),
+                  let originalTrigger = original.trigger as? UNCalendarNotificationTrigger,
+                  originalTrigger.repeats,
+                  originalTrigger.dateComponents.hour == reminder.hour,
+                  originalTrigger.dateComponents.minute == reminder.minute,
+                  original.content.title != PracticeReminder.notificationTitle ||
+                    original.content.userInfo["appVersion"] as? String != PracticeReminder.notificationVersion,
+                  let content = original.content.mutableCopy() as? UNMutableNotificationContent else { continue }
+            content.title = PracticeReminder.notificationTitle
+            content.userInfo["appVersion"] = PracticeReminder.notificationVersion
+            let replacement = UNNotificationRequest(identifier: original.identifier, content: content, trigger: original.trigger)
+            do {
+                // Reusing the identifier replaces one entry, including the exact
+                // trigger/time zone, sound, body and custom metadata from its copy.
+                try await reminderCenter.add(replacement)
+                pending = await reminderCenter.pending()
+                guard pending.contains(where: { request in
+                    guard request.identifier == original.identifier,
+                          let trigger = request.trigger as? UNCalendarNotificationTrigger else { return false }
+                    return request.content.title == PracticeReminder.notificationTitle &&
+                        request.content.userInfo["appVersion"] as? String == PracticeReminder.notificationVersion &&
+                        trigger.repeats == originalTrigger.repeats && trigger.dateComponents == originalTrigger.dateComponents
+                }) else { throw ClientError.message("iPhone не подтвердил обновление названия напоминания.") }
+            } catch {
+                // An add error can be ambiguous. Restore the exact previous request,
+                // rather than canceling it or constructing a new default schedule.
+                do { try await reminderCenter.add(original) }
+                catch { reminderDiagnostic = "iPhone не подтвердил прежнее напоминание после обновления названия." }
+                pending = await reminderCenter.pending()
+            }
+        }
+        return pending
     }
     private func persistReminders(_ values: [PracticeReminder]) {
         reminders = PracticeReminder.ordered(values)

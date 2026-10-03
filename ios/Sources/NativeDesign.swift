@@ -86,7 +86,7 @@ struct ComposerBackdrop: ViewModifier {
             .background {
                 if reduceTransparency || contrast == .increased {
                     UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
-                        .fill(Theme.surface).ignoresSafeArea(.container, edges: .bottom)
+                        .fill(Theme.surface)
                 } else {
                     UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
                         .fill(.regularMaterial)
@@ -94,7 +94,6 @@ struct ComposerBackdrop: ViewModifier {
                             UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
                                 .fill(Color.white.opacity(0.58))
                         }
-                        .ignoresSafeArea(.container, edges: .bottom)
                 }
             }
             .environment(\.colorScheme, .light)
@@ -105,9 +104,50 @@ struct ComposerBackdrop: ViewModifier {
 /// surface below the custom composer, so the inset intentionally has no gap.
 struct ConversationDock<Dock: View>: ViewModifier {
     let dock: Dock
+    @State private var containerBottomInset: CGFloat?
     init(@ViewBuilder dock: () -> Dock) { self.dock = dock() }
-    @ViewBuilder func body(content: Content) -> some View {
-        content.safeAreaInset(edge: .bottom, spacing: 0) { dock }
+    func body(content: Content) -> some View {
+        GeometryReader { geometry in
+            content.safeAreaInset(edge: .bottom, spacing: 0) {
+                // The space is part of this backing's real layout, not a shape
+                // escaping an inset. Sheet/large-type content cannot leak below it.
+                dock.padding(.bottom, containerBottomInset ?? geometry.safeAreaInsets.bottom)
+                    .modifier(ComposerBackdrop())
+            }
+            .ignoresSafeArea(.container, edges: .bottom)
+        }
+        .background {
+            ContainerBottomInsetReader { value in
+                if containerBottomInset != value { containerBottomInset = value }
+            }.allowsHitTesting(false)
+        }
+    }
+}
+
+/// The owning window's container inset excludes keyboard avoidance. Reading a
+/// GeometryProxy's keyboard-expanded inset as padding would create a giant gap.
+private struct ContainerBottomInsetReader: UIViewRepresentable {
+    let onChange: (CGFloat) -> Void
+    func makeUIView(context: Context) -> InsetView {
+        let view = InsetView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        view.onChange = onChange
+        return view
+    }
+    func updateUIView(_ view: InsetView, context: Context) {
+        view.onChange = onChange
+        view.publishInset()
+    }
+    final class InsetView: UIView {
+        var onChange: ((CGFloat) -> Void)?
+        override func didMoveToWindow() { super.didMoveToWindow(); publishInset() }
+        override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); publishInset() }
+        func publishInset() {
+            guard let window else { return }
+            let inset = max(0, window.safeAreaInsets.bottom)
+            DispatchQueue.main.async { [weak self] in self?.onChange?(inset) }
+        }
     }
 }
 

@@ -225,6 +225,7 @@ private actor FakePracticeReminderCenter: PracticeReminderCenter {
     private var additions = 0
     private var permissionRequests = 0
     private var rejectAddition = false
+    private var rejectAppliedAddition = false
     init(authorization: String = "authorized", requests: [UNNotificationRequest] = []) {
         authorizationValue = authorization
         self.requests = Dictionary(uniqueKeysWithValues: requests.map { ($0.identifier, $0) })
@@ -236,15 +237,32 @@ private actor FakePracticeReminderCenter: PracticeReminderCenter {
         additions += 1
         if rejectAddition { rejectAddition = false; throw ClientError.message("Simulated rejected scheduling") }
         requests[request.identifier] = request
+        if rejectAppliedAddition { rejectAppliedAddition = false; throw ClientError.message("Simulated ambiguous scheduling error") }
     }
     func remove(_ identifiers: [String]) async { for identifier in identifiers { requests.removeValue(forKey: identifier) } }
     func setAuthorization(_ value: String) { authorizationValue = value }
     func rejectNextAddition() { rejectAddition = true }
+    func rejectNextAdditionAfterApplying() { rejectAppliedAddition = true }
     func statistics() -> (additions: Int, permissionRequests: Int) { (additions, permissionRequests) }
 }
 
 final class ReminderScheduleTests: XCTestCase {
     private func defaults() -> UserDefaults { UserDefaults(suiteName: "smooth-reminder-tests-" + UUID().uuidString)! }
+    private func legacyRequest(title: String = "Ratmir English", hour: Int = 19, minute: Int = 15, repeats: Bool = true) -> UNNotificationRequest {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.subtitle = "Личная практика"
+        content.body = "Сохранённый текст напоминания."
+        content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: "legacy-tone.caf"))
+        content.badge = 3
+        content.threadIdentifier = "ratmir-practice"
+        content.categoryIdentifier = "legacy-practice"
+        content.userInfo = ["appVersion": "0.4.1", "existingMetadata": "keep-me"]
+        var components = DateComponents(hour: hour, minute: minute)
+        components.timeZone = TimeZone(identifier: "Europe/Moscow")
+        return UNNotificationRequest(identifier: "daily-practice", content: content,
+            trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: repeats))
+    }
     @MainActor func testLegacyDailyTimeMigratesWithoutChangingIdentifierOrForeignRequests() async {
         let legacy = PracticeReminder(id: "daily-practice", hour: 19, minute: 15)
         let other = UNNotificationRequest(identifier: "other-feature", content: UNMutableNotificationContent(), trigger: nil)
@@ -259,6 +277,93 @@ final class ReminderScheduleTests: XCTestCase {
         XCTAssertEqual(Set(pending.map(\.identifier)), ["daily-practice", "other-feature"])
         let statistics = await center.statistics()
         XCTAssertEqual(statistics.additions, 0, "Opening settings never creates an extra notification")
+    }
+
+    @MainActor func testLegacyNotificationBrandingRefreshPreservesContentScheduleAndQueueSize() async throws {
+        for previousTitle in ["Ratmir English", "Smooth English"] {
+            let original = legacyRequest(title: previousTitle)
+            let foreign = UNNotificationRequest(identifier: "other-feature", content: UNMutableNotificationContent(), trigger: nil)
+            let center = FakePracticeReminderCenter(requests: [original, foreign])
+            let storage = defaults()
+            let client = TrainingClient(reminderCenter: center, reminderDefaults: storage)
+            await client.refreshReminderStatus()
+            let pending = await center.pending()
+            XCTAssertEqual(pending.count, 2)
+            XCTAssertEqual(client.reminders, [PracticeReminder(id: "daily-practice", hour: 19, minute: 15)])
+            let updated = try XCTUnwrap(pending.first { $0.identifier == original.identifier })
+            XCTAssertEqual(updated.content.title, "Smooth English")
+            XCTAssertEqual(updated.content.userInfo["appVersion"] as? String, PracticeReminder.notificationVersion)
+            XCTAssertEqual(updated.content.userInfo["existingMetadata"] as? String, "keep-me")
+            XCTAssertEqual(updated.content.subtitle, original.content.subtitle)
+            XCTAssertEqual(updated.content.body, original.content.body)
+            XCTAssertEqual(updated.content.sound, original.content.sound)
+            XCTAssertEqual(updated.content.badge, original.content.badge)
+            XCTAssertEqual(updated.content.categoryIdentifier, original.content.categoryIdentifier)
+            XCTAssertEqual(updated.content.threadIdentifier, original.content.threadIdentifier)
+            let updatedTrigger = try XCTUnwrap(updated.trigger as? UNCalendarNotificationTrigger)
+            let originalTrigger = try XCTUnwrap(original.trigger as? UNCalendarNotificationTrigger)
+            XCTAssertEqual(updatedTrigger.dateComponents, originalTrigger.dateComponents)
+            XCTAssertEqual(updatedTrigger.repeats, originalTrigger.repeats)
+            XCTAssertTrue(client.reminderEnabled)
+            XCTAssertFalse(client.reminderBusy)
+            XCTAssertEqual(pending.first { $0.identifier == foreign.identifier }?.content.title, foreign.content.title)
+            await client.refreshReminderStatus()
+            let statistics = await center.statistics()
+            XCTAssertEqual(statistics.additions, 1, "A same-ID refresh occurs once; opening Settings again does not reschedule it")
+            XCTAssertEqual(statistics.permissionRequests, 0)
+        }
+    }
+
+    @MainActor func testRejectedOrAmbiguousBrandingRefreshRestoresExactPreviousRequestWithoutDuplicate() async throws {
+        for errorAfterApplying in [false, true] {
+            let original = legacyRequest()
+            let center = FakePracticeReminderCenter(requests: [original])
+            if errorAfterApplying { await center.rejectNextAdditionAfterApplying() }
+            else { await center.rejectNextAddition() }
+            let client = TrainingClient(reminderCenter: center, reminderDefaults: defaults())
+            await client.refreshReminderStatus()
+            let pending = await center.pending()
+            XCTAssertEqual(pending.count, 1)
+            let retained = try XCTUnwrap(pending.first)
+            XCTAssertEqual(retained.identifier, original.identifier)
+            XCTAssertEqual(retained.content.title, original.content.title)
+            XCTAssertEqual(retained.content.body, original.content.body)
+            XCTAssertEqual(retained.content.sound, original.content.sound)
+            XCTAssertEqual(retained.content.userInfo as NSDictionary, original.content.userInfo as NSDictionary)
+            XCTAssertEqual((retained.trigger as? UNCalendarNotificationTrigger)?.dateComponents,
+                           (original.trigger as? UNCalendarNotificationTrigger)?.dateComponents)
+            XCTAssertTrue(client.reminderEnabled)
+            XCTAssertEqual(client.reminders.map(\.timeLabel), ["19:15"])
+            XCTAssertFalse(client.reminderBusy)
+            XCTAssertNil(client.error, "A cosmetic refresh failure must not interrupt the learner")
+            let statistics = await center.statistics()
+            XCTAssertEqual(statistics.additions, 2, "One attempted refresh and one same-ID exact rollback")
+            XCTAssertEqual(statistics.permissionRequests, 0)
+        }
+    }
+
+    @MainActor func testPassiveBrandingRefreshSkipsDeniedUndecidedPausedMissingAndMismatchedRequests() async throws {
+        let cases: [(String, Bool, Int, Bool, Bool)] = [
+            ("denied", true, 19, true, true), ("notDetermined", true, 19, true, true),
+            ("authorized", false, 19, true, true), ("authorized", true, 18, true, true),
+            ("authorized", true, 19, false, true), ("authorized", true, 19, true, false)
+        ]
+        for (authorization, enabled, queuedHour, repeats, exists) in cases {
+            let original = legacyRequest(hour: queuedHour, repeats: repeats)
+            let storage = defaults()
+            let configured = PracticeReminder(id: "daily-practice", hour: 19, minute: 15, enabled: enabled)
+            storage.set(try JSONEncoder().encode([configured]), forKey: PracticeReminder.storageKey)
+            let center = FakePracticeReminderCenter(authorization: authorization, requests: exists ? [original] : [])
+            let client = TrainingClient(reminderCenter: center, reminderDefaults: storage)
+            await client.refreshReminderStatus()
+            XCTAssertEqual(client.reminders, [configured])
+            let statistics = await center.statistics()
+            XCTAssertEqual(statistics.additions, 0)
+            XCTAssertEqual(statistics.permissionRequests, 0)
+            let pending = await center.pending()
+            XCTAssertEqual(pending.count, exists ? 1 : 0)
+            if exists { XCTAssertEqual(pending[0].content.title, "Ratmir English") }
+        }
     }
 
     @MainActor func testMultipleTimesEditInPlaceAndPersistAcrossClientRestore() async throws {

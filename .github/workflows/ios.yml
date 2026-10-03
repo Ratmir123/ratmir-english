@@ -105,11 +105,11 @@ jobs:
           python3 - <<'PY'
           import json
           summary = json.load(open('native-tests-summary.json'))
-          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 33, summary
-          assert type(summary['passedTests']) is int and summary['passedTests'] == 33, summary
+          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 36, summary
+          assert type(summary['passedTests']) is int and summary['passedTests'] == 36, summary
           assert summary['failedTests'] == 0 and summary['skippedTests'] == 0, summary
           assert not summary['testFailures'] and summary.get('expectedFailures', 0) == 0, summary
-          print('Verified native tests: 33 passed, none failed or skipped')
+          print('Verified native tests: 36 passed, none failed or skipped')
           PY
           for screen in achievements ranks ranks-bottom reminder-editor completed review preview-timing dictation-preview; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
