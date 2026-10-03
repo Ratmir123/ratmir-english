@@ -531,7 +531,10 @@ struct NativeOpeningState {
     private(set) var phase = Phase.waiting
     private(set) var consumed = false
     private(set) var animateHome = false
-    static let greetingMilliseconds = 1_350
+    static let greetingMilliseconds = 3_200
+    static let handoffSeconds = 0.60
+    static let homeEntranceSeconds = 0.56
+    static let homeStaggerSeconds = 0.08
     mutating func begin(readiness: NativeOpeningReadiness, reduceMotion: Bool) -> Bool {
         guard readiness.ready, !consumed else { return false }
         consumed = true
@@ -554,7 +557,10 @@ struct NativeHomeEntrance: ViewModifier {
     func body(content: Content) -> some View {
         content.opacity(visible || reduceMotion ? 1 : 0)
             .offset(y: visible || reduceMotion ? 0 : 12)
-            .animation(animated && !reduceMotion ? .timingCurve(0.23, 1, 0.32, 1, duration: 0.28).delay(Double(min(5, max(0, index))) * 0.05) : nil, value: visible)
+            .animation(animated && !reduceMotion ? .timingCurve(0.23, 1, 0.32, 1, duration: NativeOpeningState.homeEntranceSeconds).delay(Double(min(5, max(0, index))) * NativeOpeningState.homeStaggerSeconds) : nil, value: visible)
+            .transaction { transaction in
+                if !animated || reduceMotion { transaction.animation = nil; transaction.disablesAnimations = true }
+            }
     }
 }
 
@@ -565,22 +571,33 @@ struct NativeOpeningGreeting: View {
     let sentence: String
     let skip: () -> Void
     @State private var entered = false
+    @State private var leaving = false
+    @State private var played = false
+    @State private var pose = VoiceOrbGreetingPose.arriving
+    @State private var mood = VoiceOrbMood.friendly
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         Button(action: skip) {
             VStack(spacing: 18) {
                 Spacer(minLength: 18)
-                VoiceOrb(mode: .ready, level: 0, mood: .friendly)
-                    .frame(width: 164, height: 164).allowsHitTesting(false).accessibilityHidden(true)
-                    .scaleEffect(entered ? 1 : 0.96)
+                VoiceOrb(mode: .ready, level: 0, mood: mood, greetingPose: pose)
+                    .frame(width: 176, height: 184).allowsHitTesting(false).accessibilityHidden(true)
+                    .opacity(entered && !leaving ? 1 : 0)
+                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.62), value: entered)
+                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.38), value: leaving)
                 Text("Привет, \(name).")
                     .font(.system(.largeTitle, design: .rounded).weight(.semibold)).tracking(-0.7)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .opacity(entered && !leaving ? 1 : 0).offset(y: leaving ? -4 : entered ? 0 : 12)
+                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.58).delay(0.24), value: entered)
+                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.18), value: leaving)
                 Text(sentence).font(.body).foregroundStyle(Theme.secondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 360)
-                    .opacity(entered ? 1 : 0).offset(y: entered ? 0 : 6)
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.22).delay(0.12), value: entered)
+                    .opacity(entered && !leaving ? 1 : 0).offset(y: leaving ? -3 : entered ? 0 : 10)
+                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.58).delay(0.54), value: entered)
+                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.18), value: leaving)
                 Spacer(minLength: 18)
                 Spacer(minLength: 0).frame(height: 42)
             }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -589,6 +606,25 @@ struct NativeOpeningGreeting: View {
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Привет, " + name + ". " + sentence)
             .accessibilityHint("Коснись, чтобы сразу открыть главную.")
-            .task { withAnimation(reduceMotion ? nil : NativeMotion.settle) { entered = true } }
+            .task(id: scenePhase) {
+                guard scenePhase == .active, !played else { return }
+                played = true
+                entered = true
+                pose = .neutral
+                guard !reduceMotion else { return }
+                do {
+                    try await Task.sleep(for: .milliseconds(780))
+                    pose = .lifted
+                    mood = .pleased
+                    try await Task.sleep(for: .milliseconds(760))
+                    pose = .landing
+                    try await Task.sleep(for: .milliseconds(640))
+                    pose = .neutral
+                    // Clear words before the opaque background yields to Home,
+                    // so two readable text layers cannot occupy the same frame.
+                    try await Task.sleep(for: .milliseconds(820))
+                    leaving = true
+                } catch { return }
+            }
     }
 }

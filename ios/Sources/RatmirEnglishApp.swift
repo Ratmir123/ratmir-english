@@ -71,10 +71,13 @@ struct RootView: View {
                 }.tint(Theme.charcoal).toolbarColorScheme(.light, for: .tabBar)
             } else { LoginView() }
         }
+        .simultaneousGesture(TapGesture().onEnded {
+            if opening.animateHome { finishOpening(animated: false) }
+        })
         .overlay {
             if openingVisible {
                 NativeOpeningGreeting(name: client.state?.profile.name ?? "ты", sentence: openingSentence) { finishOpening(animated: false) }
-                    .transition(reduceMotion ? .identity : .opacity.combined(with: .offset(y: -6)))
+                    .transition(reduceMotion ? .identity : .opacity.combined(with: .offset(y: -10)).combined(with: .scale(scale: 0.985)))
                     .zIndex(10)
             }
         }
@@ -126,7 +129,7 @@ struct RootView: View {
         } message: { Text(client.error ?? "") }
     }
     private func finishOpening(animated: Bool) {
-        withAnimation(animated && !reduceMotion ? .timingCurve(0.23, 1, 0.32, 1, duration: 0.28) : nil) {
+        withAnimation(animated && !reduceMotion ? .timingCurve(0.32, 0.72, 0, 1, duration: NativeOpeningState.handoffSeconds) : nil) {
             opening.finish(animated: animated)
         }
     }

@@ -491,7 +491,19 @@ final class NativeChromeTests: XCTestCase {
 
     func testOpeningIsBoundedAndCannotReplayAfterSkipOrForegroundResume() {
         let ready = NativeOpeningReadiness(signedIn: true, stateLoaded: true, onboardingBlocked: false, protectedActivity: false, foreground: true)
-        XCTAssertLessThanOrEqual(NativeOpeningState.greetingMilliseconds, 1_350)
+        XCTAssertGreaterThanOrEqual(NativeOpeningState.greetingMilliseconds, 3_000, "The greeting leaves time to see the mascot settle and read the phrase")
+        XCTAssertLessThanOrEqual(NativeOpeningState.greetingMilliseconds, 3_500, "Launch remains bounded and immediately skippable")
+        XCTAssertGreaterThanOrEqual(NativeOpeningState.handoffSeconds, 0.55)
+        XCTAssertLessThanOrEqual(NativeOpeningState.handoffSeconds, 0.65)
+        XCTAssertLessThanOrEqual(NativeOpeningState.homeEntranceSeconds + 5 * NativeOpeningState.homeStaggerSeconds, 1.05, "The complete Home cascade has a bounded final settlement")
+        for pose in [VoiceOrbGreetingPose.neutral, .arriving, .lifted, .landing] {
+            XCTAssertGreaterThanOrEqual(pose.scaleX, 0.90)
+            XCTAssertGreaterThanOrEqual(pose.scaleY, 0.90)
+            XCTAssertLessThanOrEqual(pose.scaleX, 1.08)
+            XCTAssertLessThanOrEqual(pose.scaleY, 1.08)
+            XCTAssertLessThanOrEqual(abs(pose.lift), 0.06)
+            XCTAssertLessThanOrEqual(abs(pose.tilt), 4)
+        }
         var state = NativeOpeningState()
         XCTAssertTrue(state.begin(readiness: ready, reduceMotion: false))
         XCTAssertEqual(state.phase, .greeting)

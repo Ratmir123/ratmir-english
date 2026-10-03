@@ -96,13 +96,13 @@ jobs:
           sleep 8
           kill -INT "$recorder"
           wait "$recorder" || true
-          # Start recording before launch so the brief greeting is not missed.
+          # Capture the complete longer greeting, soft handoff and Home cascade.
           xcrun simctl terminate "$device" app.ratmirenglish.personal || true
           xcrun simctl io "$device" recordVideo --codec=h264 iPhone11-opening-motion.mp4 &
           recorder=$!
           sleep 0.2
           xcrun simctl launch "$device" app.ratmirenglish.personal --preview=opening
-          sleep 5
+          sleep 7
           kill -INT "$recorder"
           wait "$recorder" || true
           xcrun simctl io "$device" screenshot iPhone11-opening.png

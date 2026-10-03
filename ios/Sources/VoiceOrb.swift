@@ -3,6 +3,19 @@ import SwiftUI
 enum VoiceOrbMode { case ready, listening, speaking, thinking }
 enum VoiceOrbMood { case calm, attentive, curious, friendly, pleased, supportive }
 
+/// A launch-only body pose. Its floor remains anchored in CompanionStage, and
+/// ordinary conversation callers retain the neutral pose without extra work.
+struct VoiceOrbGreetingPose: Equatable {
+    let scaleX: Double
+    let scaleY: Double
+    let lift: Double
+    let tilt: Double
+    static let neutral = VoiceOrbGreetingPose(scaleX: 1, scaleY: 1, lift: 0, tilt: 0)
+    static let arriving = VoiceOrbGreetingPose(scaleX: 1.055, scaleY: 0.945, lift: 0.045, tilt: -4)
+    static let lifted = VoiceOrbGreetingPose(scaleX: 0.985, scaleY: 1.035, lift: -0.052, tilt: 3)
+    static let landing = VoiceOrbGreetingPose(scaleX: 1.04, scaleY: 0.965, lift: 0.012, tilt: -1.2)
+}
+
 /// Actual audio updates invalidate this leaf, never the transcript or composer.
 struct MeasuredVoiceOrb: View {
     @ObservedObject var meter: VoiceMeter
@@ -18,6 +31,7 @@ struct VoiceOrb: View {
     let level: Double
     var mood: VoiceOrbMood? = nil
     var statusDescription: String? = nil
+    var greetingPose: VoiceOrbGreetingPose = .neutral
     @State private var winking = false
     @State private var interaction = 0
     @State private var isVisible = false
@@ -38,7 +52,7 @@ struct VoiceOrb: View {
         Button(action: reactToTouch) {
             CompanionStage(mode: mode, energy: measuredEnergy, expression: expression,
                            winking: winking, interaction: interaction, touchOffset: touchOffset,
-                           animated: animated, phaseOrigin: phaseOrigin)
+                           animated: animated, phaseOrigin: phaseOrigin, greetingPose: greetingPose)
         }
             .buttonStyle(CompanionPressStyle(reduceMotion: reduceMotion))
             .contentShape(Circle())
@@ -95,6 +109,7 @@ private struct CompanionStage: View {
     let touchOffset: CGSize
     let animated: Bool
     let phaseOrigin: Date
+    let greetingPose: VoiceOrbGreetingPose
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.companionPressed) private var pressed
     var body: some View {
@@ -106,7 +121,7 @@ private struct CompanionStage: View {
                 let sway = animated ? sin(time * 0.91) : 0
                 let pressure = pressed && !reduceMotion ? 1.0 : 0.0
                 let floating = reduceMotion ? 0 : breath * 0.021 - energy * 0.014
-                let height = min(1, max(-1, -floating / 0.035))
+                let height = min(1, max(-1, -floating / 0.035 - (reduceMotion ? 0 : greetingPose.lift / 0.065)))
                 let blinkPhase = time.truncatingRemainder(dividingBy: 6.7)
                 let blink = animated ? 1 - exp(-pow((blinkPhase - 6.43) / 0.075, 2)) * 0.90 : 1
                 let gazeX = reduceMotion ? 0 : Double(touchOffset.width) / 65
@@ -119,6 +134,7 @@ private struct CompanionStage: View {
                         .opacity(reduceMotion ? 1 : 1 - height * 0.18 + pressure * 0.08)
                         .offset(y: size * 0.36)
                         .animation(reduceMotion ? nil : .interactiveSpring(response: 0.28, dampingFraction: 0.85), value: pressed)
+                        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.70, dampingFraction: 0.76), value: greetingPose)
                     lens(size: size, time: time, energy: energy, pressure: pressure, breath: breath, sway: sway, blink: blink, gazeX: gazeX, gazeY: gazeY)
                 }.frame(width: geometry.size.width, height: geometry.size.height)
             }
@@ -136,11 +152,12 @@ private struct CompanionStage: View {
                 .animation(reduceMotion ? nil : .interactiveSpring(response: 0.30, dampingFraction: 0.78), value: touchOffset)
         }
         .frame(width: size * 0.90, height: size * 0.90)
-        .scaleEffect(x: reduceMotion ? 1 : 1 + breath * 0.018 + energy * 0.055 + pressure * 0.055 + (winking ? 0.025 : 0),
-                     y: reduceMotion ? 1 : 1 - breath * 0.016 + energy * 0.085 - pressure * 0.09 - (winking ? 0.012 : 0))
-        .rotationEffect(.degrees(reduceMotion ? 0 : sway * (mode == .thinking ? 4.5 : 1.6) + Double(touchOffset.width) * 0.12))
+        .scaleEffect(x: reduceMotion ? 1 : (1 + breath * 0.018 + energy * 0.055 + pressure * 0.055 + (winking ? 0.025 : 0)) * greetingPose.scaleX,
+                     y: reduceMotion ? 1 : (1 - breath * 0.016 + energy * 0.085 - pressure * 0.09 - (winking ? 0.012 : 0)) * greetingPose.scaleY)
+        .rotationEffect(.degrees(reduceMotion ? 0 : sway * (mode == .thinking ? 4.5 : 1.6) + Double(touchOffset.width) * 0.12 + greetingPose.tilt))
         .offset(x: reduceMotion ? 0 : touchOffset.width * 0.24,
-                y: reduceMotion ? 0 : breath * size * 0.021 - energy * size * 0.014 + touchOffset.height * 0.10)
+                y: reduceMotion ? 0 : breath * size * 0.021 - energy * size * 0.014 + touchOffset.height * 0.10 + size * greetingPose.lift)
+        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.70, dampingFraction: 0.76), value: greetingPose)
         .animation(reduceMotion ? nil : .interactiveSpring(response: 0.20, dampingFraction: 0.78), value: energy)
         .animation(reduceMotion ? nil : .interactiveSpring(response: 0.32, dampingFraction: 0.67), value: winking)
         .animation(reduceMotion ? nil : .interactiveSpring(response: 0.34, dampingFraction: 0.72, blendDuration: 0.08), value: touchOffset)

@@ -6,7 +6,7 @@ import { advanceSpring, createLensRenderer, eyePath, type Spring } from './voice
 import styles from './voice-orb.module.css';
 
 export type OrbEmotion = 'calm' | 'attentive' | 'curious' | 'friendly' | 'pleased' | 'supportive';
-type VoiceOrbProps = { state: VoiceState; volume?: number; meterStore?: VoiceMeterStore; emotion?: OrbEmotion; statusDescription?: string };
+type VoiceOrbProps = { state: VoiceState; volume?: number; meterStore?: VoiceMeterStore; emotion?: OrbEmotion; statusDescription?: string; openingGreeting?: boolean };
 const expressions: Record<VoiceState, OrbEmotion> = { idle:'calm',listening:'attentive',speaking:'friendly',transcribing:'curious',thinking:'curious',paused:'calm' };
 const descriptions: Record<VoiceState,string>={idle:'Ждёт твоего ответа',listening:'Слушает тебя',speaking:'Говорит',transcribing:'Распознаёт запись',thinking:'Готовит ответ',paused:'Пауза'};
 function subscribeVisibility(onChange:()=>void) { document.addEventListener('visibilitychange',onChange);return()=>document.removeEventListener('visibilitychange',onChange); }
@@ -24,7 +24,7 @@ function expressionPulse(time:number,period:number,centre:number,radius:number){
   return distance<radius?Math.pow((1+Math.cos(distance/radius*Math.PI))*.5,2):0;
 }
 
-export const VoiceOrb=memo(function VoiceOrb({state,volume=0,meterStore,emotion,statusDescription}:VoiceOrbProps){
+export const VoiceOrb=memo(function VoiceOrb({state,volume=0,meterStore,emotion,statusDescription,openingGreeting=false}:VoiceOrbProps){
   const visible=useSyncExternalStore(subscribeVisibility,pageVisible,serverVisible);
   const reduced=useSyncExternalStore(subscribeReducedMotion,reducedMotion,serverMotion);
   const measured=useSyncExternalStore(meterStore?.subscribe??noMeter,meterStore?.getSnapshot??silentMeter,silentMeter);
@@ -33,11 +33,11 @@ export const VoiceOrb=memo(function VoiceOrb({state,volume=0,meterStore,emotion,
   const bounds=useRef<DOMRect|null>(null);
   const [inView,setInView]=useState(true),[lensReady,setLensReady]=useState(false);
   const interaction=useRef({pressed:false,winkUntil:0,gazeX:0,gazeY:0,keyboard:false,reaction:0});
-  const input=useRef({state,emotion:emotion??expressions[state],level:0,visible:true,reduced:false});
+  const input=useRef({state,emotion:emotion??expressions[state],level:0,visible:true,reduced:false,openingGreeting});
   const springs=useRef({energy:spring(),press:spring(),x:spring(),y:spring(),joy:[spring(),spring()],open:[spring(1),spring(1)],tilt:[spring(),spring()]});
   const live=state==='listening'||state==='speaking';
   const actualLevel=meterStore?measured:volume;
-  input.current={state,emotion:emotion??expressions[state],level:live&&Number.isFinite(actualLevel)?Math.max(0,Math.min(1,actualLevel)):0,visible:visible&&inView,reduced};
+  input.current={state,emotion:emotion??expressions[state],level:live&&Number.isFinite(actualLevel)?Math.max(0,Math.min(1,actualLevel)):0,visible:visible&&inView,reduced,openingGreeting};
   useEffect(()=>{
     if(!button.current||typeof IntersectionObserver==='undefined')return;
     const observer=new IntersectionObserver(([entry])=>setInView(entry.isIntersecting));observer.observe(button.current);return()=>observer.disconnect();
@@ -77,20 +77,26 @@ export const VoiceOrb=memo(function VoiceOrb({state,volume=0,meterStore,emotion,
       const interested=motion?expressionPulse(phase,17.4,8.2,1.8):0;
       const curious=reaction===3?1:interested*(value.state==='listening'||value.state==='thinking'||value.state==='transcribing'?.9:.6);
       const spontaneousJoy=motion?expressionPulse(phase,value.state==='speaking'?8.6:13.1,value.state==='speaking'?2.4:4.4,1.1)*(value.state==='listening'?.18:.76):0;
+      // One cold-opening greeting. Body and eyes move; its grounding shadow stays on the floor.
+      const hello=motion&&value.openingGreeting&&phase<3.2;
+      const helloSquash=hello?expressionPulse(phase,1000,.70,.42):0;
+      const helloLift=hello?expressionPulse(phase,1000,1.14,.58):0;
+      const helloWave=hello?Math.sin((phase-.9)*5.2)*expressionPulse(phase,1000,1.65,.88):0;
+      const helloJoy=hello?expressionPulse(phase,1000,2.10,.90):0;
       for(let i=0;i<2;i++){
         const mood=value.emotion;
         const open=(mood==='attentive'?1.10:mood==='curious'?(i===0?1.02:.64):mood==='supportive'?.78:1)+curious*(i===0?.16:-.24);
         const tilt=(mood==='curious'?(i===0?-9:10):mood==='supportive'?(i===0?-10:10):mood==='friendly'?(i===0?-4:4):0)+curious*(i===0?-13:12);
-        const joy=reaction===2?1:reaction===1?(i===1?1:.18):mood==='pleased'?1:mood==='supportive'||value.state==='thinking'||value.state==='transcribing'?0:spontaneousJoy;
+        const joy=reaction===2?1:reaction===1?(i===1?1:.18):mood==='pleased'?1:mood==='supportive'||value.state==='thinking'||value.state==='transcribing'?0:Math.max(spontaneousJoy,helloJoy);
         move(s.joy[i],joy,205,23);move(s.open[i],open,205,23);move(s.tilt[i],tilt,205,23);
         paths.current[i]?.setAttribute('d',eyePath(s.open[i].value*blink,s.joy[i].value));
         eyeElements.current[i]?.style.setProperty('transform',`rotate(${s.tilt[i].value}deg)`);
       }
       const breath=motion?Math.sin(phase*1.45):0,sway=motion?Math.sin(phase*.91):0;
-      const scaleX=1+breath*.018+s.energy.value*.055+s.press.value*.055;
-      const scaleY=1-breath*.016+s.energy.value*.085-s.press.value*.09;
-      const floating=breath*4-s.energy.value*3;
-      container!.style.transform=`translate(${s.x.value*7}px,${floating+s.y.value*3}px) rotate(${sway*(value.state==='thinking'?4.5:1.6)+s.x.value*4}deg) scale(${scaleX},${scaleY})`;
+      const scaleX=1+breath*.018+s.energy.value*.055+s.press.value*.055+helloSquash*.055-helloLift*.024;
+      const scaleY=1-breath*.016+s.energy.value*.085-s.press.value*.09-helloSquash*.065+helloLift*.04;
+      const floating=breath*4-s.energy.value*3-helloLift*12;
+      container!.style.transform=`translate(${s.x.value*7}px,${floating+s.y.value*3}px) rotate(${sway*(value.state==='thinking'?4.5:1.6)+s.x.value*4+helloWave*7}deg) scale(${scaleX},${scaleY})`;
       if(shadow.current){
         const height=Math.max(-1,Math.min(1,-floating/7));
         shadow.current.style.transform=`scale(${1+height*.07+s.press.value*.04},${1+height*.13-s.press.value*.04})`;

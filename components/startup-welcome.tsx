@@ -27,13 +27,14 @@ export function StartupWelcome({ state, onReveal, onFinished }: StartupWelcomePr
     callbacks.current.onReveal();
     if (immediate) { callbacks.current.onFinished(); return; }
     setLeaving(true);
-    timers.current.push(setTimeout(() => callbacks.current.onFinished(), 220));
+    timers.current.push(setTimeout(() => callbacks.current.onFinished(), 620));
   }, [clear]);
 
   useEffect(() => {
     const reduced = matchMedia('(prefers-reduced-motion: reduce)');
     if (document.hidden || reduced.matches || document.documentElement.dataset.input === 'keyboard') { finish(true); return; }
-    timers.current.push(setTimeout(() => finish(), 1150));
+    // Allow the greeting to settle and the short phrase to be read before Home opens.
+    timers.current.push(setTimeout(() => finish(), 3200));
     const key = (event: KeyboardEvent) => {
       // A keystroke skips this temporary layer; it must not activate hidden Home.
       event.preventDefault(); event.stopPropagation(); finish(true);
@@ -48,10 +49,10 @@ export function StartupWelcome({ state, onReveal, onFinished }: StartupWelcomePr
 
   return <div className={styles.entry} data-phase={leaving ? 'leaving' : 'hello'} data-testid="opening-greeting" onPointerDown={() => finish(true)}>
     <div className={styles.content}>
-      <div className={styles.companion} aria-hidden="true" inert><VoiceOrb state="idle" emotion="friendly" /></div>
+      <div className={styles.companion} aria-hidden="true" inert><VoiceOrb state="idle" emotion="friendly" openingGreeting /></div>
       <div className={styles.copy} role="status" aria-live="polite">
         <h1>{copy.greeting}</h1>
-        <p aria-label={copy.motivation}>{copy.motivation.split(' ').map((word, index) => <span aria-hidden="true" key={index} style={{ '--word-delay': (180 + index * 27) + 'ms' } as CSSProperties}>{word}{' '}</span>)}</p>
+        <p aria-label={copy.motivation}>{copy.motivation.split(' ').map((word, index) => <span aria-hidden="true" key={index} style={{ '--word-delay': (480 + index * 45) + 'ms' } as CSSProperties}>{word}{' '}</span>)}</p>
       </div>
       <span className={styles.wordmark} aria-hidden="true">smooth english</span>
     </div>

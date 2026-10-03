@@ -71,9 +71,9 @@ export function useHomeStagger<T extends HTMLElement>(root: RefObject<T | null>,
       || document.documentElement.dataset.input === 'keyboard' || !element.animate) return;
     const blocks = element.querySelectorAll<HTMLElement>('.page-heading, .home-main > *, .profile-column > *');
     const animations = [...blocks].map((block, index) => block.animate([
-      { opacity: 0, transform: 'translateY(10px) scale(.99)' },
+      { opacity: 0, transform: 'translateY(16px) scale(.985)' },
       { opacity: 1, transform: 'translateY(0) scale(1)' },
-    ], { duration: 300, delay: Math.min(index * 45, 225), easing: EASE_OUT, fill: 'backwards' }));
+    ], { duration: 620, delay: 120 + Math.min(index * 80, 400), easing: EASE_OUT, fill: 'backwards' }));
     const stop = () => animations.forEach(animation => animation.cancel());
     const onVisibility = () => { if (document.hidden) stop(); };
     const onPreference = () => { if (preference.matches) stop(); };
