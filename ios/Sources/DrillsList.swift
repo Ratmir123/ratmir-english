@@ -210,6 +210,6 @@ struct TierBars: View {
 private struct DrillStartStyle: ViewModifier {
     let prominent: Bool
     @ViewBuilder func body(content: Content) -> some View {
-        if prominent { content.buttonStyle(PrimaryButton()) } else { content.buttonStyle(SecondaryButton()) }
+        if prominent { content.buttonStyle(PrimaryButton(compact: true)) } else { content.buttonStyle(SecondaryButton(compact: true)) }
     }
 }

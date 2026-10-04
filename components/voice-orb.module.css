@@ -1,4 +1,0 @@
-/* Compatibility shell for the 0.4 VoiceOrb. The body, face, shadow and focus ring now live in
-   components/mascot/mascot.module.css; legacy `.voice-orb` sizes (globals.css, feature modules)
-   still size the root, and the mascot fills it (S = min(width, height)). `.orb-body` rules are obsolete. */
-.orb { flex-shrink: 0; }

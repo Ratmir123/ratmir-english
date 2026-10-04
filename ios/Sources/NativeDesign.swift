@@ -640,14 +640,16 @@ struct PressButton: ButtonStyle {
 }
 
 /// The one filled action of a screen: charcoal + lime in light, lime + dark in dark.
+/// `compact` sizes it for a row (44 pt tall, hugging its label).
 struct PrimaryButton: ButtonStyle {
+    var compact = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.body.weight(.semibold))
-            .padding(.horizontal, 22).padding(.vertical, 15)
-            .frame(maxWidth: .infinity, minHeight: 52)
+            .font(compact ? .subheadline.weight(.semibold) : .body.weight(.semibold))
+            .padding(.horizontal, compact ? 18 : 22).padding(.vertical, compact ? 10 : 15)
+            .frame(maxWidth: compact ? nil : .infinity, minHeight: compact ? 44 : 52)
             .foregroundStyle(isEnabled ? Theme.ctaLabel : Theme.inkTertiary)
             .background(isEnabled ? Theme.ctaFill : Theme.ctaDisabled, in: Capsule())
             .shadow(color: isEnabled ? Theme.cardShadow : Color.clear, radius: 8, x: 0, y: 4)
@@ -659,18 +661,30 @@ struct PrimaryButton: ButtonStyle {
 
 /// Secondary action: a quiet filled capsule (like the system bordered button). Not glass: it sits on content.
 struct SecondaryButton: ButtonStyle {
+    var compact = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.body.weight(.semibold))
-            .padding(.horizontal, 20).padding(.vertical, 14)
-            .frame(maxWidth: .infinity, minHeight: 50)
+            .font(compact ? .subheadline.weight(.semibold) : .body.weight(.semibold))
+            .padding(.horizontal, compact ? 18 : 20).padding(.vertical, compact ? 10 : 14)
+            .frame(maxWidth: compact ? nil : .infinity, minHeight: compact ? 44 : 50)
             .foregroundStyle(isEnabled ? Theme.ink : Theme.inkTertiary)
             .background(Theme.fill, in: Capsule())
             .contentShape(Capsule())
             .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
+    }
+}
+
+/// Sheet close control for the navigation bar: an xmark (iOS 26 renders it as a glass circle), so a
+/// long sheet title never truncates a text button to «От…». The spoken label keeps the verb.
+struct SheetCloseButton: View {
+    var title = "Отмена"
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) { Image(systemName: "xmark").font(.body.weight(.semibold)) }
+            .accessibilityLabel(title)
     }
 }
 

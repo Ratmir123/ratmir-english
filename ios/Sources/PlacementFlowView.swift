@@ -433,7 +433,7 @@ struct PlacementIntroView: View {
                         HStack(alignment: .top, spacing: 12) {
                             Image(systemName: FeatureLabels.sectionIcon(row.id))
                                 .frame(width: 24)
-                                .foregroundStyle(FeaturePalette.violet)
+                                .foregroundStyle(Color.primary)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(row.title).font(.subheadline.weight(.semibold))
                                 Text(row.detail).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -461,7 +461,7 @@ struct PlacementIntroView: View {
 
     private func rule(_ icon: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon).foregroundStyle(FeaturePalette.violet).frame(width: 22).accessibilityHidden(true)
+            Image(systemName: icon).foregroundStyle(.secondary).frame(width: 22).accessibilityHidden(true)
             Text(text).font(.subheadline).fixedSize(horizontal: false, vertical: true)
         }
     }

@@ -171,7 +171,7 @@ struct FactRow: View {
         case "suggested":
             HStack(spacing: 10) {
                 Button(action: onAccept) { Label("Верно", systemImage: "checkmark") }
-                    .buttonStyle(PrimaryButton()).fixedSize().disabled(busy)
+                    .buttonStyle(PrimaryButton(compact: true)).fixedSize().disabled(busy)
                     .accessibilityLabel("Верно: " + fact.text)
                 Button(action: onReject) { Label("Нет", systemImage: "xmark") }
                     .buttonStyle(QuietButton()).disabled(busy)

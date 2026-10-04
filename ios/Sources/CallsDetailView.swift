@@ -464,7 +464,7 @@ struct CallSpeakerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Позже") { dismiss() }
+                    SheetCloseButton(title: "Позже") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Подтвердить") { confirm() }
@@ -507,7 +507,7 @@ struct CallSpeakerSheet: View {
             }
         }
         .padding(16)
-        .featureGlass(radius: 24, tint: selected ? FeaturePalette.lavender : nil, interactive: true)
+        .featureGlass(radius: 24, tint: selected ? FeaturePalette.lavender.opacity(0.4) : nil, interactive: true)
     }
 
     private func labelBinding(_ speaker: CallSpeaker) -> Binding<String> {

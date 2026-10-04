@@ -419,7 +419,7 @@ legend { padding: 0; font-weight: 700; }
   position: absolute; top: 3px; bottom: 3px; left: 0; border-radius: var(--radius-pill); pointer-events: none;
   background: var(--surface-solid); box-shadow: var(--e1), inset 0 1px 0 var(--surface-glass-highlight);
   width: var(--lens-w, 0); transform: translateX(var(--lens-x, 0));
-  transition: transform var(--spring-default-ms) var(--spring-default), width var(--spring-default-ms) var(--spring-default);
+  transition: transform var(--spring-default-ms) var(--spring-default); /* segments are equal-width: width only changes on resize */
 }
 /* Dark: an opaque lens would vanish into the dark card; a light veil plus hairline keeps the choice visible. */
 :root[data-theme='dark'] .segmented > .lens { background: rgb(255 255 255 / .14); box-shadow: inset 0 0 0 1px rgb(255 255 255 / .1); }

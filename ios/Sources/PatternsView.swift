@@ -335,7 +335,7 @@ struct PatternCard: View {
                             Text("Да, это про меня")
                         }
                     }
-                    .buttonStyle(SecondaryButton()).fixedSize().disabled(busy)
+                    .buttonStyle(SecondaryButton(compact: true)).fixedSize().disabled(busy)
                 }
                 if let onDismiss {
                     Button("Не про меня", action: onDismiss).buttonStyle(QuietButton()).disabled(busy)

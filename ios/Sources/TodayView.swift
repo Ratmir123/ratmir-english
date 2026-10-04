@@ -87,12 +87,15 @@ struct RhythmDots: View {
     var body: some View {
         HStack(spacing: 0) {
             ForEach(days) { day in
+                let today = Calendar.current.isDateInToday(day.date)
                 VStack(spacing: 6) {
                     Circle()
                         .fill(day.practiced ? Theme.lime : Theme.ink.opacity(0.08))
-                        .overlay { Circle().strokeBorder(day.practiced ? Theme.limeInk.opacity(0.35) : Theme.hairline, lineWidth: 1) }
-                        .frame(width: 22, height: 22)
-                    Text(RuFormat.weekday(day.date)).font(.caption2).foregroundStyle(Theme.inkSecondary)
+                        .frame(width: 24, height: 24)
+                        .padding(3)
+                        .overlay { if today { Circle().strokeBorder(Theme.violet, lineWidth: 2) } }
+                    Text(RuFormat.weekday(day.date)).font(.caption.weight(today ? .semibold : .regular))
+                        .foregroundStyle(today ? Theme.ink : Theme.inkSecondary)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -207,15 +210,14 @@ struct TodayScreen: View {
 
     @ViewBuilder private var rhythmSection: some View {
         let days = PracticeRhythm.lastWeek(state)
+        let active = days.filter { $0.practiced }.count
         LiquidCard(padding: 18) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Ритм недели").font(TypeScale.title3).accessibilityAddTraits(.isHeader)
-                    Spacer()
-                    Text("\(days.filter { $0.practiced }.count) из 7").font(.subheadline.weight(.semibold)).monospacedDigit()
-                        .foregroundStyle(Theme.inkSecondary)
-                }
+                Text("Ритм недели").font(TypeScale.title3).accessibilityAddTraits(.isHeader)
                 RhythmDots(days: days)
+                Text(active > 0 ? RuFormat.count(active, "день", "дня", "дней") + " из 7 с практикой. Пропуск — просто пустой день."
+                                : "Первая практика появится здесь точкой. Без серий и штрафов.")
+                    .font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -245,6 +247,7 @@ private struct TodayHeader: View {
     let completedToday: Bool
     let placementFirst: Bool
     @EnvironmentObject private var client: TrainingClient
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var dateLine: String {
         let text = Date().formatted(.dateTime.weekday(.wide).day().month(.wide).locale(RuFormat.locale))
         return text.prefix(1).uppercased() + text.dropFirst()
@@ -255,21 +258,39 @@ private struct TodayHeader: View {
         return "один шаг на сегодня, остальное — по желанию."
     }
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Привет, \(client.state?.profile.name ?? "ты").")
-                    .font(TypeScale.hero).tracking(-0.6)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader)
-                Text(dateLine + " · " + tail)
-                    .font(.subheadline).foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        // Large accessibility text gets the full width: the companion moves above the greeting
+        // instead of squeezing the words into a narrow column.
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 10) {
+                    orb.frame(width: 80, height: 80)
+                    copy
+                }
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    copy
+                    Spacer(minLength: 0)
+                    orb.frame(width: 104, height: 104)
+                }
             }
-            Spacer(minLength: 0)
-            VoiceOrb(mode: .ready, level: 0, mood: completedToday ? .proud : .calm, statusDescription: "Твой собеседник")
-                .frame(width: 104, height: 104)
         }
         .padding(.top, 12)
+    }
+
+    private var copy: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Привет, \(client.state?.profile.name ?? "ты").")
+                .font(TypeScale.hero).tracking(-0.6)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text(dateLine + " · " + tail)
+                .font(.subheadline).foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var orb: some View {
+        VoiceOrb(mode: .ready, level: 0, mood: completedToday ? .proud : .calm, statusDescription: "Твой собеседник")
     }
 }
 
@@ -900,7 +921,7 @@ struct FreeTopicSheet: View {
             .navigationTitle("Свободная тема")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { SheetCloseButton { dismiss() } }
             }
         }
         .presentationDetents([.medium, .large])

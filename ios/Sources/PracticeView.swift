@@ -209,7 +209,7 @@ struct FamilyDetailSheet: View {
             .navigationTitle(family.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { SheetCloseButton { dismiss() } }
             }
         }
         .presentationDetents([.medium, .large])
