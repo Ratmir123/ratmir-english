@@ -13,7 +13,7 @@ export function RecordingEvidence({ intent, retryId }: { intent: DraftIntent; re
   if (!draft?.audioFile) return null;
   const edited = draft.originalTranscript !== undefined && draft.originalTranscript.trim() !== draft.text.trim();
   return <div className={styles.evidence} data-testid="recording-draft">
-    <div className={styles.evidenceHead}><span className="eyebrow">Твоя запись</span><span className={`chip ${edited ? 'violet' : 'lime'}`}>{edited ? 'Текст исправлен' : 'Можно отправлять'}</span></div>
+    <div className={styles.evidenceHead}><strong>Твоя запись</strong><span className={`chip ${edited ? 'violet' : 'lime'}`}>{edited ? 'Текст исправлен' : 'Можно отправлять'}</span></div>
     <p className="caption">Послушай оригинал и проверь слова. Правка расшифровки учитывается отдельно от речи.</p>
     <div className={styles.evidenceActions}>
       <button type="button" className="button small secondary" data-testid="replay-recording" disabled={voice.state === 'listening' || !!lesson.busy}

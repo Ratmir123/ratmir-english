@@ -134,9 +134,17 @@ struct PlacementResultHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(metaLine).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Text("ориентир, не сертификат").font(.caption).foregroundStyle(.secondary)
+                // Title first; the test version and date sit under it in plain case (no kicker).
+                VStack(alignment: .leading, spacing: 6) {
+                    if !result.headline.isEmpty {
+                        Text(result.headline)
+                            .font(.title2.weight(.bold))
+                            .fontDesign(.rounded)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                    }
+                    Text(metaLine + " · ориентир, не сертификат").font(.footnote).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 VoiceOrb(mode: .ready, level: 0, mood: mood, statusDescription: "Результат готов", celebrate: celebrate, interactive: true)
@@ -148,12 +156,6 @@ struct PlacementResultHeader: View {
                     Text("Общий ориентир").font(.headline)
                     Text(overallLine).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-            }
-            if !result.headline.isEmpty {
-                Text(result.headline)
-                    .font(.title2.weight(.bold))
-                    .fontDesign(.rounded)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             if let summary = result.overall?.summary, !summary.isEmpty {
                 Text(summary).font(.body).fixedSize(horizontal: false, vertical: true)
@@ -806,16 +808,22 @@ struct PlacementRetakeCard: View {
 // MARK: - Level card (Today / Progress)
 
 /// Compact placement card: start, continue, scoring, error or the measured level.
+/// `embedded` drops its own surface when a host surface (Today's «Уровень») already provides one.
 struct PlacementLevelCard: View {
     let view: PlacementView
     let onOpen: () -> Void
     let onStart: () -> Void
+    var embedded = false
 
-    var body: some View {
-        content
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .featureGlass(radius: 28)
+    @ViewBuilder var body: some View {
+        if embedded {
+            content.frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            content
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .featureGlass(radius: 28)
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -845,16 +853,12 @@ struct PlacementLevelCard: View {
     private var inProgress: some View {
         let total = max(view.sections.count, 1)
         let done = min(view.finishedSections, total)
+        let previous = view.result?.overall?.label
         return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label(view.result == nil ? "Тест уровня" : "Пересдача", systemImage: "gauge.with.dots.needle.50percent").font(.headline)
-                Spacer()
-                if let previous = view.result?.overall?.label {
-                    FeatureChip(text: "сейчас " + previous, tint: FeaturePalette.lavender)
-                }
-            }
-            Text("Пройдено \(done) из \(total) разделов" + (view.remainingMinutes > 0 ? " · осталось ≈ \(view.remainingMinutes) мин" : ""))
-                .font(.subheadline).foregroundStyle(.secondary)
+            Label(view.result == nil ? "Тест уровня" : "Пересдача", systemImage: "gauge.with.dots.needle.50percent").font(.headline)
+            Text("Пройдено \(done) из \(total) разделов" + (view.remainingMinutes > 0 ? " · осталось ≈ \(view.remainingMinutes) мин" : "")
+                 + (previous.map { " · сейчас " + $0 } ?? ""))
+                .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             FeatureProgressBar(value: Double(done) / Double(total), tint: FeaturePalette.violet,
                                accessibilityText: "Пройдено \(done) из \(total) разделов")
             Button("Продолжить тест", action: onStart).buttonStyle(PrimaryButton())
@@ -883,21 +887,23 @@ struct PlacementLevelCard: View {
         }
     }
 
+    /// Same structure as the web's level card: the overall label, its confidence and date,
+    /// six skills as labelled two-column rows, the headline.
     private func completed(_ result: PlacementResult) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             Button(action: onOpen) {
                 HStack(alignment: .center, spacing: 14) {
-                    PlacementLevelBadge(label: result.overall?.label ?? "—", size: 64)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Твой уровень").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        Text(result.headline.isEmpty ? (result.overall?.summary ?? "Профиль по навыкам") : result.headline)
-                            .font(.subheadline.weight(.semibold))
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(3)
+                    Text(result.overall?.label ?? "—")
+                        .font(.system(.largeTitle, design: .rounded).weight(.heavy))
+                        .monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Общий ориентир").font(.subheadline.weight(.semibold))
+                        Text(overallMeta(result)).font(.footnote).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
-                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                 }
                 .contentShape(Rectangle())
             }
@@ -905,22 +911,36 @@ struct PlacementLevelCard: View {
             .foregroundStyle(Color.primary)
             .accessibilityHint("Открывает профиль по навыкам")
             skillGrid(result)
+            if !result.headline.isEmpty {
+                Text(result.headline).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if let date = FeatureFormat.date(view.retakeAvailableAt), date <= Date() {
                 Button("Пересдать тест", action: onStart).buttonStyle(SecondaryButton())
             }
         }
     }
 
+    private func overallMeta(_ result: PlacementResult) -> String {
+        var parts = ["уверенность " + FeatureLabels.confidence(result.overall?.confidence)]
+        if let date = FeatureFormat.longDate(result.completedAt) { parts.append(date) }
+        return parts.joined(separator: " · ")
+    }
+
     private func skillGrid(_ result: PlacementResult) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 20, alignment: .top), GridItem(.flexible(), spacing: 20, alignment: .top)],
+                  alignment: .leading, spacing: 12) {
             ForEach(result.skills) { skill in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(Self.shortName(skill.id)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    Text(skill.measured ? (skill.label ?? "—") : "—")
-                        .font(.subheadline.weight(.bold))
-                        .fontDesign(.rounded)
-                    FeatureProgressBar(value: (PlacementCEFR.position(skill.label) ?? 0) / 6.5,
-                                       tint: skill.measured ? FeaturePalette.violet : FeaturePalette.track, height: 4,
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(Self.shortName(skill.id)).font(.footnote).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 4)
+                        Text(skill.measured ? (skill.label ?? "—") : "нет")
+                            .font(.footnote.weight(.bold)).monospacedDigit()
+                            .foregroundStyle(skill.measured ? Color.primary : Color.secondary)
+                    }
+                    FeatureProgressBar(value: skill.measured ? max(0.06, (PlacementCEFR.position(skill.label) ?? 0) / 6.5) : 0,
+                                       tint: FeaturePalette.violet, height: 4,
                                        accessibilityText: FeatureLabels.skill(skill.id) + ": " + (skill.measured ? (skill.label ?? "—") : "не измерено"))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -933,10 +953,10 @@ struct PlacementLevelCard: View {
         switch id {
         case "listening": return "Слух"
         case "reading": return "Чтение"
-        case "grammar": return "Фразы"
+        case "grammar": return "Грамматика"
         case "vocabulary": return "Слова"
         case "speaking": return "Речь"
-        case "interaction": return "Диалог"
+        case "interaction": return "Разговор"
         default: return FeatureLabels.skill(id)
         }
     }

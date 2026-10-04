@@ -26,7 +26,7 @@ export function FinishDialog({ intent, textActivity, hasDraft, onCancel, onConfi
     : intent === 'finish' ? `Твои ответы сохранятся, потом будет разбор. ${textActivity ? 'Добавить ответы в это задание' : 'Продолжить этот разговор'} уже не получится.`
       : intent === 'defer' ? 'Сохраним занятие. К новой попытке вернёшься из «Незаконченных» на главной — её успех пока не засчитан.'
         : 'Сохраним разбор и твои попытки. Опыт начисляется только за подтверждённое.';
-  return <Sheet open onClose={onCancel} title={title} eyebrow="Завершение" testId="finish-dialog"
+  return <Sheet open onClose={onCancel} title={title} testId="finish-dialog"
     actions={<>
       {hasDraft && intent === 'finish' && <button type="button" className="button primary large block" data-testid="confirm-send-finish" onClick={once(onSendAndFinish)}>Отправить и закончить<CheckIcon size={18} /></button>}
       {hasDraft && <button type="button" className={`button ${intent === 'finish' ? 'secondary' : 'primary'} large block`} data-testid="confirm-discard-finish" onClick={once(onDiscardAndConfirm)}>
@@ -48,7 +48,7 @@ export function EditConfirmDialog({ open, disputed, retries, completed, onCancel
     retries > 0 ? `улучшенные попытки (${retries}) удалятся` : null,
     completed ? 'отметка «завершено» снимется, опыт за занятие пересчитается' : null,
   ].filter(Boolean).join('; ');
-  return <Sheet open={open} onClose={onCancel} title={disputed ? 'Исключить реплику как спорную?' : 'Пересчитать разбор?'} eyebrow={reanalyse ? 'Повторный разбор' : 'Исправление расшифровки'} testId="edit-confirm"
+  return <Sheet open={open} onClose={onCancel} title={disputed ? 'Исключить реплику как спорную?' : 'Пересчитать разбор?'} subtitle={reanalyse ? 'Повторный разбор' : 'Исправление расшифровки'} testId="edit-confirm"
     actions={<>
       <button type="button" className="button primary large block" data-testid="confirm-edit" onClick={onConfirm}>{reanalyse ? 'Пересчитать' : disputed ? 'Исключить и пересчитать' : 'Сохранить и пересчитать'}</button>
       <button type="button" className="button secondary block" autoFocus onClick={onCancel}>{CTA.back}</button>

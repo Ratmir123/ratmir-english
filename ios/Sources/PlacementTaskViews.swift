@@ -307,10 +307,8 @@ struct PlacementSpeakingView: View {
     private var promptCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             if task.followUp || task.readAloud {
-                HStack(spacing: 8) {
-                    if task.followUp { FeatureChip(text: "Без подготовки", icon: "bolt.fill", tint: FeaturePalette.pink) }
-                    if task.readAloud { FeatureChip(text: "Прочитай вслух", icon: "text.quote", tint: FeaturePalette.cyan) }
-                }
+                Text([task.followUp ? "Без подготовки" : "", task.readAloud ? "Прочитай вслух" : ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
             }
             if !task.instruction.isEmpty {
                 Text(task.instruction)
@@ -716,7 +714,7 @@ struct PlacementVoicePanel: View {
                 .font(.system(size: 30, weight: .semibold))
                 .foregroundStyle(FeaturePalette.violet)
                 .frame(width: 76, height: 76)
-                .featureGlass(radius: 38, tint: FeaturePalette.lavender)
+                .background(FeaturePalette.lavender.opacity(0.35), in: Circle())
                 .accessibilityHidden(true)
             Button(startTitle, action: actions.start)
                 .buttonStyle(PrimaryButton())

@@ -5,7 +5,9 @@
 import { memo, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { BODY_RADIUS, DARK, TOUCH } from '@/lib/mascot/constants';
 import { STATE_LABELS, type MascotEmotion, type MascotState } from '@/lib/mascot/emotions';
+import { MASCOT_PALETTE, type MascotPaletteSpec } from '@/lib/mascot/palette';
 import { MascotPhysics, type MascotFrame, type Point } from '@/lib/mascot/physics';
+import { SHADOW, createShadowPose, poolFill, shadowFill, shadowPose, type ShadowLayer, type ShadowLayerPose } from '@/lib/mascot/shadow';
 import { fireConfetti } from './confetti';
 import { FaceView, MascotFace, createFaceRefs, faceStrings } from './face-svg';
 import { mascotRegistry, type MascotContender } from './registry';
@@ -57,6 +59,9 @@ export interface MascotProps {
   exclusive?: boolean;
   /** Always a static pose rendered through a shared WebGL context (thumbnails, galleries). */
   still?: boolean;
+  /** Body material and face colours (lib/mascot/palette). The app ships MASCOT_PALETTE; the lab compares presets.
+   * Pass a stable object: a new one re-binds the renderer. */
+  palette?: MascotPaletteSpec;
   handleRef?: Ref<MascotHandle>;
   seed?: number;
   className?: string;
@@ -64,7 +69,38 @@ export interface MascotProps {
 }
 
 const n2 = (value: number) => Math.round(value * 100) / 100;
+const n3 = (value: number) => Math.round(value * 1000) / 1000;
 const n4 = (value: number) => Math.round(value * 10000) / 10000;
+// Floor shadow geometry and theme fills come from lib/mascot/shadow (one source with the iPhone); CSS picks the fill by
+// data-dark. The palette adds its glass colours to the floor and styles the no-WebGL fallback. Built once per palette.
+const shadowStyle = (layer: ShadowLayer, palette: MascotPaletteSpec) => ({
+  top: `${n4(SHADOW.floorY * 100)}%`, width: `${n4(SHADOW[layer].width * 100)}%`, height: `${n4(SHADOW[layer].height * 100)}%`,
+  opacity: SHADOW[layer].rest,
+  '--shadow-light': shadowFill(layer, 'light', palette.floor), '--shadow-dark': shadowFill(layer, 'dark', palette.floor),
+}) as CSSProperties;
+const poolStyle = (palette: MascotPaletteSpec) => ({
+  top: `${n4((SHADOW.floorY + SHADOW.pool.offsetY) * 100)}%`, width: `${n4(SHADOW.pool.width * 100)}%`, height: `${n4(SHADOW.pool.height * 100)}%`,
+  opacity: SHADOW.ambient.rest,
+  '--shadow-light': poolFill('light', palette.floor), '--shadow-dark': poolFill('dark', palette.floor),
+}) as CSSProperties;
+const paletteStyles = new WeakMap<MascotPaletteSpec, { contact: CSSProperties; ambient: CSSProperties; pool: CSSProperties; fallback: CSSProperties }>();
+function stylesFor(palette: MascotPaletteSpec) {
+  let entry = paletteStyles.get(palette);
+  if (!entry) {
+    const { background, boxShadow } = palette.fallback;
+    entry = { contact: shadowStyle('contact', palette), ambient: shadowStyle('ambient', palette), pool: poolStyle(palette), fallback: { background, boxShadow } };
+    paletteStyles.set(palette, entry);
+  }
+  return entry;
+}
+/** Writes one shadow layer; the blur filter is only touched when its rounded value changes. Returns that value. */
+function placeShadow(element: HTMLElement, layer: ShadowLayerPose, lastBlur: number) {
+  element.style.transform = `translate(${n2(layer.x)}px,0) translate(-50%,-50%) scale(${n4(layer.scaleX)},${n4(layer.scaleY)})`;
+  element.style.opacity = String(n3(layer.opacity));
+  const blur = Math.round(layer.blur * 10) / 10;
+  if (blur !== lastBlur) element.style.filter = `blur(${blur}px)`;
+  return blur;
+}
 const level = (store?: MascotLevelStore) => {
   if (!store) return 0;
   const value = Number(store.getSnapshot());
@@ -74,7 +110,7 @@ const level = (store?: MascotLevelStore) => {
 interface Control { sync(): void; claim(): void; celebrate(emotion?: MascotEmotion): void; greet(): void; theme(): void; resize(): void }
 
 export const Mascot = memo(function Mascot(props: MascotProps) {
-  const { state = 'idle', emotion, size, interactive = true, statusDescription, celebrate, greeting = false, theme = 'auto', still = false, exclusive = true, className, style } = props;
+  const { state = 'idle', emotion, size, interactive = true, statusDescription, celebrate, greeting = false, theme = 'auto', still = false, exclusive = true, palette = MASCOT_PALETTE, className, style } = props;
   const uid = 'm' + useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const [physics] = useState(() => new MascotPhysics({ size: size && size > 0 ? size : 240, state, emotion: emotion ?? null, seed: props.seed ?? (Math.random() * 4294967296) >>> 0 }));
   const [faceRefs] = useState(createFaceRefs);
@@ -82,7 +118,9 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
   const rootRef = useRef<HTMLButtonElement & HTMLDivElement>(null);
   const stageRef = useRef<HTMLSpanElement>(null);
   const bodyRef = useRef<HTMLSpanElement>(null);
-  const shadowRef = useRef<HTMLSpanElement>(null);
+  const contactRef = useRef<HTMLSpanElement>(null);
+  const ambientRef = useRef<HTMLSpanElement>(null);
+  const poolRef = useRef<HTMLSpanElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const live = useRef(props);
   live.current = props;
@@ -97,9 +135,12 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
   }), [physics]);
 
   useLayoutEffect(() => {
-    const root = rootRef.current, stage = stageRef.current, body = bodyRef.current, shadow = shadowRef.current, canvas = canvasRef.current;
-    if (!root || !stage || !body || !shadow || !canvas) return;
-    const face = new FaceView(faceRefs);
+    const root = rootRef.current, stage = stageRef.current, body = bodyRef.current, canvas = canvasRef.current;
+    const contact = contactRef.current, ambient = ambientRef.current, pool = poolRef.current;
+    if (!root || !stage || !body || !contact || !ambient || !pool || !canvas) return;
+    const face = new FaceView(faceRefs, palette.face.eye);
+    const shade = createShadowPose();
+    let contactBlur = -1, ambientBlur = -1, poolBlur = -1;
     const point: Point = { x: 0, y: 0 }, gaze: Point = { x: 0, y: 0 };
     const input: MascotRenderInput = { displacement: physics.frame.displacement, time: 0, energy: 0, gazeX: 0, gazeY: 0, dark: 0, tint: physics.frame.tint, tintAmount: 0 };
     const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -120,12 +161,14 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
       if (!side) return;
       const bottom = BODY_RADIUS * side / 2; // squash is anchored at the body's floor contact
       body!.style.transform = `translate3d(${n2(frame.x)}px,${n2(frame.y)}px,0) rotate(${n2(frame.rotation)}deg) translateY(${n2(bottom)}px) scale(${n4(frame.scaleX)},${n4(frame.scaleY)}) translateY(${n2(-bottom)}px)`;
-      shadow!.style.transform = `translate(-50%,-50%) scale(${n4(frame.shadowScale * (1 + 0.45 * frame.squash))},${n4(frame.shadowScale)})`;
-      shadow!.style.opacity = String(n2(frame.shadowOpacity));
+      shadowPose(frame, side, shade);
+      contactBlur = placeShadow(contact!, shade.contact, contactBlur);
+      ambientBlur = placeShadow(ambient!, shade.ambient, ambientBlur);
+      poolBlur = placeShadow(pool!, shade.ambient, poolBlur); // the light pool rides the ambient pose (follows, spreads, fades)
       input.time = staticPose ? 0 : frame.time;
       input.energy = frame.energy; input.gazeX = frame.gazeX; input.gazeY = frame.gazeY; input.dark = dark; input.tintAmount = frame.tintAmount;
       if (renderer) renderer.draw(input);
-      else if (still && root!.dataset.lens !== 'none' && !renderStill(canvas!, side, input)) root!.dataset.lens = 'none';
+      else if (still && root!.dataset.lens !== 'none' && !renderStill(canvas!, side, input, 2, palette)) root!.dataset.lens = 'none';
       face.update(frame);
       if (frame.emotion !== shownEmotion) {
         shownEmotion = frame.emotion;
@@ -256,7 +299,7 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
     function onLost(event: Event) { event.preventDefault(); renderer = null; root!.dataset.lens = 'none'; afterInput(); }
     function onRestored() {
       if (still) return;
-      renderer = createMascotRenderer(canvas!);
+      renderer = createMascotRenderer(canvas!, 2, palette);
       root!.dataset.lens = renderer ? 'live' : 'none';
       if (renderer && side) renderer.resize(side);
       afterInput();
@@ -264,7 +307,7 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
 
     if (still) root.dataset.lens = 'still';
     else {
-      renderer = createMascotRenderer(canvas);
+      renderer = createMascotRenderer(canvas, 2, palette);
       root.dataset.lens = renderer ? 'live' : 'none';
     }
     darkTarget = dark = resolveDark();
@@ -364,7 +407,7 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
     };
     // `state` is read through `live` after mount; the effect only re-binds for structural changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [physics, faceRefs, still, exclusive, interactive]);
+  }, [physics, faceRefs, still, exclusive, interactive, palette]);
 
   useEffect(() => { control.current?.sync(); }, [state, emotion]);
   useEffect(() => { control.current?.theme(); }, [theme]);
@@ -384,12 +427,15 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
 
   const label = `Твой собеседник. ${statusDescription ?? STATE_LABELS[state] ?? ''}`.trim();
   const rootStyle = size && size > 0 ? { ...style, width: size, height: size, '--mascot-size': `${size}px` } as CSSProperties : style;
+  const look = stylesFor(palette);
   const content = <span ref={stageRef} className={styles.stage}>
-    <span ref={shadowRef} className={styles.shadow} />
+    <span ref={poolRef} className={styles.shadow} style={look.pool} />
+    <span ref={ambientRef} className={styles.shadow} style={look.ambient} />
+    <span ref={contactRef} className={styles.shadow} style={look.contact} />
     <span ref={bodyRef} className={styles.body}>
-      <span className={styles.fallback} />
-      <canvas key={still ? 'still' : 'live'} ref={canvasRef} className={styles.canvas} />
-      <MascotFace uid={uid} refs={faceRefs} strings={initial.face} blush={initial.blush} className={styles.face} />
+      <span className={styles.fallback} style={look.fallback} />
+      <canvas key={still ? `still-${palette.label}` : `live-${palette.label}`} ref={canvasRef} className={styles.canvas} />
+      <MascotFace uid={uid} refs={faceRefs} strings={initial.face} blush={initial.blush} colors={palette.face} className={styles.face} />
     </span>
   </span>;
   const shared = {

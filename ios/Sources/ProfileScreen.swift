@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// «Профиль»: who you are, what the coach knows, voice, reminders, limits, data and version.
+/// «Профиль»: a native inset-grouped list (who you are, what the coach knows, voice, reminders,
+/// coach and limits, data, version). Rows sit on the solid card colour; no glass on content.
 struct ProfileScreen: View {
     @EnvironmentObject private var client: TrainingClient
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -13,19 +14,18 @@ struct ProfileScreen: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    profileCard
-                    factsSection
-                    voiceCard
-                    remindersCard
-                    limitsCard
-                    dataCard
-                    aboutCard
-                }
-                .padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 32)
-                .frame(maxWidth: 680).frame(maxWidth: .infinity)
+            List {
+                profileSection
+                factsSection
+                voiceSection
+                remindersSection
+                limitsSection
+                dataSection
+                aboutSection
             }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .textCase(nil)
             .modifier(LiquidCanvas())
             .navigationTitle("Профиль")
             .navigationBarTitleDisplayMode(.large)
@@ -72,173 +72,199 @@ struct ProfileScreen: View {
         Binding(get: { reminderToDelete != nil }, set: { if !$0 { reminderToDelete = nil } })
     }
 
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
+    }
+
     // MARK: Profile
 
-    private var profileCard: some View {
+    @ViewBuilder private var profileSection: some View {
         let profile = client.state?.profile
-        return LiquidCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .center, spacing: 14) {
-                    VoiceOrb(mode: .ready, level: 0, mood: .happy, statusDescription: "Твой собеседник", interactive: false)
-                        .frame(width: 64, height: 64)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(profile?.name ?? "Профиль").font(TypeScale.title2)
-                        Text("Практика \(RuFormat.minutes(profile?.dailyMinutes ?? 15)) в день")
-                            .font(.subheadline).foregroundStyle(Theme.inkSecondary)
-                    }
-                    Spacer(minLength: 0)
+        Section {
+            HStack(alignment: .center, spacing: 14) {
+                VoiceOrb(mode: .ready, level: 0, mood: .happy, statusDescription: "Твой собеседник", interactive: false)
+                    .frame(width: 60, height: 60)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(profile?.name ?? "Профиль").font(TypeScale.title2)
+                    Text("Практика \(RuFormat.minutes(profile?.dailyMinutes ?? 15)) в день")
+                        .font(.subheadline).foregroundStyle(Theme.inkSecondary)
                 }
-                if let goals = profile?.goals, !goals.isEmpty {
-                    profileLine("Цели", goals)
-                }
-                if let work = profile?.professionalContext, !work.isEmpty {
-                    profileLine("Работа", work)
-                }
-                if let relocation = profile?.relocation, !relocation.isEmpty {
-                    profileLine("Переезд", relocation)
-                }
-                if let interests = profile?.interests, !interests.isEmpty {
-                    profileLine("Интересы", interests.joined(separator: ", "))
-                }
-                Button { showEditor = true } label: {
-                    Label("Изменить профиль", systemImage: "pencil")
-                }
-                .buttonStyle(QuietButton())
-                .disabled(profile == nil)
+                Spacer(minLength: 0)
             }
+            .padding(.vertical, 4)
+            if let goals = profile?.goals, !goals.isEmpty { profileLine("Цели", goals) }
+            if let work = profile?.professionalContext, !work.isEmpty { profileLine("Работа", work) }
+            if let relocation = profile?.relocation, !relocation.isEmpty { profileLine("Переезд", relocation) }
+            if let interests = profile?.interests, !interests.isEmpty { profileLine("Интересы", interests.joined(separator: ", ")) }
+            Button { showEditor = true } label: {
+                Label("Изменить профиль", systemImage: "pencil")
+            }
+            .disabled(profile == nil)
         }
+        .listRowBackground(Theme.solid)
     }
 
     private func profileLine(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            InputLabel(title: title)
-            Text(value).font(.subheadline).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            Text(title).font(.footnote).foregroundStyle(Theme.inkSecondary)
+            Text(value).font(.body).lineLimit(3).fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
     }
 
+    /// The playbook lives on «Созвоны»; here it is one row (no duplicated block).
     @ViewBuilder private var factsSection: some View {
         if let facts = client.state?.profileFacts {
-            VStack(alignment: .leading, spacing: 10) {
-                LiquidSectionHeader(title: "Что я знаю о тебе", systemImage: "person.text.rectangle")
+            let suggested = facts.filter { $0.status == "suggested" }.count
+            let accepted = facts.filter { $0.status == "accepted" }.count
+            Section {
+                NavigationLink {
+                    FactsView(facts: facts)
+                } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Факты о тебе").font(.body)
+                            Text(suggested > 0
+                                 ? FeatureFormat.count(suggested, "новое предложение", "новых предложения", "новых предложений") + " — проверь"
+                                 : FeatureFormat.count(accepted, "факт", "факта", "фактов") + " в плейбуке")
+                                .font(.footnote).foregroundStyle(Theme.inkSecondary)
+                        }
+                        Spacer(minLength: 8)
+                        if suggested > 0 {
+                            Circle().fill(Theme.lime).overlay { Circle().strokeBorder(Theme.limeInk, lineWidth: 1) }
+                                .frame(width: 9, height: 9).accessibilityHidden(true)
+                        }
+                    }
+                }
+            } header: {
+                sectionHeader("Что я знаю о тебе")
+            } footer: {
                 Text("Факты из твоих созвонов. Принятые помогают собеседнику и разбору.")
-                    .font(.footnote).foregroundStyle(Theme.inkSecondary)
-                FactsView(facts: facts, embedded: true)
             }
+            .listRowBackground(Theme.solid)
         }
     }
 
     // MARK: Voice and limits
 
-    private var voiceCard: some View {
-        LiquidCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Label("Голос собеседника", systemImage: "speaker.wave.2").font(.headline)
-                    Spacer()
-                    StatusPill(title: client.status?.audio.configured == true ? "Включён" : "Не подключён",
-                               color: client.status?.audio.configured == true ? Theme.lime : Theme.warning)
-                }
-                Text(client.status?.audio.configured == true
-                     ? "Реплики звучат автоматически. Звук играет даже в беззвучном режиме — это учебное приложение."
-                     : "Голос подключается на компьютере: Настройки → OpenAI API-ключ. После этого потяни экран вниз.")
-                    .font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
-                if let usage = client.state?.audioUsage {
-                    Divider().opacity(0.5)
+    private var voiceSection: some View {
+        Section {
+            HStack {
+                Text("Голос собеседника")
+                Spacer()
+                StatusPill(title: client.status?.audio.configured == true ? "Включён" : "Не подключён",
+                           color: client.status?.audio.configured == true ? Theme.lime : Theme.warning)
+            }
+            if let usage = client.state?.audioUsage {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(usage.estimated ? "Оценка расходов" : "Расходы на голос").font(.caption).foregroundStyle(Theme.inkSecondary)
+                        Text(usage.estimated ? "Оценка расходов" : "Расходы на голос")
                         Spacer()
-                        Text(usage.usedUsd.formatted(.currency(code: "USD").locale(RuFormat.locale))).font(.subheadline.weight(.semibold)).monospacedDigit()
-                        Text("из " + usage.budgetUsd.formatted(.currency(code: "USD").locale(RuFormat.locale))).font(.caption).foregroundStyle(Theme.inkSecondary)
+                        Text(usage.usedUsd.formatted(.currency(code: "USD").locale(RuFormat.locale))).font(.body.weight(.semibold)).monospacedDigit()
+                        Text("из " + usage.budgetUsd.formatted(.currency(code: "USD").locale(RuFormat.locale))).font(.footnote).foregroundStyle(Theme.inkSecondary)
                     }
                     Text("Записано \(usage.recordedMinutes.formatted(.number.precision(.fractionLength(1)).locale(RuFormat.locale))) мин. Итоговый счёт — у OpenAI.")
-                        .font(.caption).foregroundStyle(Theme.inkSecondary)
+                        .font(.footnote).foregroundStyle(Theme.inkSecondary)
                 }
+                .padding(.vertical, 2)
             }
+        } header: {
+            sectionHeader("Голос")
+        } footer: {
+            Text(client.status?.audio.configured == true
+                 ? "Реплики звучат автоматически. Звук играет даже в беззвучном режиме — это учебное приложение."
+                 : "Голос подключается на компьютере: Настройки → OpenAI API-ключ. После этого потяни экран вниз.")
         }
+        .listRowBackground(Theme.solid)
     }
 
-    private var limitsCard: some View {
-        LiquidCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        InputLabel(title: "Тренер")
-                        Text(client.status?.brain.model ?? "GPT-6.1 Sol").font(.headline)
+    private var limitsSection: some View {
+        Section {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(client.status?.brain.model ?? "GPT-6.1 Sol")
+                    if let message = client.status?.brain.error, client.status?.brain.verified != true {
+                        Text(message).font(.footnote).foregroundStyle(Theme.inkSecondary)
                     }
-                    Spacer()
-                    StatusPill(title: client.status?.brain.verified == true ? "На связи" : client.status == nil ? "Проверяем" : "Нет связи",
-                               color: client.status?.brain.verified == true ? Theme.lime : Theme.warning)
                 }
-                if let message = client.status?.brain.error, client.status?.brain.verified != true {
-                    Text(message).font(.caption).foregroundStyle(Theme.inkSecondary)
-                }
-                Divider().opacity(0.5)
-                QuotaSection()
+                Spacer()
+                StatusPill(title: client.status?.brain.verified == true ? "На связи" : client.status == nil ? "Проверяем" : "Нет связи",
+                           color: client.status?.brain.verified == true ? Theme.lime : Theme.warning)
             }
+            QuotaSection()
+                .padding(.vertical, 4)
+        } header: {
+            sectionHeader("Тренер и лимиты")
         }
+        .listRowBackground(Theme.solid)
     }
 
     // MARK: Reminders
 
-    private var remindersCard: some View {
-        LiquidCard {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Label("Время для практики", systemImage: "bell").font(.headline)
-                    Spacer()
-                    if client.reminderBusy { ProgressView().tint(Theme.violet) }
-                }
-                reminderPermissionNote
-                if client.reminders.isEmpty {
-                    Text("Выбери одно или несколько удобных времён. Напоминания приходят по местному времени этого iPhone.")
-                        .font(.footnote).foregroundStyle(Theme.inkSecondary)
-                }
-                ForEach(client.reminders) { reminder in
-                    reminderRow(reminder)
-                    if reminder.id != client.reminders.last?.id { Divider().opacity(0.45) }
-                }
-                Button { reminderEditor = ReminderEditorSelection(reminder: nil) } label: {
-                    Label("Добавить время", systemImage: "plus").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryButton())
-                .disabled(client.reminderBusy || client.reminders.count >= 12)
-                if client.reminders.count >= 12 {
-                    Text("Можно сохранить до 12 времён. Удали одно, чтобы добавить новое.").font(.caption).foregroundStyle(Theme.inkSecondary)
-                }
+    private var remindersSection: some View {
+        Section {
+            reminderPermissionNote
+            ForEach(client.reminders) { reminder in
+                reminderRow(reminder)
+            }
+            Button { reminderEditor = ReminderEditorSelection(reminder: nil) } label: {
+                Label("Добавить время", systemImage: "plus")
+            }
+            .disabled(client.reminderBusy || client.reminders.count >= 12)
+        } header: {
+            HStack {
+                sectionHeader("Время для практики")
+                Spacer()
+                if client.reminderBusy { ProgressView().tint(Theme.violet) }
+            }
+        } footer: {
+            if client.reminders.count >= 12 {
+                Text("Можно сохранить до 12 времён. Удали одно, чтобы добавить новое.")
+            } else if client.reminders.isEmpty {
+                Text("Выбери одно или несколько удобных времён. Напоминания приходят по местному времени этого iPhone.")
             }
         }
+        .listRowBackground(Theme.solid)
     }
 
     @ViewBuilder private var reminderPermissionNote: some View {
         if client.notificationState == "denied" {
-            Text("Уведомления выключены в iPhone. Твои времена сохранены.")
-                .font(.footnote).foregroundStyle(Theme.inkSecondary)
-            Button { client.openSystemSettings() } label: { Label("Разрешить уведомления", systemImage: "arrow.up.right") }
-                .buttonStyle(SecondaryButton())
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Уведомления выключены в iPhone. Твои времена сохранены.")
+                    .font(.footnote).foregroundStyle(Theme.inkSecondary)
+                Button { client.openSystemSettings() } label: { Label("Разрешить уведомления", systemImage: "arrow.up.right") }
+                    .buttonStyle(QuietButton())
+            }
+            .padding(.vertical, 4)
         } else if client.notificationState == "unavailable" {
-            Text("iPhone не передал состояние уведомлений. Попробуй открыть настройки приложения.")
-                .font(.footnote).foregroundStyle(Theme.inkSecondary)
-            Button { client.openSystemSettings() } label: { Label("Настройки iPhone", systemImage: "arrow.up.right") }
-                .buttonStyle(QuietButton())
+            VStack(alignment: .leading, spacing: 10) {
+                Text("iPhone не передал состояние уведомлений. Попробуй открыть настройки приложения.")
+                    .font(.footnote).foregroundStyle(Theme.inkSecondary)
+                Button { client.openSystemSettings() } label: { Label("Настройки iPhone", systemImage: "arrow.up.right") }
+                    .buttonStyle(QuietButton())
+            }
+            .padding(.vertical, 4)
         } else if client.notificationState == "provisional" {
-            Text("Разрешена тихая доставка. Чтобы видеть баннеры, включи их в настройках iPhone.")
-                .font(.footnote).foregroundStyle(Theme.inkSecondary)
-            Button { client.openSystemSettings() } label: { Label("Настройки iPhone", systemImage: "arrow.up.right") }
-                .buttonStyle(QuietButton())
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Разрешена тихая доставка. Чтобы видеть баннеры, включи их в настройках iPhone.")
+                    .font(.footnote).foregroundStyle(Theme.inkSecondary)
+                Button { client.openSystemSettings() } label: { Label("Настройки iPhone", systemImage: "arrow.up.right") }
+                    .buttonStyle(QuietButton())
+            }
+            .padding(.vertical, 4)
         }
     }
 
     private func reminderRow(_ reminder: PracticeReminder) -> some View {
         HStack(spacing: 12) {
             Button { reminderEditor = ReminderEditorSelection(reminder: reminder) } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(reminder.timeLabel).font(TypeScale.stat)
-                        Image(systemName: "pencil").font(.caption.weight(.medium)).foregroundStyle(Theme.inkSecondary)
-                    }
-                    Text(reminder.enabled ? "Каждый день" : "На паузе").font(.caption).foregroundStyle(Theme.inkSecondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(reminder.timeLabel).font(TypeScale.stat)
+                    Text(reminder.enabled ? "Каждый день" : "На паузе").font(.footnote).foregroundStyle(Theme.inkSecondary)
                 }
                 .foregroundStyle(Theme.ink).frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(PressButton())
             .accessibilityLabel("Изменить напоминание в " + reminder.timeLabel)
@@ -247,7 +273,7 @@ struct ProfileScreen: View {
             }))
             .labelsHidden().tint(Theme.violet).fixedSize()
             Button { reminderToDelete = reminder } label: { Image(systemName: "trash").font(.subheadline) }
-                .buttonStyle(LiquidIconButton(size: 44))
+                .buttonStyle(SoftIconButton(size: 40))
                 .accessibilityLabel("Удалить напоминание в " + reminder.timeLabel)
         }
         .disabled(client.reminderBusy)
@@ -255,54 +281,53 @@ struct ProfileScreen: View {
 
     // MARK: Data, account, about
 
-    private var dataCard: some View {
-        LiquidCard {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Данные", systemImage: "externaldrive").font(.headline)
-                Text("Практика хранится на твоём сервере. Можно выгрузить копию или начать с чистого листа.")
-                    .font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
-                if let exportURL {
-                    ShareLink(item: exportURL) {
-                        Label("Поделиться файлом", systemImage: "square.and.arrow.up")
-                    }
-                    .buttonStyle(SecondaryButton())
-                } else {
-                    Button { Task { exportURL = await client.exportData() } } label: {
-                        Label(client.busy && client.operationStage == "Готовлю файл с данными" ? "Готовлю файл…" : "Выгрузить данные", systemImage: "arrow.down.doc")
-                    }
-                    .buttonStyle(SecondaryButton())
-                    .disabled(client.busy)
+    private var dataSection: some View {
+        Section {
+            if let exportURL {
+                ShareLink(item: exportURL) {
+                    Label("Поделиться файлом", systemImage: "square.and.arrow.up")
                 }
-                Button { showReset = true } label: { Label("Удалить всю практику", systemImage: "trash") }
-                    .buttonStyle(DestructiveQuietButton())
-                    .disabled(client.busy || client.recording)
-                Divider().opacity(0.5)
-                VStack(alignment: .leading, spacing: 4) {
-                    InputLabel(title: "Сервер")
-                    Text(client.server.isEmpty ? "Не указан" : client.server).font(.footnote).foregroundStyle(Theme.inkSecondary)
-                        .lineLimit(1).truncationMode(.middle)
+            } else {
+                Button { Task { exportURL = await client.exportData() } } label: {
+                    Label(client.busy && client.operationStage == "Готовлю файл с данными" ? "Готовлю файл…" : "Выгрузить данные", systemImage: "arrow.down.doc")
                 }
-                Button { confirmSignOut = true } label: { Label("Выйти на этом iPhone", systemImage: "rectangle.portrait.and.arrow.right") }
-                    .buttonStyle(QuietButton())
-                    .disabled(client.busy || client.recording)
+                .disabled(client.busy)
             }
+            Button(role: .destructive) { showReset = true } label: { Label("Удалить всю практику", systemImage: "trash") }
+                .foregroundStyle(Theme.danger)
+                .disabled(client.busy || client.recording)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Сервер").font(.footnote).foregroundStyle(Theme.inkSecondary)
+                Text(client.server.isEmpty ? "Не указан" : client.server).font(.body)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            .accessibilityElement(children: .combine)
+            Button { confirmSignOut = true } label: { Label("Выйти на этом iPhone", systemImage: "rectangle.portrait.and.arrow.right") }
+                .disabled(client.busy || client.recording)
+        } header: {
+            sectionHeader("Данные")
+        } footer: {
+            Text("Практика хранится на твоём сервере. Можно выгрузить копию или начать с чистого листа.")
         }
+        .listRowBackground(Theme.solid)
     }
 
-    private var aboutCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+    private var aboutSection: some View {
+        Section {
+            HStack(spacing: 12) {
                 BrandMark(size: 34)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(AppVersion.display).font(.subheadline.weight(.semibold))
                     if let server = client.status?.app?.version ?? client.state?.app?.version, !server.isEmpty {
-                        Text("Сервер " + server).font(.caption).foregroundStyle(Theme.inkSecondary)
+                        Text("Сервер " + server).font(.footnote).foregroundStyle(Theme.inkSecondary)
                     }
                 }
             }
-            Text(SigningInfo.note).font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine)
+        } footer: {
+            Text(SigningInfo.note)
         }
-        .padding(.horizontal, 4)
+        .listRowBackground(Theme.solid)
     }
 }
 

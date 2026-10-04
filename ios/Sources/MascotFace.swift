@@ -16,29 +16,67 @@ struct MascotRenderView: View {
     }
 }
 
-/// Stays on the floor (never follows drag) and shrinks while the body hops.
+/// Floor layers (MascotShadow.swift): a soft ambient shadow and a tight contact shadow with a faint glass caustic,
+/// plus a light pool in front of the body on dark pages. All follow the body sideways and shrink, fade and soften
+/// as it rises.
+/// Reduce Motion renders the resting frame, so the shadow sits still at its rest pose.
 struct MascotFloorShadow: View {
     let pose: MascotFrame
     let side: CGFloat
 
     var body: some View {
-        ZStack {
+        let shadow = MascotShadowPose(frame: pose, side: side)
+        let fill = MascotShadowFill(dark: Double(pose.dark))
+        let floor = CGFloat(shadow.floorY) - side / 2
+        return ZStack {
+            if fill.poolAlpha > 0.001 {
+                Ellipse()
+                    .fill(EllipticalGradient(stops: fill.pool))
+                    .frame(width: side * CGFloat(MascotShadowTuning.poolWidth),
+                           height: side * CGFloat(MascotShadowTuning.poolHeight))
+                    .modifier(MascotShadowLayerEffect(layer: shadow.ambient,
+                                                      floor: floor + side * CGFloat(MascotShadowTuning.poolOffsetY)))
+            }
             Ellipse()
-                .fill(RadialGradient(colors: [MascotPalette.floorLight.opacity(0.24), MascotPalette.floorLight.opacity(0)],
-                                     center: .center, startRadius: 0, endRadius: side * 0.34))
-                .opacity(1 - darkness)
-            Ellipse()
-                .fill(RadialGradient(colors: [MascotPalette.floorDark.opacity(0.2), MascotPalette.floorDark.opacity(0)],
-                                     center: .center, startRadius: 0, endRadius: side * 0.34))
-                .opacity(darkness)
+                .fill(EllipticalGradient(stops: fill.ambient))
+                .frame(width: side * CGFloat(MascotShadowTuning.ambient.width),
+                       height: side * CGFloat(MascotShadowTuning.ambient.height))
+                .modifier(MascotShadowLayerEffect(layer: shadow.ambient, floor: floor))
+            contactLayer(fill)
+                .modifier(MascotShadowLayerEffect(layer: shadow.contact, floor: floor))
         }
-        .frame(width: side * 0.68, height: side * 0.12)
-        .scaleEffect(x: CGFloat(pose.shadowScaleX), y: CGFloat(pose.shadowScaleY))
-        .offset(y: side * 0.405)
+        .allowsHitTesting(false)
     }
 
-    private var darkness: Double {
-        min(1, max(0, Double(pose.dark)))
+    /// Ink ellipse filling its box, with the caustic well inside the core (no coloured ring).
+    private func contactLayer(_ fill: MascotShadowFill) -> some View {
+        let width = side * CGFloat(MascotShadowTuning.contact.width)
+        let height = side * CGFloat(MascotShadowTuning.contact.height)
+        return ZStack {
+            Ellipse()
+                .fill(EllipticalGradient(stops: fill.contact))
+            Ellipse()
+                .fill(EllipticalGradient(stops: fill.caustic))
+                .frame(width: width * CGFloat(2 * MascotShadowTuning.causticRadiusX),
+                       height: height * CGFloat(2 * MascotShadowTuning.causticRadiusY))
+                .offset(y: height * CGFloat(MascotShadowTuning.causticCenterY - 0.5))
+        }
+        .frame(width: width, height: height)
+    }
+}
+
+/// Blur in the layer's own space, then scale (same order as CSS filter + transform on the PC), placed on the floor.
+private struct MascotShadowLayerEffect: ViewModifier {
+    let layer: MascotShadowLayerPose
+    let floor: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .compositingGroup()
+            .blur(radius: CGFloat(layer.blur))
+            .scaleEffect(x: CGFloat(layer.scaleX), y: CGFloat(layer.scaleY))
+            .opacity(layer.opacity)
+            .offset(x: CGFloat(layer.x), y: floor)
     }
 }
 
@@ -164,7 +202,7 @@ struct MascotEyeView: View {
         }
         .frame(width: side * 0.17, height: side * 0.17)
         .rotationEffect(.degrees(eye.tilt))
-        .shadow(color: Color.white.opacity(0.6), radius: side * 0.014)
+        .shadow(color: MascotPalette.faceGlow, radius: side * 0.014)
     }
 
     private var pillOpacity: Double {
@@ -231,6 +269,7 @@ struct MascotMouthView: View {
             outline
                 .stroke(MascotPalette.eyeWhite, style: StrokeStyle(lineWidth: max(0.8, side * 0.006), lineCap: .round, lineJoin: .round))
         }
+        .shadow(color: MascotPalette.faceGlow, radius: side * 0.014)
         .frame(width: side, height: side)
         .offset(x: CGFloat(mouth.offsetX) * side, y: side * 0.105)
     }
@@ -239,13 +278,13 @@ struct MascotMouthView: View {
         MascotMouthShape(width: mouth.width, open: mouth.open, smile: mouth.smile, round: mouth.round)
     }
 
-    /// #FDFEFF when closed → #2A1F5E at 85 % once the mouth opens (o > 0.08).
+    /// #FDFEFF when closed → #0E0A22 at 95 % once the mouth opens (o > 0.08), as MascotPalette.mouthInterior.
     private var interiorColor: Color {
         let k = min(1, max(0, (mouth.open - 0.04) / 0.08))
-        let red = 0.992 + (0.165 - 0.992) * k
-        let green = 0.996 + (0.122 - 0.996) * k
-        let blue = 1.0 + (0.369 - 1.0) * k
-        return Color(red: red, green: green, blue: blue).opacity(1.0 - 0.15 * k)
+        let red = 0.992 + (14.0 / 255.0 - 0.992) * k
+        let green = 0.996 + (10.0 / 255.0 - 0.996) * k
+        let blue = 1.0 + (34.0 / 255.0 - 1.0) * k
+        return Color(red: red, green: green, blue: blue).opacity(1.0 - 0.05 * k)
     }
 }
 

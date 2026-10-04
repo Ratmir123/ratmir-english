@@ -1,49 +1,84 @@
 'use client';
 
 /**
- * «Мои паттерны»: weaknesses first by cost, status chips, cross-call history dots
- * (● repeated ○ avoided · no opportunity ◐ improved), real vs practice rounds, evidence, confirm/dismiss, related drills.
+ * «Мои паттерны»: weaknesses first by cost, one card per pattern with plain sections (history in words,
+ * an inline confirmation question, attached drills as rows, description and quotes on demand), then strengths.
  */
-import { useEffect, useState, type CSSProperties } from 'react';
-import { CaretRightIcon, CheckIcon, EyeSlashIcon, LightbulbIcon, SealCheckIcon, TargetIcon } from '@phosphor-icons/react';
+import { useEffect, useState } from 'react';
+import {
+  ArrowUpRightIcon, CaretRightIcon, CheckCircleIcon, CheckIcon, EyeSlashIcon, LightbulbIcon, MinusCircleIcon, SealCheckIcon, XCircleIcon, type Icon,
+} from '@phosphor-icons/react';
 import { api } from '@/lib/client/api';
-import type { CommunicationPattern, PatternUpdateRequest, PersonalDrill } from '@/lib/calls/types';
+import type { CommunicationPattern, PatternOutcome, PatternUpdateRequest, PersonalDrill } from '@/lib/calls/types';
 import type { Mode } from '@/lib/types';
 import { Chip, cx, kit, Spinner } from './kit';
-import { COST_CATEGORY_LABEL, formatClock, formatDay, OUTCOME_GLYPH, PATTERN_STATUS, roundsLabel, sortPatterns } from './format';
-import { DrillsList } from './drills-list';
+import { COST_CATEGORY_LABEL, costRankLabel, formatClock, formatDay, OUTCOME_GLYPH, PATTERN_STATUS, plural, roundsLabel, sortDrills, sortPatterns } from './format';
+import { DrillRow } from './drills-list';
 import styles from './patterns.module.css';
 
 const SOURCE_LABEL = { call: 'звонок', practice: 'тренировка', placement: 'тест' } as const;
 
+/** Drawn outcome marks (no unicode glyphs): the shape carries the meaning, the colour only repeats it. */
+export const OUTCOME_ICON: Record<PatternOutcome, Icon> = {
+  repeated: XCircleIcon, new: XCircleIcon, avoided: CheckCircleIcon, improved: ArrowUpRightIcon, 'no-opportunity': MinusCircleIcon,
+};
+
+function upperFirst(text: string): string { return text ? text[0].toUpperCase() + text.slice(1) : text; }
+
+/** Compact sequence of outcome marks (Today's «Над чем работаем»); each mark names its date, source and outcome. */
 export function HistoryDots({ pattern, max = 10 }: { pattern: CommunicationPattern; max?: number }) {
   const items = pattern.history.slice(-max);
   if (!items.length) return null;
   return (
-    <span className={styles.history} role="img" aria-label={`История: ${items.map(item => OUTCOME_GLYPH[item.status].label).join(', ')}`}>
+    <span className={styles.marks} role="img" aria-label={`История: ${items.map(item => `${formatDay(item.date) ?? ''} ${SOURCE_LABEL[item.source]} — ${OUTCOME_GLYPH[item.status].label}`).join('; ')}`}>
       {items.map((item, index) => {
-        const glyph = OUTCOME_GLYPH[item.status];
+        const Mark = OUTCOME_ICON[item.status];
         return (
-          <span key={`${item.sourceId}-${index}`} className={styles.dot} data-tone={glyph.tone} data-source={item.source}
-            title={`${formatDay(item.date) ?? ''} · ${SOURCE_LABEL[item.source]} · ${glyph.label}`}>{glyph.glyph}</span>
+          <span key={`${item.sourceId}-${index}`} className={styles.mark} data-tone={OUTCOME_GLYPH[item.status].tone}
+            title={`${formatDay(item.date) ?? ''} · ${SOURCE_LABEL[item.source]} · ${OUTCOME_GLYPH[item.status].label}`}>
+            <Mark size={18} weight={item.source === 'call' ? 'fill' : 'regular'} />
+          </span>
         );
       })}
     </span>
   );
 }
 
+/** Totals in words: «В звонках: повторилось 1 раз · В тренировках: ещё не было». */
 function Rounds({ pattern }: { pattern: CommunicationPattern }) {
   const rounds = roundsLabel(pattern);
+  return <p className={styles.rounds}><span>{rounds.real}</span><span>{rounds.practice}</span></p>;
+}
+
+/** The latest outcomes as a readable list: mark, what happened, when and where. */
+function History({ pattern, max = 4 }: { pattern: CommunicationPattern; max?: number }) {
+  const items = pattern.history.slice(-max);
+  const older = pattern.history.length - items.length;
   return (
-    <span className={styles.rounds}>
-      <span title="Был повод в реальном звонке: справился – повторилось">{rounds.real}</span>
-      <span title="Тренировки: самостоятельные успехи – остальные попытки">{rounds.practice}</span>
-    </span>
+    <div className={styles.block} role="group" aria-label="История">
+      <Rounds pattern={pattern} />
+      {items.length ? (
+        <ol className={styles.historyList}>
+          {items.map((item, index) => {
+            const Mark = OUTCOME_ICON[item.status];
+            return (
+              <li key={`${item.sourceId}-${index}`}>
+                <span className={styles.mark} data-tone={OUTCOME_GLYPH[item.status].tone} aria-hidden="true"><Mark size={18} weight="fill" /></span>
+                <span className={styles.historyWhat}>{upperFirst(OUTCOME_GLYPH[item.status].label)}</span>
+                <span className={styles.historyWhen}>{[formatDay(item.date), SOURCE_LABEL[item.source]].filter(Boolean).join(', ')}</span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+      {older > 0 ? <p className={styles.historyOlder}>и ещё {older} {plural(older, ['отметка', 'отметки', 'отметок'])} раньше</p> : null}
+    </div>
   );
 }
 
-export function PatternsPanel({ patterns, drills, onStartDrill, compact, onChanged }: {
+export function PatternsPanel({ patterns, drills, onStartDrill, compact, onChanged, onOpenAll }: {
   patterns: CommunicationPattern[]; drills: PersonalDrill[]; onStartDrill: (drillId: string, mode: Mode) => void; compact?: boolean; onChanged?: () => void;
+  onOpenAll?: () => void;
 }) {
   // Optimistic list: the server answers with the whole updated list; props catch up after onChanged().
   const [local, setLocal] = useState<CommunicationPattern[] | null>(null);
@@ -67,7 +102,10 @@ export function PatternsPanel({ patterns, drills, onStartDrill, compact, onChang
     const top = sorted.weaknesses.filter(pattern => pattern.status !== 'resolved').slice(0, 2);
     return (
       <section className={cx(kit.scope, kit.glass, styles.compactCard)} aria-label="Над чем работаем">
-        <h2>Над чем работаем</h2>
+        <div className={styles.compactHead}>
+          <h2>Над чем работаем</h2>
+          {onOpenAll ? <button type="button" className={kit.linkBtn} onClick={onOpenAll}>Все паттерны<CaretRightIcon size={14} weight="bold" /></button> : null}
+        </div>
         {top.length ? (
           <div className={styles.compactList}>
             {top.map(pattern => (
@@ -91,97 +129,104 @@ export function PatternsPanel({ patterns, drills, onStartDrill, compact, onChang
       <div className={styles.panelHead}>
         <h2 id="patterns-title">Мои паттерны</h2>
         <p>Что повторяется от звонка к звонку и сколько это стоит. Закрывается только реальными звонками — тренировки готовят к ним.</p>
-        <span className={styles.legend} aria-hidden="true">
-          <span><b style={{ color: 'var(--k-error-ink)' }}>●</b> повторилось</span><span><b style={{ color: 'var(--k-lime-ink)' }}>○</b> был повод — справился</span>
-          <span><b>·</b> не было повода</span><span><b style={{ color: 'var(--k-violet-ink)' }}>◐</b> частично лучше</span>
-        </span>
       </div>
       {error ? <p className={styles.errorLine} role="alert">{error}</p> : null}
       {!sorted.weaknesses.length && !sorted.strengths.length ? (
-        <div className={cx(kit.glass, styles.pattern)}>
+        <div className={cx(kit.glass, styles.emptyCard)}>
           <p className={kit.muted} style={{ margin: 0 }}>Паттерны появятся после первого разобранного звонка: например, «называешь чужой гонорар» или «соглашаешься на первую цифру».</p>
         </div>
       ) : null}
-      {sorted.weaknesses.map((pattern, index) => (
-        <PatternCard key={pattern.id} pattern={pattern} index={index} drills={drills.filter(drill => drill.patternIds.includes(pattern.id))}
+      {sorted.weaknesses.map(pattern => (
+        <PatternCard key={pattern.id} pattern={pattern} drills={drills.filter(drill => drill.patternIds.includes(pattern.id))}
           busy={busy === pattern.id} onUpdate={body => void update(pattern, body)} onStartDrill={onStartDrill} />
       ))}
       {sorted.strengths.length ? (
         <>
           <h3 className={styles.groupTitle}>Сильные стороны</h3>
-          <ul className={styles.strengths}>
-            {sorted.strengths.map(pattern => <li key={pattern.id}><SealCheckIcon size={18} weight="fill" /><span><strong>{pattern.title}.</strong> {pattern.description}</span></li>)}
+          <ul className={cx(kit.glass, styles.strengths)}>
+            {sorted.strengths.map(pattern => <li key={pattern.id}><SealCheckIcon size={18} weight="fill" aria-hidden="true" /><span><strong>{pattern.title}.</strong> {pattern.description}</span></li>)}
           </ul>
         </>
       ) : null}
       {sorted.dismissed.length ? (
         <details className={cx(kit.details, styles.dismissed)}>
-          <summary>Скрытые ({sorted.dismissed.length})</summary>
-          <div className={styles.dismissedList}>
+          <summary><CaretRightIcon size={14} weight="bold" aria-hidden="true" />Скрытые паттерны ({sorted.dismissed.length})</summary>
+          <ul className={styles.dismissedList}>
             {sorted.dismissed.map(pattern => (
-              <div key={pattern.id} className={styles.dismissedItem}>
+              <li key={pattern.id} className={styles.dismissedItem}>
                 <span>{pattern.title}</span>
                 <button type="button" className={cx(kit.btn, kit.quiet, kit.small)} disabled={busy === pattern.id} onClick={() => void update(pattern, { dismiss: false })}>Вернуть</button>
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         </details>
       ) : null}
     </section>
   );
 }
 
-function PatternCard({ pattern, index, drills, busy, onUpdate, onStartDrill }: {
-  pattern: CommunicationPattern; index: number; drills: PersonalDrill[]; busy: boolean;
+function PatternCard({ pattern, drills, busy, onUpdate, onStartDrill }: {
+  pattern: CommunicationPattern; drills: PersonalDrill[]; busy: boolean;
   onUpdate: (body: PatternUpdateRequest) => void; onStartDrill: (drillId: string, mode: Mode) => void;
 }) {
   const status = PATTERN_STATUS[pattern.status];
-  const openDrills = drills.filter(drill => drill.status !== 'done');
+  const openDrills = sortDrills(drills.filter(drill => drill.status !== 'done')).slice(0, 2);
+  const cost = pattern.kind === 'weakness' ? costRankLabel(pattern.costRank) : null;
+  const ask = pattern.status === 'watch' && !pattern.userConfirmed;
+  const titleId = `pattern-${pattern.id}`;
   return (
-    <article className={cx(kit.glass, styles.pattern, kit.rise)} style={{ ['--i' as string]: index } as CSSProperties}>
-      <div className={styles.patternHead}>
-        {pattern.kind === 'weakness' ? <span className={styles.costBadge} data-rank={pattern.costRank} title={`Цена: ${pattern.costRank} из 5 (1 — дороже всего)`}>{pattern.costRank}</span> : null}
+    <article className={cx(kit.glass, styles.pattern)} aria-labelledby={titleId}>
+      <header className={styles.patternHead}>
         <div className={styles.patternTitle}>
-          <strong>{pattern.title}</strong>
-          <div className={styles.chips}>
-            <Chip tone={status.tone}>{status.label}</Chip>
-            <Chip>{COST_CATEGORY_LABEL[pattern.category]}</Chip>
-            {pattern.userConfirmed ? <Chip tone="violet" icon={<CheckIcon size={12} weight="bold" />}>подтверждено</Chip> : null}
-          </div>
+          <h3 id={titleId}>{pattern.title}</h3>
+          <p className={styles.patternMeta}>
+            {cost ? <span data-tone={cost.tone}>{cost.label}</span> : null}
+            <span>{COST_CATEGORY_LABEL[pattern.category]}</span>
+            {pattern.userConfirmed ? <span><CheckIcon size={13} weight="bold" aria-hidden="true" />подтверждено тобой</span> : null}
+          </p>
         </div>
-      </div>
-      <HistoryDots pattern={pattern} />
-      <Rounds pattern={pattern} />
-      {pattern.status === 'watch' && !pattern.userConfirmed ? (
-        <div className={styles.watchAsk}>
-          {status.hint}
+        <Chip tone={status.tone}>{status.label}</Chip>
+      </header>
+
+      <History pattern={pattern} />
+
+      {ask ? (
+        <div className={cx(styles.block, styles.ask)}>
+          <p>{status.hint}</p>
           <div className={styles.actions}>
-            <button type="button" className={cx(kit.btn, kit.primary, kit.small)} disabled={busy} onClick={() => onUpdate({ confirm: true })}>
+            <button type="button" className={cx(kit.btn, kit.secondary, kit.small)} disabled={busy} onClick={() => onUpdate({ confirm: true })}>
               {busy ? <Spinner /> : <CheckIcon size={14} weight="bold" />}Да, это про меня
             </button>
             <button type="button" className={cx(kit.btn, kit.quiet, kit.small)} disabled={busy} onClick={() => onUpdate({ dismiss: true })}>Не про меня</button>
           </div>
         </div>
       ) : null}
+
+      {openDrills.length ? (
+        <ul className={styles.drillRows} aria-label="Тренировки против этого паттерна">
+          {openDrills.map(drill => <li key={drill.id}><DrillRow drill={drill} onStartDrill={onStartDrill} labelled primary={false} /></li>)}
+        </ul>
+      ) : null}
+
       <details className={cx(kit.details, styles.expand)}>
-        <summary><CaretRightIcon size={14} weight="bold" />Подробнее{pattern.evidence.length ? ` · цитаты: ${pattern.evidence.length}` : ''}</summary>
+        <summary><CaretRightIcon size={14} weight="bold" aria-hidden="true" />{pattern.evidence.length ? `Описание и цитаты (${Math.min(5, pattern.evidence.length)})` : 'Описание'}</summary>
         <div className={styles.expandBody}>
           {pattern.description ? <p className={styles.description}>{pattern.description}</p> : null}
           {pattern.evidence.length ? (
-            <div className={styles.evidence}>
+            <ul className={styles.evidence}>
               {pattern.evidence.slice(0, 5).map((item, evidenceIndex) => (
-                <div key={evidenceIndex} className={styles.evidenceItem}>
+                <li key={evidenceIndex} className={styles.evidenceItem}>
                   <blockquote className={cx(kit.quote, kit.en)} lang="en">{item.quote}</blockquote>
                   <span className={styles.evidenceMeta}>
-                    {SOURCE_LABEL[item.source]} · {formatDay(item.date)}{item.at !== null ? ` · ${formatClock(item.at)}` : ''} · {OUTCOME_GLYPH[item.status].label}
+                    {[upperFirst(SOURCE_LABEL[item.source]), formatDay(item.date), item.at !== null ? formatClock(item.at) : null, OUTCOME_GLYPH[item.status].label].filter(Boolean).join(' · ')}
                   </span>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           ) : null}
-          {pattern.drillHint ? <div className={styles.hintLine}><LightbulbIcon size={16} weight="fill" />{pattern.drillHint}</div> : null}
+          {pattern.drillHint ? <p className={styles.hintLine}><LightbulbIcon size={16} weight="fill" aria-hidden="true" /><span><strong>Что тренировать:</strong> {pattern.drillHint}</span></p> : null}
           {pattern.userNote ? <p className={styles.description}><strong>Твоя заметка:</strong> {pattern.userNote}</p> : null}
-          {pattern.status !== 'watch' || pattern.userConfirmed ? (
+          {!ask ? (
             <div className={styles.actions}>
               <button type="button" className={cx(kit.btn, kit.quiet, kit.small)} disabled={busy} onClick={() => onUpdate({ dismiss: true })}>
                 <EyeSlashIcon size={14} weight="bold" />Скрыть паттерн
@@ -190,12 +235,6 @@ function PatternCard({ pattern, index, drills, busy, onUpdate, onStartDrill }: {
           ) : null}
         </div>
       </details>
-      {openDrills.length ? (
-        <>
-          <span className={kit.eyebrow} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><TargetIcon size={14} weight="bold" />Тренировки</span>
-          <DrillsList drills={openDrills} onStartDrill={onStartDrill} limit={2} />
-        </>
-      ) : null}
     </article>
   );
 }

@@ -239,7 +239,7 @@ private struct PlacementFlowContainer: View {
             .font(.subheadline.weight(.semibold))
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .featureGlass(radius: 22, tint: FeaturePalette.lime)
+            .featureGlass(radius: 22, tint: FeaturePalette.lime, chrome: true)
             .padding(.top, 8)
             .accessibilityAddTraits(.isStaticText)
     }
@@ -542,19 +542,16 @@ struct PlacementSectionIntroView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 12) {
-                Image(systemName: FeatureLabels.sectionIcon(section.id))
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(FeaturePalette.violet)
-                    .frame(width: 60, height: 60)
-                    .featureGlass(radius: 20, tint: FeaturePalette.lavender)
-                    .accessibilityHidden(true)
                 Text(section.title).font(.largeTitle.weight(.bold)).fontDesign(.rounded)
+                    .accessibilityAddTraits(.isHeader)
                 if !section.description.isEmpty {
                     Text(section.description).font(.body).fixedSize(horizontal: false, vertical: true)
                 }
-                HStack(spacing: 8) {
-                    if section.minutes > 0 { FeatureChip(text: "≈ \(section.minutes) мин", icon: "clock") }
-                    if section.planned > 0 { FeatureChip(text: "до \(section.planned) " + FeatureFormat.plural(section.planned, "задания", "заданий", "заданий"), icon: "list.bullet") }
+                let facts = [section.minutes > 0 ? "≈ \(section.minutes) мин" : "",
+                             section.planned > 0 ? "до \(section.planned) " + FeatureFormat.plural(section.planned, "задания", "заданий", "заданий") : ""]
+                    .filter { !$0.isEmpty }
+                if !facts.isEmpty {
+                    Text(facts.joined(separator: " · ")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 }
             }
             .featureReveal(0)
@@ -562,7 +559,7 @@ struct PlacementSectionIntroView: View {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(hints, id: \.self) { hint in
                     HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "sparkle").font(.footnote).foregroundStyle(FeaturePalette.violet).padding(.top, 2)
+                        Image(systemName: "checkmark.circle").font(.footnote).foregroundStyle(.secondary).padding(.top, 2)
                             .accessibilityHidden(true)
                         Text(hint).font(.subheadline).fixedSize(horizontal: false, vertical: true)
                     }

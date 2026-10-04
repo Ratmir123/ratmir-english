@@ -1,8 +1,12 @@
 .section { display: grid; gap: 10px; }
 .toggle { display: flex; align-items: center; gap: 12px; min-height: 44px; font-size: var(--text-15); font-weight: 600; color: var(--text-primary); grid-template-columns: none; }
 .times { display: grid; gap: 4px; }
-.times > div { display: flex; align-items: flex-end; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--surface-glass-hairline); }
-.times label { flex: 1; display: grid; gap: 6px; font-size: var(--text-13); color: var(--text-secondary); }
+.times > div { display: flex; align-items: flex-end; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--hairline); }
+.times label { flex: 1; min-width: 0; display: grid; gap: 6px; font-size: var(--text-13); color: var(--text-secondary); }
 .times input { font-size: var(--text-17); min-height: 46px; max-width: 200px; font-variant-numeric: tabular-nums; }
 .actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
 .message { font-size: var(--text-13); color: var(--text-secondary); }
+.head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; min-height: 32px; }
+.head h2 { margin: 0; font-size: 20px; }
+.saved { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-13); font-weight: 600; color: var(--text-secondary); }
+.saved svg { color: var(--accent-lime-ink); }

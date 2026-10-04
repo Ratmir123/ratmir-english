@@ -1,7 +1,7 @@
-.panel { display: grid; gap: 10px; padding: 22px; border-radius: var(--radius-card); background: var(--surface-solid); box-shadow: var(--e1); }
-.panel > h2 { font-size: 20px; line-height: 1.3; }
+.panel { display: grid; gap: 10px; padding: 22px 24px; min-width: 0; }
+.panel > h2 { font-family: var(--font-body); font-size: var(--text-17); font-weight: 650; letter-spacing: -.15px; line-height: 1.35; }
 .intro { max-width: 65ch; color: var(--text-secondary); font-size: 14px; line-height: 1.65; }
-.recording { border-bottom: 1px solid var(--surface-glass-hairline); }
+.recording { border-bottom: 1px solid var(--hairline); }
 .recording:last-child { border-bottom: 0; }
 .recording > summary { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; min-height: 52px; align-items: center; padding: 10px 0; font-size: 14px; cursor: pointer; }
 .recording > summary > span { color: var(--text-secondary); font-size: 12px; }
@@ -18,7 +18,7 @@
 .metrics dd { font-family: var(--font-display); font-size: 21px; font-weight: 800; font-variant-numeric: tabular-nums; margin: 4px 0 0; }
 .recording audio { width: 100%; height: 40px; }
 .caution, .pace { font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; }
-.feedback { border-top: 1px solid var(--surface-glass-hairline); padding-top: 14px; display: grid; gap: 8px; }
+.feedback { border-top: 1px solid var(--hairline); padding-top: 14px; display: grid; gap: 8px; }
 .feedback p { font-size: 14px; line-height: 1.65; }
 .feedback :global(.text-button) { justify-self: start; }
 .limitations summary { font-size: 12.5px; min-height: 40px; display: flex; align-items: center; cursor: pointer; color: var(--text-secondary); }

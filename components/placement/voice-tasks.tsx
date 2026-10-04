@@ -159,7 +159,7 @@ function RecordingPanel({ startedAt, now, minSeconds, maxSeconds, confirmShort, 
       <span className={styles.speaking}><span className={styles.recDot} aria-hidden="true" />Говорю</span>
       <div className={styles.timer}>{formatClock(elapsed)} <span className={styles.timerMax}>/ {formatClock(maxSeconds)}</span></div>
       <div className={styles.recBar} aria-hidden="true">
-        <span style={{ width: `${gate.fraction * 100}%` }} />
+        <span style={{ transform: `scaleX(${gate.fraction})` }} />
         {minSeconds > 0 ? <i style={{ left: `${gate.minFraction * 100}%` }} /> : null}
       </div>
       <span className={styles.recBarLabel}>
@@ -235,7 +235,7 @@ export function SpeakingTaskView(props: VoiceTaskProps & { task: SpeakingTask })
     <div className={styles.task}>
       <div className={styles.voiceStage}>
         <div className={styles.voiceText}>
-          {task.followUp ? <span className={cx(kit.chip, kit['tone-warning'], styles.followUp)}><LightningIcon size={14} weight="fill" />Неожиданный вопрос — отвечай сразу</span> : null}
+          {task.followUp ? <p className={styles.followUp}><LightningIcon size={16} weight="fill" aria-hidden="true" />Неожиданный вопрос — отвечай сразу</p> : null}
           <p className={styles.instruction}><MicrophoneIcon size={18} weight="bold" aria-hidden="true" />{task.instruction}</p>
           {task.readAloud
             ? <p className={cx(kit.solid, styles.readAloud, kit.en)} lang="en">{task.prompt}</p>
@@ -332,7 +332,7 @@ export function RoleplayTaskView(props: VoiceTaskProps & { task: RoleplayTask })
             label={phase.kind === 'partner' ? 'Собеседник говорит' : 'Слушает тебя'} />
         </div>
         <div className={cx(kit.glass, styles.bubble, kit.en)} lang="en">
-          <span className={styles.bubbleRole}>Собеседник</span>
+          <span className={kit.visuallyHidden} lang="ru">Собеседник: </span>
           {task.partnerLine.text}
         </div>
       </div>

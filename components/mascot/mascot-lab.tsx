@@ -2,6 +2,7 @@
 // Dev-only playground for the jelly mascot (app/mascot-lab). Not linked from the app; 404 in production.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EMOTION_LABELS, MASCOT_EMOTIONS, MASCOT_STATES, STATE_LABELS, type MascotEmotion, type MascotState } from '@/lib/mascot/emotions';
+import { LAB_PALETTES, LAB_PALETTE_NAMES, type LabPaletteName } from '@/lib/mascot/palette-lab';
 import { Mascot, type MascotHandle, type MascotLevelStore } from './mascot';
 import styles from './mascot-lab.module.css';
 
@@ -31,7 +32,8 @@ const GESTURES: readonly [string, string][] = [
   ['Не трогай 60 с', 'засыпает (zZ); любое действие будит: удивлён → рад'],
 ];
 
-export function MascotLab() {
+export function MascotLab({ palette: paletteName }: { palette: LabPaletteName }) {
+  const palette = LAB_PALETTES[paletteName];
   const [state, setState] = useState<MascotState>('idle');
   const [emotion, setEmotion] = useState<MascotEmotion | null>(null);
   const [asReaction, setAsReaction] = useState(false);
@@ -91,14 +93,15 @@ export function MascotLab() {
     if (next) setState('listening');
   }
   const common = {
-    state, emotion: emotion ?? undefined, micLevelStore: micStore, speechLevelStore: speechStore, size, celebrate, exclusive: false,
+    state, emotion: emotion ?? undefined, micLevelStore: micStore, speechLevelStore: speechStore, size, celebrate, exclusive: false, palette,
     statusDescription: emotion ? EMOTION_LABELS[emotion] : STATE_LABELS[state],
   } as const;
 
   return <main className={styles.lab}>
     <header className={styles.header}>
       <div><span className={styles.kicker}>DEV · MASCOT LAB</span><h1>Желейный собеседник</h1>
-        <p>Физика, лицо и эмоции по <code>planning/v05/MASCOT-SPEC.md</code>. Страница доступна только в режиме разработки.</p></div>
+        <p>Физика, лицо и эмоции по <code>planning/v05/MASCOT-SPEC.md</code>. Страница доступна только в режиме разработки.</p>
+        <nav className={styles.row} aria-label="Материал">{LAB_PALETTE_NAMES.map(name => <a key={name} href={`?palette=${name}`} aria-current={name === paletteName ? 'page' : undefined} className={styles.paletteLink}>{LAB_PALETTES[name].label}</a>)}</nav></div>
     </header>
 
     <section className={styles.stages} aria-label="Сцены">
@@ -151,13 +154,13 @@ export function MascotLab() {
         <h2>Все эмоции (статичная поза, один общий WebGL-контекст)</h2>
         <div className={styles.gallery}>
           {MASCOT_EMOTIONS.map(value => <figure key={value}>
-            <Mascot still interactive={false} emotion={value} size={96} statusDescription={EMOTION_LABELS[value]} />
+            <Mascot still interactive={false} emotion={value} size={96} palette={palette} statusDescription={EMOTION_LABELS[value]} />
             <figcaption>{value}</figcaption>
           </figure>)}
         </div>
         <div className={styles.galleryDark}>
           {MASCOT_EMOTIONS.map(value => <figure key={value}>
-            <Mascot still interactive={false} emotion={value} size={96} theme="dark" statusDescription={EMOTION_LABELS[value]} />
+            <Mascot still interactive={false} emotion={value} size={96} theme="dark" palette={palette} statusDescription={EMOTION_LABELS[value]} />
             <figcaption>{value}</figcaption>
           </figure>)}
         </div>

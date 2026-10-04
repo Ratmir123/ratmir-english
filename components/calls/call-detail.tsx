@@ -3,7 +3,7 @@
 /** One call: header, processing/upload/speaker states, then «Разбор · Тренировки · Транскрипт». */
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
-  ArrowCounterClockwiseIcon, CalendarBlankIcon, ClockIcon, FileTextIcon, PencilSimpleIcon, TrashIcon, UploadSimpleIcon, UserIcon, WarningIcon, XIcon,
+  ArrowCounterClockwiseIcon, CalendarBlankIcon, CheckIcon, ClockIcon, FileTextIcon, PencilSimpleIcon, TrashIcon, UploadSimpleIcon, UserIcon, WarningIcon, XIcon,
 } from '@phosphor-icons/react';
 import { api } from '@/lib/client/api';
 import type { CallContext, CallDetail, CallSummary, CommunicationPattern, ProfileFact } from '@/lib/calls/types';
@@ -104,7 +104,7 @@ export function CallDetailView({ callId, summary, patterns, uploads, onChanged, 
   if (!head) {
     return (
       <div className={cx(kit.scope, styles.detail)}>
-        <div className={cx(kit.solid, styles.head)}>
+        <div className={cx(kit.glass, styles.head)}>
           {loadError ? <p className={styles.muted} role="alert">{loadError}</p> : <p className={styles.muted}><Spinner /> Открываю звонок…</p>}
         </div>
       </div>
@@ -120,20 +120,16 @@ export function CallDetailView({ callId, summary, patterns, uploads, onChanged, 
 
   return (
     <div className={cx(kit.scope, styles.detail)}>
-      <header className={cx(kit.glass, styles.head, kit.rise)}>
+      <header className={cx(kit.glass, styles.head)}>
         <div className={styles.headTop}>
           <div className={styles.headTitle}>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <Chip tone={statusInfo.tone}>{statusInfo.label}</Chip>
-              <Chip>{SOURCE_LABEL[head.source]}</Chip>
-              {review?.kind ? <Chip tone="violet">{review.kind}</Chip> : null}
-            </div>
             <h2>{head.title}</h2>
             <div className={styles.metaLine}>
-              {head.counterpart ? <span><UserIcon size={14} weight="bold" />{head.counterpart}</span> : null}
-              {formatDay(head.occurredAt ?? head.createdAt) ? <span><CalendarBlankIcon size={14} weight="bold" />{formatDay(head.occurredAt ?? head.createdAt)}</span> : null}
-              {formatDuration(head.durationSeconds) ? <span><ClockIcon size={14} weight="bold" />{formatDuration(head.durationSeconds)}</span> : null}
-              <span>{CONTEXT_LABEL[head.context]}</span>
+              <Chip tone={statusInfo.tone}>{statusInfo.label}</Chip>
+              {head.counterpart ? <span><UserIcon size={14} aria-hidden="true" />{head.counterpart}</span> : null}
+              {formatDay(head.occurredAt ?? head.createdAt) ? <span><CalendarBlankIcon size={14} aria-hidden="true" />{formatDay(head.occurredAt ?? head.createdAt)}</span> : null}
+              {formatDuration(head.durationSeconds) ? <span><ClockIcon size={14} aria-hidden="true" />{formatDuration(head.durationSeconds)}</span> : null}
+              <span>{CONTEXT_LABEL[head.context]} · {SOURCE_LABEL[head.source].toLowerCase()}</span>
             </div>
           </div>
           <div className={styles.headActions}>
@@ -195,8 +191,8 @@ export function CallDetailView({ callId, summary, patterns, uploads, onChanged, 
 
       {detail && detail.status === 'needs-speaker' ? <SpeakerConfirm detail={detail} onDone={next => { setDetail(next); onChanged(); }} /> : null}
 
-      {!detail && loadError ? <div className={cx(kit.solid, styles.section)}><p className={styles.muted} role="alert">{loadError}</p></div> : null}
-      {!detail && !loadError ? <div className={cx(kit.solid, styles.section)}><p className={styles.muted}><Spinner /> Загружаю разбор…</p></div> : null}
+      {!detail && loadError ? <div className={cx(kit.glass, styles.section)}><p className={styles.muted} role="alert">{loadError}</p></div> : null}
+      {!detail && !loadError ? <div className={cx(kit.glass, styles.section)}><p className={styles.muted}><Spinner /> Загружаю разбор…</p></div> : null}
 
       {tabs && detail ? (
         <>
@@ -211,11 +207,11 @@ export function CallDetailView({ callId, summary, patterns, uploads, onChanged, 
             {tab === 'review' ? (
               review ? <CallReviewView detail={detail} review={review} patterns={patterns} idPrefix={prefix} onFactsChanged={facts}
                 onSeek={detail.segments.length ? at => { setTab('transcript'); setSeek({ at, nonce: Date.now() }); } : undefined} />
-                : <div className={cx(kit.solid, styles.section)}><p className={styles.muted}>Разбор появится после обработки. Расшифровка уже во вкладке «Транскрипт».</p></div>
+                : <div className={cx(kit.glass, styles.section)}><p className={styles.muted}>Разбор появится после обработки. Расшифровка уже во вкладке «Транскрипт».</p></div>
             ) : null}
             {tab === 'drills' ? (
-              <div className={cx(kit.solid, styles.section)}>
-                <div className={styles.sectionHead}><h3>Тренировки из этого звонка</h3><small>повторы: сегодня, +2, +5, +12 дней</small></div>
+              <div className={styles.drillsTab}>
+                <div className={styles.drillsHead}><h3>Тренировки из этого звонка</h3><p>Повторы — сегодня, затем через 2, 5 и 12 дней.</p></div>
                 <DrillsList drills={detail.drills} onStartDrill={onStartDrill} />
               </div>
             ) : null}
@@ -261,7 +257,7 @@ function SpeakerConfirm({ detail, onDone }: { detail: CallDetail; onDone: (next:
     finally { setBusy(false); }
   }
   return (
-    <section className={cx(kit.glass, styles.speakers, kit.rise)} aria-labelledby={`${ids}-who`}>
+    <section className={cx(kit.glass, styles.speakers)} aria-labelledby={`${ids}-who`}>
       <h3 id={`${ids}-who`}>Кто из собеседников ты?</h3>
       <p className={styles.muted}>Я не узнал твой голос уверенно. Посмотри на реплики и выбери себя — разбор будет про твои слова.</p>
       <div className={styles.speakerList} role="radiogroup" aria-labelledby={`${ids}-who`}>
@@ -269,8 +265,8 @@ function SpeakerConfirm({ detail, onDone }: { detail: CallDetail; onDone: (next:
           <div key={speaker.id} className={styles.speaker} data-me={me === speaker.id}>
             <div className={styles.speakerHead}>
               <strong>{speaker.label}{speaker.talkSeconds ? <span className={kit.faint} style={{ fontWeight: 600 }}> · {formatDuration(speaker.talkSeconds)}</span> : null}</strong>
-              <button type="button" role="radio" aria-checked={me === speaker.id} className={cx(kit.btn, me === speaker.id ? kit.primary : kit.secondary, kit.small)} onClick={() => setMe(speaker.id)}>
-                {me === speaker.id ? 'Это я ✓' : 'Это я'}
+              <button type="button" role="radio" aria-checked={me === speaker.id} className={cx(kit.btn, kit.secondary, kit.small, styles.meButton)} onClick={() => setMe(speaker.id)}>
+                {me === speaker.id ? <CheckIcon size={14} weight="bold" aria-hidden="true" /> : null}Это я
               </button>
             </div>
             {speaker.sample.length ? <ul className={styles.samples}>{speaker.sample.slice(0, 3).map((line, index) => <li key={index} lang="en">{line}</li>)}</ul> : null}

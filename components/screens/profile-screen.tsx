@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { ArrowsClockwiseIcon, CheckIcon, DownloadSimpleIcon, KeyIcon, ShieldCheckIcon, SparkleIcon, TrashIcon, WarningCircleIcon } from '@phosphor-icons/react';
+import { ArrowsClockwiseIcon, CaretRightIcon, CheckIcon, DownloadSimpleIcon, KeyIcon, TrashIcon, WarningCircleIcon } from '@phosphor-icons/react';
 import type { AppState, Profile } from '@/lib/types';
 import { APP_CHANNEL, APP_NAME, APP_VERSION } from '@/lib/app-info';
 import { lessonBudget } from '@/lib/lesson-budget';
@@ -36,6 +36,7 @@ function ProfileForm() {
       : !Number.isFinite(budget) || budget < 1 || budget > 50 ? 'Бюджет голоса — от 1 до 50 $ в месяц.' : '';
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (!dirty) return;
     if (problem) { setError(problem); return; }
     setSaving(true); setError('');
     try {
@@ -48,8 +49,8 @@ function ProfileForm() {
     } catch (reason) { setError(messageOf(reason, 'Не удалось сохранить профиль.')); }
     finally { setSaving(false); }
   };
-  return <form className={`glass ${styles.card}`} onSubmit={submit} aria-labelledby="profile-me" noValidate>
-    <div className="section-title"><h2 id="profile-me">О тебе</h2></div>
+  return <form className={`surface ${styles.card}`} onSubmit={submit} aria-labelledby="profile-me" noValidate>
+    <div className={styles.head}><h2 id="profile-me">О тебе</h2></div>
     <div className={styles.fields}>
       <label>Имя<input value={form.name} onChange={event => update('name', event.target.value)} maxLength={80} autoComplete="given-name" /></label>
       <label className={styles.wide}>Что хочешь развивать<textarea rows={3} value={form.goals} onChange={event => update('goals', event.target.value)} maxLength={3000} /></label>
@@ -66,10 +67,14 @@ function ProfileForm() {
       <label>Бюджет голоса, $ в месяц<input type="number" inputMode="decimal" min={1} max={50} value={form.budgetUsd} onChange={event => update('budgetUsd', event.target.value)} /></label>
     </div>
     {error && <p className="error-text" role="alert">{error}</p>}
-    <div className={styles.actions}>
-      <button type="submit" className="button primary" disabled={!dirty || saving}>{saving ? 'Сохраняю…' : 'Сохранить'}<CheckIcon size={17} /></button>
-      {!dirty && <span className="caption">Изменений нет</span>}
-      {dirty && <button type="button" className="text-button muted" onClick={() => { setForm(toForm(profile)); setDirty(false); setError(''); }}>Отменить</button>}
+    {/* Untouched: a calm saved state instead of a greyed-out button; the action appears with the first edit. */}
+    <div className={styles.actions} aria-live="polite">
+      {dirty
+        ? <>
+          <button type="submit" className="button primary" disabled={saving}>{saving ? 'Сохраняю…' : 'Сохранить'}<CheckIcon size={17} /></button>
+          <button type="button" className="text-button muted" disabled={saving} onClick={() => { setForm(toForm(profile)); setDirty(false); setError(''); }}>Отменить</button>
+        </>
+        : <span className={styles.saved}><CheckIcon size={16} weight="bold" aria-hidden="true" />Всё сохранено</span>}
     </div>
   </form>;
 }
@@ -81,37 +86,54 @@ function VoiceCard() {
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const configured = !!status?.audio.configured;
   const save = async (event: FormEvent) => {
-    event.preventDefault(); if (!key.trim()) return;
+    event.preventDefault();
+    if (!key.trim()) { setError('Вставь ключ OpenAI — он начинается с sk-.'); return; }
     setBusy(true); setError('');
     try { await request('audio-key', { key }); setKey(''); await app.data.refreshStatus(); app.toast.notice('Ключ сохранён. Голос проверим при первой озвучке.'); }
     catch (reason) { setError(messageOf(reason, 'Не удалось сохранить ключ.')); }
     finally { setBusy(false); }
   };
-  return <section className={`glass ${styles.card}`} aria-labelledby="profile-voice">
-    <div className="section-title"><h2 id="profile-voice">Голос</h2><span className={`chip ${status?.audio.configured ? 'lime' : 'warning'}`}>{status?.audio.configured ? 'Подключён' : 'Нет ключа'}</span></div>
+  return <section className={`surface ${styles.card}`} aria-labelledby="profile-voice">
+    <div className={styles.head}><h2 id="profile-voice">Голос</h2>{status && <span className={`chip ${configured ? 'lime' : 'warning'}`}>{configured ? 'Подключён' : 'Нет ключа'}</span>}</div>
     <p className="caption">Распознавание речи и голос собеседника работают через OpenAI API и оплачиваются отдельно. Без ключа можно заниматься текстом.</p>
     <form className={styles.inline} onSubmit={save}>
-      <label className="visually-hidden" htmlFor="audio-key">OpenAI API-ключ</label>
-      <input id="audio-key" type="password" autoComplete="off" placeholder={status?.audio.configured ? 'Заменить ключ: sk-…' : 'sk-…'} value={key} onChange={event => setKey(event.target.value)} />
-      <button className="button secondary" disabled={busy || !key.trim()}><KeyIcon size={16} />{busy ? 'Сохраняю…' : 'Сохранить'}</button>
+      <label className={styles.keyField}>{configured ? 'Заменить ключ OpenAI' : 'Ключ OpenAI API'}
+        <input id="audio-key" type="password" autoComplete="off" placeholder="sk-…" value={key} onChange={event => { setKey(event.target.value); setError(''); }} />
+      </label>
+      <button type="submit" className="button secondary" disabled={busy}><KeyIcon size={16} />{busy ? 'Сохраняю…' : 'Сохранить ключ'}</button>
     </form>
     {error && <p className="error-text" role="alert">{error}</p>}
     <span className="form-help">Ключ хранится {status?.hosting === 'server' ? 'на твоём сервере' : 'на этом компьютере'} и не возвращается в браузер.</span>
-    <div className={styles.usage}><span>Голос за месяц · оценка</span><strong className="tabular">${usage.usedUsd.toFixed(2)} <span className="caption">/ ${usage.budgetUsd}</span></strong></div>
+    <div className={styles.usage}><span>Голос за месяц, оценка</span><strong className="tabular">${usage.usedUsd.toFixed(2)} <span className="caption">из ${usage.budgetUsd}</span></strong></div>
   </section>;
 }
 
+/** Sol and the subscription it runs on: connection state, a human reason when it fails, then the limits. */
 function ModelCard() {
   const app = useApp();
   const status = app.data.status;
   const [checking, setChecking] = useState(false);
-  return <section className={`glass ${styles.card}`} aria-labelledby="profile-model">
-    <div className="section-title"><h2 id="profile-model">Учебная модель</h2><SparkleIcon size={20} /></div>
-    <p><strong>GPT‑6.1 Sol</strong> — подбирает занятия, ведёт диалог и разбирает ответы{status?.brain.mode === 'siwc' ? ' через твою подписку ChatGPT' : ' через локальный Codex и лимиты подписки'}.</p>
-    <span className={`chip ${status?.brain.authenticated ? 'lime' : 'warning'}`} style={{ justifySelf: 'start' }}>{status ? status.brain.authenticated ? 'Вход в подписку сохранён' : 'Нужен вход в подписку' : app.data.statusFailed ? 'Статус недоступен' : 'Проверяю…'}</span>
-    {status?.brain.error && <p className="error-text">{status.brain.error}</p>}
-    <button type="button" className="text-button" disabled={checking} onClick={async () => { setChecking(true); await app.data.refreshStatus(); setChecking(false); }}><ArrowsClockwiseIcon size={16} />{checking ? 'Проверяю…' : 'Проверить подключение'}</button>
+  const brain = status?.brain;
+  const state = !status ? app.data.statusFailed ? { tone: 'warning', label: 'Статус недоступен' } : { tone: '', label: 'Проверяю…' }
+    : brain?.authenticated ? { tone: 'lime', label: 'Подключена' } : { tone: 'warning', label: 'Нужен вход в подписку' };
+  return <section className={`surface ${styles.card}`} aria-labelledby="profile-model">
+    <div className={styles.head}><h2 id="profile-model">Учебная модель</h2><span className={`chip ${state.tone}`}>{state.label}</span></div>
+    <p className={styles.body}><strong>GPT‑6.1 Sol</strong> подбирает занятия, ведёт диалог и разбирает ответы{brain?.mode === 'siwc' ? ' через твою подписку ChatGPT' : ' через локальный Codex и лимиты подписки'}.</p>
+    {status && !brain?.authenticated && !brain?.error && <p className="caption">Войди в подписку, чтобы Sol мог вести занятия и разборы.</p>}
+    {brain?.error && <div className={styles.problem} role="status">
+      <WarningCircleIcon size={18} weight="fill" aria-hidden="true" />
+      <div className={styles.problemCopy}>
+        <strong>Sol не подключается</strong>
+        <span>Занятия и разборы идут через Sol. Проверь подключение ещё раз; если не поможет, техническая причина ниже пригодится для настройки.</span>
+        <details className={styles.detail}><summary>Техническая причина<CaretRightIcon size={13} aria-hidden="true" /></summary><code>{brain.error}</code></details>
+      </div>
+    </div>}
+    <button type="button" className={`button secondary small ${styles.check}`} disabled={checking} onClick={async () => { setChecking(true); await app.data.refreshStatus(); setChecking(false); }}>
+      <ArrowsClockwiseIcon size={16} />{checking ? 'Проверяю…' : 'Проверить подключение'}</button>
+    <div className={styles.divider} />
+    <SubscriptionLimits embedded usage={app.data.usage} loading={app.data.usageLoading} onRefresh={() => void app.data.refreshUsage(true)} />
   </section>;
 }
 
@@ -120,18 +142,22 @@ function DataCard() {
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const status = app.data.status;
-  return <section className={`glass ${styles.card}`} aria-labelledby="profile-data">
-    <div className="section-title"><h2 id="profile-data">Данные</h2><ShieldCheckIcon size={20} /></div>
+  return <section className={`surface ${styles.card} ${styles.dataCard}`} aria-labelledby="profile-data">
+    <div className={styles.head}><h2 id="profile-data">Данные</h2></div>
     <p className="caption">{status?.hosting === 'server' ? 'Компьютер и телефон используют одну историю на твоём сервере.' : 'История хранится на этом компьютере.'}</p>
-    <a className="button secondary" href="/api/export" download style={{ justifySelf: 'start' }}><DownloadSimpleIcon size={16} />Скачать историю (JSON)</a>
-    <details className={styles.danger}>
-      <summary><TrashIcon size={16} />Удалить историю тренировок</summary>
-      <p className="caption">Удалятся занятия, аудио, разборы и прогресс на их основе. Профиль останется. Отменить нельзя.</p>
-      <label>Чтобы подтвердить, введи DELETE<input value={typed} onChange={event => setTyped(event.target.value)} autoComplete="off" spellCheck={false} /></label>
-      <button type="button" className="button danger" disabled={busy || typed !== 'DELETE'} onClick={async () => { setBusy(true); const done = await app.lesson.resetAll(); setBusy(false); if (done) setTyped(''); }}>
-        {busy ? 'Удаляю…' : 'Удалить навсегда'}</button>
-      {typed && typed !== 'DELETE' && <span className="disabled-reason"><WarningCircleIcon size={15} />Нужно ввести DELETE заглавными.</span>}
-    </details>
+    <div className="rows">
+      <a className={styles.row} href="/api/export" download><DownloadSimpleIcon size={18} aria-hidden="true" /><span>Скачать историю (JSON)</span></a>
+      <details className={styles.danger}>
+        <summary className={styles.row}><TrashIcon size={18} aria-hidden="true" /><span>Удалить историю тренировок</span><CaretRightIcon size={15} className={styles.caret} aria-hidden="true" /></summary>
+        <div className={styles.dangerBody}>
+          <p className="caption">Удалятся занятия, аудио, разборы и прогресс на их основе. Профиль останется. Отменить нельзя.</p>
+          <label>Чтобы подтвердить, введи DELETE<input value={typed} onChange={event => setTyped(event.target.value)} autoComplete="off" spellCheck={false} /></label>
+          <button type="button" className="button danger" disabled={busy || typed !== 'DELETE'} onClick={async () => { setBusy(true); const done = await app.lesson.resetAll(); setBusy(false); if (done) setTyped(''); }}>
+            <TrashIcon size={16} />{busy ? 'Удаляю…' : 'Удалить навсегда'}</button>
+          {typed && typed !== 'DELETE' && <span className="disabled-reason"><WarningCircleIcon size={15} />Нужно ввести DELETE заглавными.</span>}
+        </div>
+      </details>
+    </div>
   </section>;
 }
 
@@ -139,20 +165,19 @@ export function ProfileScreen() {
   const app = useApp();
   const state = app.data.state!;
   const version = app.data.status?.app?.version ?? APP_VERSION;
-  return <div className="screen" data-screen="profile">
+  return <div className={`screen ${styles.profile}`} data-screen="profile">
     <header className="screen-header"><div><h1 tabIndex={-1} data-screen-heading style={{ outline: 'none' }}>Профиль</h1><p className="lede">Цели, голос, напоминания и твои данные.</p></div></header>
     <div className={styles.grid}>
       <div className={styles.column}>
         <ProfileForm />
-        {/* FactsPanel («Мой плейбук») brings its own heading and explanation. */}
-        <section className={`glass ${styles.card}`} aria-label="Мой плейбук">
+        {/* FactsPanel («Мой плейбук») brings its own heading, explanation and rows; the host gives it the surface. */}
+        <div className={`surface ${styles.card}`}>
           <FactsPanel facts={state.profileFacts ?? []} onChanged={() => void app.data.refresh()} />
-        </section>
+        </div>
       </div>
       <div className={styles.column}>
         <VoiceCard />
-        <section className={`glass ${styles.card}`}><ReminderSettings /></section>
-        <SubscriptionLimits usage={app.data.usage} loading={app.data.usageLoading} onRefresh={() => void app.data.refreshUsage(true)} />
+        <section className={`surface ${styles.card}`} aria-labelledby="reminder-title"><ReminderSettings /></section>
         <ModelCard />
         <DataCard />
         <p className={styles.version}>{APP_NAME} {version}{APP_CHANNEL ? ` · ${APP_CHANNEL}` : ''}</p>

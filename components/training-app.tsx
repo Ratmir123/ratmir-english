@@ -200,7 +200,7 @@ function App() {
   if (quickVisible) return <><Ambient /><QuickCoach onDismiss={() => setQuickVisible(false)} /></>;
   if (!data.state) return <><Ambient />
     <main className="boot" aria-busy={!data.loadError}>
-      {data.loadError ? <div className="glass card" role="alert" style={{ display: 'grid', gap: 12, maxWidth: 420, margin: 16 }}>
+      {data.loadError ? <div className="surface card" role="alert" style={{ display: 'grid', gap: 12, maxWidth: 420, margin: 16 }}>
         <strong>Не удалось открыть тренинг</strong><p className="caption">{data.loadError}</p>
         <button type="button" className="button primary" onClick={() => void data.refresh()}><ArrowsClockwiseIcon size={17} />Повторить</button>
       </div> : <div className="boot-dot" />}

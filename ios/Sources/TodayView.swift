@@ -104,6 +104,9 @@ struct RhythmDots: View {
 
 // MARK: - Today
 
+/// Today mirrors the web (components/screens/today-screen.tsx): greeting, the one task of the day on the
+/// inverted ink card, status rows, «Быстрый старт» as one list, «Незаконченные занятия», then level,
+/// «Над чем работаем» and the weekly rhythm. No kickers, no glass on content.
 struct TodayScreen: View {
     var select: (ShellTab) -> Void = { _ in }
     var entryVisible = true
@@ -120,7 +123,7 @@ struct TodayScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    TodayHeader(completedToday: completedToday)
+                    TodayHeader(completedToday: completedToday, placementFirst: placementFirst)
                         .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 0))
                     heroSection
                         .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 1))
@@ -129,7 +132,9 @@ struct TodayScreen: View {
                     TodayUploadProgress()
                     TodayQuickActions(select: select, openFreeTopic: { showFreeTopic = true })
                         .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 3))
-                    levelSection
+                    TodayLaterList(heroSessionID: heroSessionID)
+                        .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 3))
+                    TodayLevelSection(select: select, openPlacementResult: { showPlacementResult = true })
                         .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 4))
                     TodayFocusSection(select: select)
                         .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 5))
@@ -159,6 +164,16 @@ struct TodayScreen: View {
         } == true
     }
 
+    private var placementFirst: Bool {
+        if case .placement = hero, state?.placementSignal?.hasResult != true { return true }
+        return false
+    }
+
+    private var heroSessionID: String? {
+        if case .resume(let id) = hero { return id }
+        return nil
+    }
+
     @ViewBuilder private var heroSection: some View {
         switch hero {
         case .pendingRecording:
@@ -169,10 +184,10 @@ struct TodayScreen: View {
             if let session = state?.session(id) { ResumeHeroCard(session: session) }
         case .confirmSpeaker(let id):
             if let call = state?.callSignals.first(where: { $0.id == id }) {
-                TodayHeroCard(eyebrow: "Созвон", icon: "person.2.fill", title: call.title,
-                              detail: "Подтверди, кто из собеседников ты, — и разбор продолжится.", accent: Theme.cyan) {
+                TodayPrimaryCard(title: call.title, why: "Подтверди, кто из собеседников ты, — и разбор созвона продолжится.",
+                                 facts: call.counterpart.map { [$0] } ?? []) {
                     Button { openCalls(.call(id)) } label: {
-                        HStack { Text("Подтвердить"); Spacer(); Image(systemName: "arrow.right") }
+                        PrimaryActionLabel(title: "Подтвердить", icon: "person.2.fill")
                     }.buttonStyle(PrimaryButton())
                 }
             }
@@ -181,36 +196,23 @@ struct TodayScreen: View {
         case .recommendation:
             if let recommendation = state?.progression?.recommendation { RecommendationHeroCard(recommendation: recommendation) }
         case .empty:
-            TodayHeroCard(eyebrow: "Свободная тема", icon: "sparkles", title: "О чём поговорим сегодня?",
-                          detail: "Выбери тему и формат — собеседник подстроится.") {
+            TodayPrimaryCard(title: "Поговорим о том, что тебе интересно",
+                             why: "Выбери тему — собеседник подстроится, а разбор покажет, что усилить.") {
                 Button { showFreeTopic = true } label: {
-                    HStack { Text("Выбрать тему"); Spacer(); Image(systemName: "arrow.right") }
+                    PrimaryActionLabel(title: "Выбрать тему", icon: "sparkles")
                 }.buttonStyle(PrimaryButton())
-            }
-        }
-    }
-
-    @ViewBuilder private var levelSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let placement = state?.placement, state?.placementSignal?.hasResult == true {
-                PlacementLevelCard(view: placement, onOpen: { showPlacementResult = true }, onStart: { client.placementPresented = true })
-            }
-            if let progression = state?.progression {
-                Button { select(.progress) } label: { RankStrip(progression: progression) }
-                    .buttonStyle(PressButton())
-                    .accessibilityHint("Открывает вкладку «Прогресс»")
             }
         }
     }
 
     @ViewBuilder private var rhythmSection: some View {
         let days = PracticeRhythm.lastWeek(state)
-        LiquidCard(radius: Radius.tile, padding: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Ритм недели").font(.subheadline.weight(.semibold))
+        LiquidCard(padding: 18) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Ритм недели").font(TypeScale.title3).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    Text("\(days.filter { $0.practiced }.count) из 7").font(.footnote.weight(.semibold)).monospacedDigit()
+                    Text("\(days.filter { $0.practiced }.count) из 7").font(.subheadline.weight(.semibold)).monospacedDigit()
                         .foregroundStyle(Theme.inkSecondary)
                 }
                 RhythmDots(days: days)
@@ -241,15 +243,25 @@ struct TodayScreen: View {
 
 private struct TodayHeader: View {
     let completedToday: Bool
+    let placementFirst: Bool
     @EnvironmentObject private var client: TrainingClient
-    private var minutes: Int { client.state?.profile.dailyMinutes ?? 15 }
+    private var dateLine: String {
+        let text = Date().formatted(.dateTime.weekday(.wide).day().month(.wide).locale(RuFormat.locale))
+        return text.prefix(1).uppercased() + text.dropFirst()
+    }
+    private var tail: String {
+        if placementFirst { return "начнём с теста уровня, потом всё подстроится под тебя." }
+        if completedToday { return "сегодня уже потренировался, дальше — в своём темпе." }
+        return "один шаг на сегодня, остальное — по желанию."
+    }
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Привет, \(client.state?.profile.name ?? "ты").")
                     .font(TypeScale.hero).tracking(-0.6)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(completedToday ? "Сегодня уже потренировался. Дальше — в своём темпе." : "Давай поговорим \(RuFormat.minutes(minutes)).")
+                    .accessibilityAddTraits(.isHeader)
+                Text(dateLine + " · " + tail)
                     .font(.subheadline).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -261,42 +273,63 @@ private struct TodayHeader: View {
     }
 }
 
-// MARK: - Hero cards
+// MARK: - Primary card
 
-struct TodayHeroCard<Actions: View>: View {
-    let eyebrow: String
-    let icon: String
+/// The one task of the day on the ink surface: title, why, the few facts that matter, detail, one action.
+struct TodayPrimaryCard<Detail: View, Actions: View>: View {
     let title: String
-    let detail: String?
-    let accent: Color
+    let why: String?
+    let facts: [String]
+    let detail: Detail
     let actions: Actions
 
-    init(eyebrow: String, icon: String, title: String, detail: String?, accent: Color = Theme.lavender, @ViewBuilder actions: () -> Actions) {
-        self.eyebrow = eyebrow
-        self.icon = icon
+    init(title: String, why: String?, facts: [String] = [], @ViewBuilder detail: () -> Detail, @ViewBuilder actions: () -> Actions) {
         self.title = title
-        self.detail = detail
-        self.accent = accent
+        self.why = why
+        self.facts = facts
+        self.detail = detail()
         self.actions = actions()
     }
 
     var body: some View {
-        LiquidCard {
+        InkCard {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Image(systemName: icon).font(.body.weight(.semibold)).foregroundStyle(Theme.onAccent)
-                        .frame(width: 38, height: 38).background(accent, in: Circle())
-                    Text(eyebrow.uppercased()).font(.caption.weight(.bold)).tracking(0.9).foregroundStyle(Theme.inkSecondary)
-                    Spacer(minLength: 0)
-                }
                 Text(title).font(TypeScale.title2).fixedSize(horizontal: false, vertical: true)
-                if let detail, !detail.isEmpty {
-                    Text(detail).font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                if let why, !why.isEmpty {
+                    Text(why).font(.body).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
                 }
-                actions
+                if !visibleFacts.isEmpty {
+                    Text(visibleFacts.joined(separator: " · ")).font(.footnote).foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                detail
+                actions.padding(.top, 4)
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var visibleFacts: [String] { facts.filter { !$0.isEmpty } }
+}
+
+extension TodayPrimaryCard where Detail == EmptyView {
+    init(title: String, why: String?, facts: [String] = [], @ViewBuilder actions: () -> Actions) {
+        self.init(title: title, why: why, facts: facts, detail: { EmptyView() }, actions: actions)
+    }
+}
+
+/// Primary CTA label: verb, optional leading symbol, trailing arrow.
+struct PrimaryActionLabel: View {
+    let title: String
+    var icon: String? = nil
+    var body: some View {
+        HStack(spacing: 10) {
+            if let icon { Image(systemName: icon).accessibilityHidden(true) }
+            Text(title)
+            Spacer(minLength: 8)
+            Image(systemName: "arrow.right").accessibilityHidden(true)
+        }
     }
 }
 
@@ -321,29 +354,31 @@ private struct TodayPlacementCard: View {
         if status == "error" { return "Результат теста не посчитался" }
         return signal.started ? "Тест уровня: продолжим" : "Узнаем твой настоящий уровень"
     }
-    private var detail: String {
+    private var why: String {
         if status == "error" { return signal.error ?? "Ответы сохранены — результат можно пересчитать." }
         if signal.started {
-            let remaining = signal.remainingMinutes.map { " · осталось около \(RuFormat.minutes($0))" } ?? ""
-            return "Пройдено частей: \(signal.completedSections) из \(max(signal.totalSections, signal.completedSections))" + remaining
+            return "Пройдено частей: \(signal.completedSections) из \(max(signal.totalSections, signal.completedSections)). Прогресс сохранён."
         }
-        return "Около 25 минут, можно в два захода. Ответы не оцениваются по ходу — результат в конце."
+        return "Слушать, читать, говорить и короткий рабочий разговор. По результату подберём собеседников и тренировки."
+    }
+    private var facts: [String] {
+        if status == "error" { return [] }
+        let minutes = signal.remainingMinutes.map { "≈ " + RuFormat.minutes(max(5, $0)) } ?? "≈ 25 минут"
+        return [minutes, "можно в два захода", "ответы не оцениваются по ходу"]
     }
     var body: some View {
-        TodayHeroCard(eyebrow: "Тест уровня", icon: "chart.bar.xaxis", title: title, detail: detail, accent: Theme.lime) {
+        TodayPrimaryCard(title: title, why: why, facts: facts) {
             if signal.started && signal.totalSections > 0 {
-                LiquidProgressBar(value: Double(signal.completedSections) / Double(max(1, signal.totalSections)), color: Theme.violet)
+                LiquidProgressBar(value: Double(signal.completedSections) / Double(max(1, signal.totalSections)), color: Theme.lime, height: 6)
             }
             if !signal.audioAvailable {
                 Label("Голос не подключён: аудио и речь пропустим. Подключается на компьютере в настройках.", systemImage: "speaker.slash")
                     .font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
             }
+        } actions: {
             Button { client.placementPresented = true } label: {
-                HStack {
-                    Text(status == "error" ? "Открыть тест" : signal.started ? "Продолжить тест" : "Начать тест")
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                }
+                PrimaryActionLabel(title: status == "error" ? "Открыть тест" : signal.started ? "Продолжить тест" : "Начать тест",
+                                   icon: "play.fill")
             }
             .buttonStyle(PrimaryButton())
         }
@@ -353,7 +388,7 @@ private struct TodayPlacementCard: View {
 private struct ResumeHeroCard: View {
     let session: Conversation
     @EnvironmentObject private var client: TrainingClient
-    private var detail: String {
+    private var why: String {
         if session.analysisFailed { return "Разбор не получился — его можно повторить в занятии." }
         if session.status == "review" { return "Разбор готов — сделай улучшенную попытку." }
         if session.awaitsRetry { return "Улучшенная попытка ждёт тебя. Разбор сохранён." }
@@ -365,11 +400,15 @@ private struct ResumeHeroCard: View {
         if session.status == "review" || session.awaitsRetry { return "Открыть разбор" }
         return "Продолжить разговор"
     }
+    private var facts: [String] {
+        var parts = [session.mode == "call" ? "Созвон" : "С опорами"]
+        if let date = session.latestDate { parts.append(RuFormat.relativeDay(date)) }
+        return parts
+    }
     var body: some View {
-        TodayHeroCard(eyebrow: "Продолжить", icon: session.analysis != nil ? "text.badge.checkmark" : "play.fill",
-                      title: session.lesson.title, detail: detail, accent: Theme.lavender) {
+        TodayPrimaryCard(title: session.lesson.title, why: why, facts: facts) {
             Button { client.resume(session) } label: {
-                HStack { Text(buttonTitle); Spacer(); Image(systemName: "arrow.right") }
+                PrimaryActionLabel(title: buttonTitle, icon: session.analysis != nil ? "text.badge.checkmark" : "play.fill")
             }
             .buttonStyle(PrimaryButton())
             .disabled(client.recording || client.startingIntent != nil)
@@ -381,9 +420,13 @@ private struct DrillHeroCard: View {
     let drill: TodayDrillSignal
     @EnvironmentObject private var client: TrainingClient
     private var starting: Bool { client.isStarting(TrainingClient.drillKey(drill.id)) }
+    private var source: String {
+        guard let callID = drill.sourceCallId else { return "Тренировка по твоим паттернам" }
+        if let call = client.state?.callSignals.first(where: { $0.id == callID }) { return "Из созвона «" + call.title + "»" }
+        return "Из твоего созвона"
+    }
     var body: some View {
-        TodayHeroCard(eyebrow: drill.sourceCallId != nil ? "Тренировка из созвона" : "Твоя тренировка", icon: "arrow.triangle.2.circlepath",
-                      title: drill.title, detail: drill.why, accent: Theme.cyan) {
+        TodayPrimaryCard(title: drill.title, why: drill.why, facts: [source]) {
             Button { Task { await client.startDrill(id: drill.id, mode: drill.preferredMode) } } label: {
                 StartButtonLabel(title: "Переиграть момент", starting: starting)
             }
@@ -400,26 +443,13 @@ private struct RecommendationHeroCard: View {
         if let drillId = recommendation.drillId, !drillId.isEmpty { return TrainingClient.drillKey(drillId) }
         return TrainingClient.familyKey(recommendation.familyId)
     }
-    private var eyebrow: String {
-        switch recommendation.source ?? "" {
-        case "drill": return "Тренировка"
-        case "review": return "Повторение"
-        case "pattern": return "Над чем работаем"
-        default: return "План на сегодня"
-        }
-    }
-    private var icon: String {
-        switch recommendation.activity {
-        case "listening": return "ear"
-        case "reading": return "text.book.closed"
-        case "writing": return "square.and.pencil"
-        default: return recommendation.track == "work" ? "briefcase" : recommendation.track == "relocation" ? "airplane" : "waveform"
-        }
+    private var minutes: Int { client.state?.profile.dailyMinutes ?? 15 }
+    private var facts: [String] {
+        ["≈ " + RuFormat.minutes(minutes),
+         recommendation.preferredMode == "call" ? "созвон: слушаешь и отвечаешь" : "с опорами: текст и подсказки рядом"]
     }
     var body: some View {
-        TodayHeroCard(eyebrow: eyebrow, icon: icon, title: recommendation.title, detail: recommendation.why, accent: Theme.lime) {
-            Text(recommendation.preferredMode == "call" ? "Формат: созвон — слушаешь и отвечаешь." : "Формат: с опорами — текст и подсказки рядом.")
-                .font(.footnote).foregroundStyle(Theme.inkSecondary)
+        TodayPrimaryCard(title: recommendation.title, why: recommendation.why, facts: facts) {
             Button { Task { await client.startRecommendation(recommendation) } } label: {
                 StartButtonLabel(title: "Начать", starting: client.isStarting(key))
             }
@@ -429,7 +459,7 @@ private struct RecommendationHeroCard: View {
     }
 }
 
-/// Global recovery for a recording that never reached the server (L-01, P0).
+/// Global recovery for a recording that never reached the server (L-01, P0). A status card, not the ink task.
 struct PendingRecordingCard: View {
     @EnvironmentObject private var client: TrainingClient
     @State private var confirmDelete = false
@@ -449,15 +479,16 @@ struct PendingRecordingCard: View {
     var body: some View {
         LiquidCard(tint: Theme.warning.opacity(0.16)) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Image(systemName: "exclamationmark.circle.fill").font(.title3).foregroundStyle(Theme.warning)
-                    Text("ЗАПИСЬ НЕ ОТПРАВЛЕНА").font(.caption.weight(.bold)).tracking(0.9).foregroundStyle(Theme.inkSecondary)
+                        .accessibilityHidden(true)
+                    Text(title).font(TypeScale.title3).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
                 }
-                Text(title).font(TypeScale.title2).fixedSize(horizontal: false, vertical: true)
                 Text(detail).font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
                 if let openable {
                     Button { client.resume(openable) } label: {
-                        HStack { Text("Открыть занятие"); Spacer(); Image(systemName: "arrow.right") }
+                        PrimaryActionLabel(title: "Открыть занятие")
                     }
                     .buttonStyle(PrimaryButton())
                 }
@@ -489,34 +520,36 @@ struct PendingRecordingCard: View {
 
 // MARK: - Secondary rows
 
-/// Informational rows that never compete with the primary card.
+/// Informational rows that never compete with the primary card: one surface, one row each.
 private struct TodayStatusRows: View {
     let select: (ShellTab) -> Void
     @EnvironmentObject private var client: TrainingClient
     private var analysing: [Conversation] {
-        (client.state?.sessions ?? []).filter { $0.status == "analysing" }
+        Array((client.state?.sessions ?? []).filter { $0.status == "analysing" }.prefix(2))
     }
     private var processingCalls: [TodayCallSignal] {
-        (client.state?.callSignals ?? []).filter { $0.isProcessing }
+        Array((client.state?.callSignals ?? []).filter { $0.isProcessing }.prefix(2))
     }
     private var placementScoring: Bool { client.state?.placementSignal?.status == "scoring" }
     var body: some View {
         if placementScoring || !analysing.isEmpty || !processingCalls.isEmpty {
-            VStack(spacing: 8) {
+            GroupedRows {
                 if placementScoring {
                     Button { client.placementPresented = true } label: {
-                        StatusRowLabel(icon: "chart.bar.xaxis", title: "Тест уровня", detail: "Считаем результат — около двух минут")
-                    }.buttonStyle(PressButton())
+                        StatusRowLabel(title: "Тест уровня", detail: "Считаем результат — около двух минут")
+                    }.buttonStyle(RowButtonStyle())
                 }
-                ForEach(analysing.prefix(2)) { session in
+                ForEach(Array(analysing.enumerated()), id: \.element.id) { index, session in
+                    if index > 0 || placementScoring { RowDivider(inset: 56) }
                     Button { client.resume(session) } label: {
-                        StatusRowLabel(icon: "hourglass", title: session.lesson.title, detail: "Разбор готовится")
-                    }.buttonStyle(PressButton())
+                        StatusRowLabel(title: session.lesson.title, detail: "Разбор готовится")
+                    }.buttonStyle(RowButtonStyle())
                 }
-                ForEach(processingCalls.prefix(2)) { call in
+                ForEach(Array(processingCalls.enumerated()), id: \.element.id) { index, call in
+                    if index > 0 || placementScoring || !analysing.isEmpty { RowDivider(inset: 56) }
                     Button { CallsNavigator.shared.open(.call(call.id)); select(.calls) } label: {
-                        StatusRowLabel(icon: "waveform.path", title: call.title, detail: callDetail(call))
-                    }.buttonStyle(PressButton())
+                        StatusRowLabel(title: call.title, detail: callDetail(call))
+                    }.buttonStyle(RowButtonStyle())
                 }
             }
         }
@@ -544,79 +577,187 @@ private struct TodayUploadProgress: View {
 }
 
 private struct StatusRowLabel: View {
-    let icon: String
     let title: String
     let detail: String
     var body: some View {
-        HStack(spacing: 12) {
-            ProgressView().tint(Theme.violet).frame(width: 22)
+        HStack(spacing: 14) {
+            ProgressView().tint(Theme.violet).frame(width: 26)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                Text(detail).font(.caption).foregroundStyle(Theme.inkSecondary).lineLimit(2)
+                Text(title).font(.subheadline.weight(.semibold)).lineLimit(2).multilineTextAlignment(.leading)
+                Text(detail).font(.footnote).foregroundStyle(Theme.inkSecondary).lineLimit(2).multilineTextAlignment(.leading)
             }
-            Spacer(minLength: 0)
-            Image(systemName: icon).font(.footnote).foregroundStyle(Theme.inkSecondary)
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
-        .modifier(LiquidChrome(radius: Radius.tile, tint: nil, interactive: false))
+        .foregroundStyle(Theme.ink)
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 }
 
+/// «Быстрый старт»: everything else you can start right now, as one list (no clipped chip row).
 private struct TodayQuickActions: View {
     let select: (ShellTab) -> Void
     let openFreeTopic: () -> Void
     @EnvironmentObject private var client: TrainingClient
     private var pitch: CatalogFamily? { client.catalogFamily("strategy-pitch-30") }
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            NativeGlassGroup(spacing: 8) {
-                HStack(spacing: 8) {
-                    Button { select(.calls) } label: { Label("Загрузить созвон", systemImage: "square.and.arrow.up") }
-                        .buttonStyle(QuietButton())
-                    if let pitch {
-                        Button { Task { await client.startFamily(familyId: pitch.id, mode: pitch.preferredMode) } } label: {
-                            if client.isStarting(TrainingClient.familyKey(pitch.id)) {
-                                HStack(spacing: 6) { ProgressView(); Text("Готовим…") }
-                            } else {
-                                Label("Питч за 30 секунд", systemImage: "timer")
-                            }
-                        }
-                        .buttonStyle(QuietButton())
-                        .disabled(client.busy || client.startingIntent != nil || client.hasUnuploadedRecording)
-                    }
-                    Button(action: openFreeTopic) { Label("Свободная тема", systemImage: "sparkles") }
-                        .buttonStyle(QuietButton())
-                        .disabled(client.hasUnuploadedRecording)
-                }
-                .padding(.vertical, 2)
+        GroupedRows("Быстрый старт") {
+            Button { select(.calls) } label: {
+                ListRowLabel(icon: "square.and.arrow.up", title: "Загрузить созвон", detail: "Запись, видео или текст звонка")
             }
+            .buttonStyle(RowButtonStyle())
+            .accessibilityHint("Открывает вкладку «Созвоны»")
+            if let pitch {
+                let starting = client.isStarting(TrainingClient.familyKey(pitch.id))
+                RowDivider(inset: 56)
+                Button { Task { await client.startFamily(familyId: pitch.id, mode: pitch.preferredMode) } } label: {
+                    ListRowLabel(icon: "megaphone", title: starting ? "Готовим…" : "Питч за 30 секунд",
+                                 detail: "Кто ты и почему именно ты", showsChevron: !starting) {
+                        if starting { ProgressView().tint(Theme.violet) }
+                    }
+                }
+                .buttonStyle(RowButtonStyle())
+                .disabled(client.busy || client.startingIntent != nil || client.hasUnuploadedRecording)
+            }
+            RowDivider(inset: 56)
+            Button(action: openFreeTopic) {
+                ListRowLabel(icon: "sparkles", title: "Свободная тема", detail: "Разговор о том, что интересно")
+            }
+            .buttonStyle(RowButtonStyle())
+            .disabled(client.hasUnuploadedRecording)
         }
-        .scrollClipDisabled()
         .task { await client.loadCatalog() }
     }
 }
 
+/// «Незаконченные занятия»: other sessions that can be resumed (the newest one is the primary card).
+private struct TodayLaterList: View {
+    let heroSessionID: String?
+    @EnvironmentObject private var client: TrainingClient
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var later: [Conversation] {
+        (client.state?.sessions ?? []).filter { $0.isResumable && $0.id != heroSessionID }
+            .sorted { ($0.latestDate ?? .distantPast) > ($1.latestDate ?? .distantPast) }
+    }
+    var body: some View {
+        let sessions = later
+        if !sessions.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                Button { expanded.toggle() } label: {
+                    ListRowLabel(title: "Незаконченные занятия",
+                                 detail: "\(sessions.count) — можно вернуться в любой момент", showsChevron: false) {
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                            .animation(reduceMotion ? nil : NativeMotion.standard, value: expanded)
+                    }
+                }
+                .buttonStyle(RowButtonStyle())
+                .accessibilityValue(expanded ? "Развёрнуто" : "Свёрнуто")
+                if expanded {
+                    ForEach(Array(sessions.prefix(8))) { session in
+                        RowDivider()
+                        Button { client.resume(session) } label: {
+                            ListRowLabel(title: session.lesson.title,
+                                         detail: Self.status(session) + (session.latestDate.map { " · " + RuFormat.relativeDay($0) } ?? ""))
+                        }
+                        .buttonStyle(RowButtonStyle())
+                        .disabled(client.recording || client.startingIntent != nil)
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+            .contentSurface()
+        }
+    }
+    /// Same wording as the web's `sessionStatusLabel`.
+    static func status(_ session: Conversation) -> String {
+        if session.retryDeferred == true { return "Попытка на потом" }
+        if session.status == "completed" { return "Завершено" }
+        if session.status == "analysing" { return "Готовится разбор" }
+        if session.status == "review" { return "Разбор готов" }
+        if session.status == "error" { return session.analysis != nil ? "Можно повторить разбор" : "Разбор не получился" }
+        return "Можно продолжить"
+    }
+}
+
+/// «Уровень»: the language level from the test and the practice rank in one surface.
+private struct TodayLevelSection: View {
+    let select: (ShellTab) -> Void
+    let openPlacementResult: () -> Void
+    @EnvironmentObject private var client: TrainingClient
+    private var placement: PlacementView? {
+        client.state?.placementSignal?.hasResult == true ? client.state?.placement : nil
+    }
+    var body: some View {
+        let progression = client.state?.progression
+        if placement != nil || progression != nil {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Уровень").font(TypeScale.title3).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    Button { select(.progress) } label: {
+                        HStack(spacing: 4) { Text("Прогресс"); Image(systemName: "chevron.right") }
+                            .font(.subheadline.weight(.semibold))
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressButton())
+                    .foregroundStyle(Theme.violet)
+                }
+                if let placement {
+                    PlacementLevelCard(view: placement, onOpen: openPlacementResult,
+                                       onStart: { client.placementPresented = true }, embedded: true)
+                }
+                if let progression {
+                    if placement != nil { RowDivider(inset: 0) }
+                    Button { select(.progress) } label: { RankStrip(progression: progression) }
+                        .buttonStyle(PressButton())
+                        .accessibilityHint("Открывает вкладку «Прогресс»")
+                    Text("Опыт — за практику, не за язык. Языковой уровень меняет только тест.")
+                        .font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentSurface()
+        }
+    }
+}
+
+/// «Над чем работаем»: the top two weaknesses as rows of one surface.
 private struct TodayFocusSection: View {
     let select: (ShellTab) -> Void
     @EnvironmentObject private var client: TrainingClient
     var body: some View {
         let patterns = TodayPlanner.focusPatterns(client.state)
         if !patterns.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    LiquidSectionHeader(title: "Над чем работаем")
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Над чем работаем").font(TypeScale.title3).accessibilityAddTraits(.isHeader)
+                    Spacer()
                     Button { openPatterns() } label: {
-                        HStack(spacing: 4) { Text("Все"); Image(systemName: "chevron.right") }.font(.footnote.weight(.semibold))
+                        HStack(spacing: 4) { Text("Все"); Image(systemName: "chevron.right") }
+                            .font(.subheadline.weight(.semibold))
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(PressButton())
                     .foregroundStyle(Theme.violet)
+                    .accessibilityLabel("Все паттерны")
                 }
-                ForEach(patterns) { pattern in
+                .padding(.leading, 20).padding(.trailing, 16).padding(.top, 8)
+                ForEach(Array(patterns.enumerated()), id: \.element.id) { index, pattern in
+                    if index > 0 { RowDivider(inset: 20) }
                     Button { openPatterns() } label: { TodayFocusRow(pattern: pattern) }
-                        .buttonStyle(PressButton())
+                        .buttonStyle(RowButtonStyle())
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+            .contentSurface()
         }
     }
 
@@ -628,55 +769,80 @@ private struct TodayFocusSection: View {
 
 private struct TodayFocusRow: View {
     let pattern: TodayPatternSignal
+    private var tint: Color {
+        switch pattern.status {
+        case "active": return Theme.warning
+        case "improving": return Theme.violet
+        case "resolved": return Theme.lime
+        default: return Theme.lavender
+        }
+    }
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(pattern.title).font(.subheadline.weight(.semibold)).multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 FocusHistoryDots(history: pattern.history)
             }
-            Spacer(minLength: 0)
-            StatusPill(title: pattern.statusTitle, color: pattern.status == "improving" ? Theme.lime : pattern.status == "active" ? Theme.pink : Theme.lavender)
+            Spacer(minLength: 8)
+            StatusPill(title: pattern.statusTitle, color: tint)
         }
-        .padding(14)
-        .modifier(LiquidChrome(radius: Radius.tile, tint: nil, interactive: false))
+        .foregroundStyle(Theme.ink)
+        .padding(.leading, 20).padding(.trailing, 16).padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 }
 
-/// ● repeated ○ avoided · no opportunity ◐ improved (oldest first, last eight).
+/// Outcome marks, oldest first (last eight): drawn symbols whose shape carries the meaning.
 struct FocusHistoryDots: View {
     let history: [String]
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             ForEach(Array(history.suffix(8).enumerated()), id: \.offset) { _, status in
-                dot(status)
+                OutcomeMark(status: status)
             }
             if history.isEmpty {
-                Text("Пока без истории").font(.caption2).foregroundStyle(Theme.inkTertiary)
+                Text("Пока без истории").font(.caption).foregroundStyle(Theme.inkTertiary)
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
     }
-    @ViewBuilder private func dot(_ status: String) -> some View {
-        switch status {
-        case "avoided":
-            Circle().strokeBorder(Theme.limeInk, lineWidth: 2).frame(width: 10, height: 10)
-        case "improved":
-            Circle().fill(LinearGradient(colors: [Theme.limeInk, Theme.limeInk, Color.clear, Color.clear], startPoint: .leading, endPoint: .trailing))
-                .overlay { Circle().strokeBorder(Theme.limeInk, lineWidth: 1.5) }
-                .frame(width: 10, height: 10)
-        case "no-opportunity":
-            Circle().fill(Theme.inkTertiary).frame(width: 4, height: 4).frame(width: 10, height: 10)
-        default:
-            Circle().fill(Theme.pink).frame(width: 10, height: 10)
-        }
-    }
     private var accessibilityText: String {
         let repeated = history.filter { $0 == "repeated" || $0 == "new" }.count
         let avoided = history.filter { $0 == "avoided" || $0 == "improved" }.count
         return "Повторялось: \(repeated). Удалось избежать: \(avoided)."
+    }
+}
+
+/// One outcome of a pattern (same marks as the web's OUTCOME_ICON, in status colour): ✕ repeated,
+/// ✓ held, ◐ partly better, – no occasion. Practice outcomes draw the repeated mark outlined.
+struct OutcomeMark: View {
+    let status: String
+    var filled = true
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Self.color(status))
+            .accessibilityHidden(true)
+    }
+    private var symbol: String {
+        switch status {
+        case "repeated", "new": return filled ? "xmark.circle.fill" : "xmark.circle"
+        case "avoided": return "checkmark.circle"
+        case "improved": return "circle.lefthalf.filled"
+        default: return "minus.circle"
+        }
+    }
+    static func color(_ status: String) -> Color {
+        switch status {
+        case "repeated", "new": return Theme.danger
+        case "avoided": return Theme.limeInk
+        case "improved": return Theme.violet
+        default: return Theme.inkTertiary
+        }
     }
 }
 

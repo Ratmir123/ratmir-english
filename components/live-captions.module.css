@@ -1,6 +1,6 @@
 .caption { position: relative; min-width: 0; overflow: hidden; display: grid; gap: 6px; }
 .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.heading :global(.eyebrow) { color: var(--text-secondary); text-transform: none; letter-spacing: 0; font-weight: 650; }
+.status { min-width: 0; font-size: var(--text-13); font-weight: 650; color: var(--text-secondary); }
 .liveDot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--accent-lime); box-shadow: 0 0 0 0 var(--accent-lime-soft); animation: live 1.6s infinite; }
 @keyframes live { 70% { box-shadow: 0 0 0 7px transparent; } }
 
@@ -10,7 +10,7 @@
   scrollbar-width: thin; scrollbar-color: var(--surface-sunken-2) transparent; scroll-behavior: auto; border-radius: 8px; scroll-padding-bottom: 6px;
 }
 .caption .words { margin: 0; min-height: 0; color: var(--text-primary); font-size: var(--text-17); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-.word { display: inline-block; max-width: 100%; vertical-align: baseline; transform-origin: 50% 75%; animation: arrive 300ms linear; }
+.word { display: inline-block; max-width: 100%; vertical-align: baseline; animation: arrive 220ms var(--ease-out); }
 .placeholder { color: var(--text-tertiary); font-size: var(--text-15); }
 .latest {
   display: flex; align-items: center; gap: 6px; min-height: 34px; margin: -2px 0 4px auto; padding: 5px 12px;
@@ -20,11 +20,7 @@
 .latest:active { transform: scale(.97); }
 .caption small { font-size: var(--text-12); color: var(--text-tertiary); }
 
-@keyframes arrive {
-  0% { transform: translateY(3px) scale(.9, 1.1); }
-  42% { transform: translateY(-1px) scale(1.045, .96); }
-  72% { transform: translateY(.3px) scale(.988, 1.016); }
-  100% { transform: translateY(0) scale(1, 1); }
-}
+/* A new word settles in place; no overshoot (that is reserved for the mascot and rewards). */
+@keyframes arrive { from { opacity: .35; transform: translateY(3px); } }
 @media (max-width: 600px) { .viewport { max-height: 112px; } .latest { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .word, .liveDot { animation: none; } .latest:active { transform: none; } }

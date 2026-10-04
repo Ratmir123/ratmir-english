@@ -1,18 +1,17 @@
 'use client';
 
 /**
- * «Созвоны» tab: upload card, calls list (status chips, progress while processing), call detail
- * (Разбор · Тренировки · Транскрипт) and «Мои паттерны». Master–detail on wide windows, stacked on phones.
+ * «Созвоны» tab, in reading order: upload entry, the calls list (one surface, a row per call with its state),
+ * then «Мои паттерны» — or the selected call (Разбор · Тренировки · Транскрипт). Master–detail when the
+ * content area is ≥1000px wide, stacked otherwise.
  * Polls GET calls every 3 s only while something is processing.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import {
-  ArrowLeftIcon, CheckCircleIcon, ClockIcon, CursorClickIcon, FileTextIcon, PhoneCallIcon, TargetIcon, UserCircleIcon, WarningIcon, type Icon,
-} from '@phosphor-icons/react';
+import { ArrowLeftIcon, CursorClickIcon, FileTextIcon, PhoneCallIcon, TargetIcon } from '@phosphor-icons/react';
 import { api } from '@/lib/client/api';
 import type { CallStatus, CallSummary } from '@/lib/calls/types';
 import type { AppState, Mode } from '@/lib/types';
-import { Chip, cx, kit, ProgressRing, useInterval } from './kit';
+import { Chip, cx, kit, ProgressBar, useInterval } from './kit';
 import { CALL_STATUS, formatDay, formatDuration, isCallProcessing, plural, SOURCE_LABEL } from './format';
 import { dismissUpload, getServerUploadsSnapshot, getUploadsSnapshot, subscribeUploads, type UploadJob } from './upload-store';
 import { CallUploadCard } from './upload-call';
@@ -20,46 +19,41 @@ import { CallDetailView, UploadProgress } from './call-detail';
 import { PatternsPanel } from './patterns-panel';
 import styles from './calls.module.css';
 
-const STATUS_ICON: Record<CallStatus, Icon> = {
-  'awaiting-upload': ClockIcon, queued: ClockIcon, processing: ClockIcon, 'needs-speaker': UserCircleIcon, analysing: ClockIcon,
-  ready: CheckCircleIcon, error: WarningIcon,
-};
-
+/** One call as a list row: title with its state, who/when, then the one line that matters for that state. */
 function CallItem({ call, job, selected, onSelect }: { call: CallSummary; job: UploadJob | null; selected: boolean; onSelect: () => void }) {
   const status = CALL_STATUS[call.status];
-  const StatusIcon = STATUS_ICON[call.status];
   const processing = isCallProcessing(call.status);
   const meta = [call.counterpart, formatDay(call.occurredAt ?? call.createdAt), formatDuration(call.durationSeconds), call.source !== 'audio' ? SOURCE_LABEL[call.source] : null]
     .filter(Boolean).join(' · ');
   const drillsLeft = call.drillsTotal - call.drillsDone;
   return (
     <li>
-      <button type="button" className={styles.item} aria-current={selected} onClick={onSelect}>
-        {processing
-          ? <ProgressRing value={call.progress ? call.progress.percent / 100 : null} size={44} stroke={4} label={call.progress?.stage ?? status.label} />
-          : <span className={styles.itemIcon} data-tone={status.tone} aria-hidden="true"><StatusIcon size={22} weight={call.status === 'ready' ? 'fill' : 'bold'} /></span>}
-        <span className={styles.itemBody}>
-          <span className={styles.itemTop}>
-            <strong>{call.title}</strong>
-            <Chip tone={status.tone}>{status.label}</Chip>
-          </span>
-          {meta ? <span className={styles.itemMeta}>{meta}</span> : null}
-          {call.status === 'ready' && (call.topCost || call.outcome) ? (
-            <span className={styles.itemLine}>{call.topCost ? <><em>Дороже всего:</em> {call.topCost}</> : call.outcome}</span>
-          ) : null}
-          {processing ? <span className={styles.itemLine}>{call.progress?.stage ?? 'В очереди на разбор'}</span> : null}
-          {call.status === 'needs-speaker' ? <span className={styles.itemLine}>Подтверди, кто из собеседников ты — и разбор продолжится.</span> : null}
-          {call.status === 'error' ? <span className={styles.itemLine}>{call.error ?? 'Разбор не получился — можно повторить.'}</span> : null}
-          {call.status === 'awaiting-upload' ? (
-            job ? <span className={styles.itemProgress}><UploadProgress job={job} compact /></span>
-              : <span className={styles.itemLine}>Загрузка прервалась — открой, чтобы продолжить.</span>
-          ) : null}
-          {call.status === 'ready' && call.drillsTotal ? (
-            <span className={styles.itemMeta}><TargetIcon size={12} weight="bold" style={{ display: 'inline-block', verticalAlign: -1 }} /> {drillsLeft
-              ? `${drillsLeft} ${plural(drillsLeft, ['тренировка ждёт', 'тренировки ждут', 'тренировок ждут'])}`
-              : 'все тренировки пройдены'}</span>
-          ) : null}
+      <button type="button" className={styles.item} aria-current={selected || undefined} onClick={onSelect}>
+        <span className={styles.itemTop}>
+          <strong>{call.title}</strong>
+          <Chip tone={status.tone}>{status.label}</Chip>
         </span>
+        {meta ? <span className={styles.itemMeta}>{meta}</span> : null}
+        {call.status === 'ready' && (call.topCost || call.outcome) ? (
+          <span className={styles.itemLine}>{call.topCost ? <><em>Дороже всего:</em> {call.topCost}</> : call.outcome}</span>
+        ) : null}
+        {processing ? (
+          <span className={styles.itemProgress}>
+            <span>{call.progress?.stage ?? 'В очереди на разбор'}{call.progress ? <span className={kit.num}> · {Math.round(call.progress.percent)}%</span> : null}</span>
+            {call.progress ? <ProgressBar value={call.progress.percent / 100} label={call.progress.stage ?? status.label} /> : null}
+          </span>
+        ) : null}
+        {call.status === 'needs-speaker' ? <span className={styles.itemLine}>Подтверди, кто из собеседников ты — и разбор продолжится.</span> : null}
+        {call.status === 'error' ? <span className={styles.itemLine}>{call.error ?? 'Разбор не получился — можно повторить.'}</span> : null}
+        {call.status === 'awaiting-upload' ? (
+          job ? <span className={styles.itemProgress}><UploadProgress job={job} compact /></span>
+            : <span className={styles.itemLine}>Загрузка прервалась — открой, чтобы продолжить.</span>
+        ) : null}
+        {call.status === 'ready' && call.drillsTotal ? (
+          <span className={styles.itemMeta}><TargetIcon size={14} aria-hidden="true" />{drillsLeft
+            ? `${drillsLeft} ${plural(drillsLeft, ['тренировка ждёт', 'тренировки ждут', 'тренировок ждут'])}`
+            : 'Все тренировки пройдены'}</span>
+        ) : null}
       </button>
     </li>
   );
@@ -67,10 +61,10 @@ function CallItem({ call, job, selected, onSelect }: { call: CallSummary; job: U
 
 function PendingUpload({ job }: { job: UploadJob }) {
   return (
-    <li className={cx(kit.glass, styles.uploadRow)}>
-      <div className={styles.uploadHead}><FileTextIcon size={18} weight="bold" /><strong>{job.title}</strong></div>
+    <li className={styles.uploadRow}>
+      <div className={styles.uploadHead}><FileTextIcon size={18} aria-hidden="true" /><strong>{job.title}</strong></div>
       <UploadProgress job={job} compact />
-      {job.phase === 'error' ? <button type="button" className={cx(kit.btn, kit.quiet, kit.small)} onClick={() => dismissUpload(job.key)}>Убрать</button> : null}
+      {job.phase === 'error' ? <button type="button" className={cx(kit.btn, kit.quiet, kit.small)} style={{ justifySelf: 'start' }} onClick={() => dismissUpload(job.key)}>Убрать</button> : null}
     </li>
   );
 }
@@ -137,16 +131,18 @@ export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId }: {
         <div className={styles.listPane}>
           <div className={styles.pageHead}>
             <h1>Созвоны</h1>
-            <p>Загрузи звонок — получишь разбор в порядке твоих заметок, тренировки из своих же моментов и обновлённые паттерны.</p>
+            <p>Загрузи звонок — получишь разбор, тренировки из своих же моментов и обновлённые паттерны.</p>
           </div>
           <CallUploadCard onCreated={id => { void fetchCalls(); void refreshApp(); select(id); }} />
           {pendingJobs.length || calls.length ? (
-            <>
+            <section className={styles.callsBlock} aria-labelledby="calls-list-title">
               <div className={styles.sectionTitle}>
-                <h2>Звонки · {calls.length}</h2>
-                {needsAction ? <Chip tone="violet">{needsAction} {plural(needsAction, ['ждёт тебя', 'ждут тебя', 'ждут тебя'])}</Chip> : null}
+                <h2 id="calls-list-title">Звонки</h2>
+                {needsAction
+                  ? <Chip tone="violet">{needsAction} {plural(needsAction, ['ждёт тебя', 'ждут тебя', 'ждут тебя'])}</Chip>
+                  : <span className={styles.sectionCount}>{calls.length} {plural(calls.length, ['звонок', 'звонка', 'звонков'])}</span>}
               </div>
-              <ul className={styles.list}>
+              <ul className={cx(kit.glass, styles.list)}>
                 {pendingJobs.map(job => <PendingUpload key={job.key} job={job} />)}
                 {calls.map(call => (
                   <CallItem key={call.id} call={call} job={uploads.find(job => job.callId === call.id) ?? null}
@@ -155,17 +151,17 @@ export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId }: {
               </ul>
               {selected ? (
                 <button type="button" className={cx(kit.btn, kit.quiet, kit.small, styles.patternsLink)} onClick={() => select(null)}>
-                  <TargetIcon size={16} weight="bold" />Мои паттерны
+                  <TargetIcon size={16} />Мои паттерны
                 </button>
               ) : null}
-            </>
+            </section>
           ) : (
             <div className={cx(kit.glass, styles.empty)}>
-              <h3>Первый звонок — первый разбор</h3>
+              <h2>Первый звонок — первый разбор</h2>
               <ul>
-                <li><PhoneCallIcon size={16} weight="bold" />Итог, что сработало и что стоило денег — с цитатами и временем.</li>
-                <li><CursorClickIcon size={16} weight="bold" />«Как сказать сильнее» — твоим голосом, можно послушать.</li>
-                <li><TargetIcon size={16} weight="bold" />Тренировки из твоих моментов и паттерны от звонка к звонку.</li>
+                <li><PhoneCallIcon size={18} aria-hidden="true" />Итог, что сработало и что стоило денег — с цитатами и временем.</li>
+                <li><CursorClickIcon size={18} aria-hidden="true" />«Как сказать сильнее» — твоим голосом, можно послушать.</li>
+                <li><TargetIcon size={18} aria-hidden="true" />Тренировки из твоих моментов и паттерны от звонка к звонку.</li>
               </ul>
             </div>
           )}

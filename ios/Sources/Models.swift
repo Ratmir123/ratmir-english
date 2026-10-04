@@ -371,10 +371,10 @@ struct TodayPatternSignal: Decodable, Identifiable {
 
     var statusTitle: String {
         switch status {
-        case "active": return "Активен"
-        case "improving": return "Улучшается"
-        case "resolved": return "Побеждён"
-        default: return "Под наблюдением"
+        case "active": return "В работе"
+        case "improving": return "Лучше"
+        case "resolved": return "Закрыто"
+        default: return "Замечено"
         }
     }
 }

@@ -4,6 +4,7 @@ import { memo } from 'react';
 import { FACE } from '@/lib/mascot/constants';
 import type { EyeShape } from '@/lib/mascot/emotions';
 import { blushGeometry, cubicPath, eyePath, fmt, mouthPoints, specialEyeShape, type SpecialEyeGeometry } from '@/lib/mascot/face';
+import type { MascotFaceColors } from '@/lib/mascot/palette';
 import type { MascotFrame } from '@/lib/mascot/physics';
 
 const UNIT = 100;
@@ -60,7 +61,8 @@ export function faceStrings(frame: MascotFrame): { pills: [string, string]; mout
 
 export interface FaceStrings { pills: [string, string]; mouth: string }
 /** Rendered once; never re-rendered (props are stable), so per-frame imperative updates are never fought by React. */
-export const MascotFace = memo(function MascotFace({ uid, refs, strings, blush, className }: { uid: string; refs: FaceRefs; strings: FaceStrings; blush: number; className?: string }) {
+/** Colours come from the mascot palette; a palette change re-renders only the colour attributes. */
+export const MascotFace = memo(function MascotFace({ uid, refs, strings, blush, colors, className }: { uid: string; refs: FaceRefs; strings: FaceStrings; blush: number; colors: MascotFaceColors; className?: string }) {
   const glowId = `${uid}-glow`, blushId = `${uid}-blush`, clipId = `${uid}-mouth`;
   return <svg className={className} viewBox="-50 -50 100 100" aria-hidden="true" focusable="false" overflow="visible">
     <defs>
@@ -71,7 +73,7 @@ export const MascotFace = memo(function MascotFace({ uid, refs, strings, blush, 
       </radialGradient>
       <filter id={glowId} x="-60%" y="-60%" width="220%" height="220%" colorInterpolationFilters="sRGB">
         <feGaussianBlur in="SourceAlpha" stdDeviation={GLOW} result="blur" />
-        <feFlood floodColor="#FFFFFF" floodOpacity={FACE.glowOpacity} />
+        <feFlood floodColor={colors.glow} floodOpacity={colors.glowOpacity} />
         <feComposite in2="blur" operator="in" result="glow" />
         <feMerge><feMergeNode in="glow" /><feMergeNode in="SourceGraphic" /></feMerge>
       </filter>
@@ -83,14 +85,14 @@ export const MascotFace = memo(function MascotFace({ uid, refs, strings, blush, 
     <g ref={node => { refs.face = node; }}>
       <g filter={`url(#${glowId})`}>
         {([0, 1] as const).map(index => <g key={index} ref={node => { refs.eyes[index] = node; }} transform={`translate(${fmt((index === 0 ? -1 : 1) * EYE_X)} ${fmt(EYE_Y)})`}>
-          <path ref={node => { refs.pills[index] = node; }} d={strings.pills[index]} fill={FACE.eyeColor} />
+          <path ref={node => { refs.pills[index] = node; }} d={strings.pills[index]} fill={colors.eye} />
           <g ref={node => { refs.specialGroups[index] = node; }} opacity="0">
-            <path ref={node => { refs.specials[index] = node; }} d="" fill="none" stroke={FACE.eyeColor} strokeLinecap="round" strokeLinejoin="round" />
+            <path ref={node => { refs.specials[index] = node; }} d="" fill="none" stroke={colors.eye} strokeLinecap="round" strokeLinejoin="round" />
           </g>
         </g>)}
         <g ref={node => { refs.mouth = node; }} transform={`translate(0 ${fmt(MOUTH_Y)})`}>
-          <path ref={node => { refs.lip = node; }} d={strings.mouth} fill={FACE.eyeColor} />
-          <path ref={node => { refs.open = node; }} d={strings.mouth} fill={FACE.mouthInterior} fillOpacity={FACE.mouthInteriorOpacity} stroke={FACE.eyeColor} strokeWidth={fmt(RIM)} strokeLinejoin="round" opacity="0" />
+          <path ref={node => { refs.lip = node; }} d={strings.mouth} fill={colors.eye} stroke={colors.lipStroke > 0 ? colors.eye : undefined} strokeWidth={colors.lipStroke > 0 ? colors.lipStroke : undefined} strokeLinejoin="round" />
+          <path ref={node => { refs.open = node; }} d={strings.mouth} fill={colors.mouthInterior} fillOpacity={colors.mouthInteriorOpacity} stroke={colors.eye} strokeWidth={fmt(RIM)} strokeLinejoin="round" opacity="0" />
           <g clipPath={`url(#${clipId})`}><ellipse ref={node => { refs.tongue = node; }} cx="0" cy="0" rx="1" ry="1" fill={FACE.tongue} opacity="0" /></g>
         </g>
       </g>
@@ -110,7 +112,7 @@ export class FaceView {
   private readonly last = new Float64Array(SLOTS).fill(NaN);
   private readonly points = new Float64Array(26);
   private readonly shapes: [EyeShape, EyeShape] = ['pill', 'pill'];
-  constructor(private readonly refs: FaceRefs) {}
+  constructor(private readonly refs: FaceRefs, private readonly eyeColor: string = FACE.eyeColor) {}
 
   /** True when the value moved by at least one quantum since the last frame (and remembers it). */
   private moved(slot: number, value: number, quantum: number) {
@@ -139,7 +141,8 @@ export class FaceView {
         if (shape !== 'pill' && path) {
           const geometry = special(shape, index as 0 | 1);
           path.setAttribute('d', geometry.d);
-          path.setAttribute('fill', geometry.filled ? FACE.eyeColor : 'none');
+          path.setAttribute('fill', geometry.filled ? this.eyeColor : 'none');
+          path.setAttribute('stroke', this.eyeColor);
           path.setAttribute('stroke-width', fmt(geometry.stroke));
         }
       }

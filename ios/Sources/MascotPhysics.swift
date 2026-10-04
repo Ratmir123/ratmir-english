@@ -147,8 +147,8 @@ struct MascotFrame {
     var scaleY: Double = 1
     /// Degrees, positive = clockwise.
     var rotation: Double = 0
-    var shadowScaleX: Double = 1
-    var shadowScaleY: Double = 1
+    /// Squash q (positive = wider and shorter); feeds the floor shadow (MascotShadowPose).
+    var squash: Double = 0
     var leftEye = MascotEyeFrame()
     var rightEye = MascotEyeFrame()
     var mouth = MascotMouthFrame()
@@ -1100,10 +1100,7 @@ final class MascotPhysics {
         frame.scaleX = (1 + 0.5 * q) * puffX.value
         frame.scaleY = (1 - q) * puffY.value
         frame.rotation = tilt.value
-        let lift = min(1, max(0, -hop.value / (0.2 * side)))
-        let shadow = 1 - 0.25 * lift
-        frame.shadowScaleX = shadow * (1 + 0.3 * max(0, q))
-        frame.shadowScaleY = shadow
+        frame.squash = q
         let pillEyes = shapeL == .pill && shapeR == .pill
         let blinkFactor = (pillEyes && !sleeping) ? 1 - 0.92 * blinkClosure(now: now) : 1
         frame.leftEye = eyeFrame(left: true, now: now, blink: blinkFactor)

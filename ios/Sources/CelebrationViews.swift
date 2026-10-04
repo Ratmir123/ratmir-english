@@ -91,7 +91,8 @@ struct CompletionCelebration: View {
     }
 }
 
-/// Rank up: a full-screen glass moment, the medal drops in with a bounce (DESIGN-SYSTEM Celebrations).
+/// Rank up: a full-screen glass moment. The medal drops in back-facing, makes 1.5 decelerating turns with a
+/// flash across the face and settles with a small overshoot (DESIGN-PASS-0.5.1); Reduce Motion shows it still.
 struct RankUpOverlay: View {
     let level: Int
     let onClaim: () -> Void
@@ -106,7 +107,7 @@ struct RankUpOverlay: View {
             Theme.base.opacity(0.35).ignoresSafeArea()
             VStack(spacing: 22) {
                 Spacer(minLength: 20)
-                RankEmblem(level: level, size: 190, animated: dropped)
+                RankEmblem(level: level, size: 190, animated: dropped, entrance: true)
                     .offset(y: dropped || reduceMotion ? 0 : -260)
                     .scaleEffect(dropped || reduceMotion ? 1 : 0.6)
                     .opacity(dropped || reduceMotion ? 1 : 0)
@@ -131,7 +132,7 @@ struct RankUpOverlay: View {
         .mascotConfetti(trigger: burst, origin: UnitPoint(x: 0.5, y: 0.3))
         .sensoryFeedback(.levelChange, trigger: burst)
         .onAppear {
-            withAnimation(reduceMotion ? nil : NativeMotion.bouncy) { dropped = true }
+            withAnimation(reduceMotion ? nil : .spring(duration: 0.8, bounce: 0.35)) { dropped = true }
             burst += 1
         }
         .accessibilityElement(children: .contain)

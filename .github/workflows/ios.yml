@@ -71,6 +71,7 @@ jobs:
             xcrun simctl io "$device" screenshot "iPhone11-$screen.png"
           done
           xcrun simctl ui "$device" appearance dark
+          sleep 3 # the appearance switch lands asynchronously; the first dark capture used to come out light
           for screen in today practice-catalog conversation dictation-preview review pushback calls call-review placement-result progress achievements history profile; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"

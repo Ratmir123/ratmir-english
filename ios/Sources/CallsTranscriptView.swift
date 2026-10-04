@@ -52,8 +52,10 @@ struct CallTranscriptView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            LazyVStack(alignment: .leading, spacing: 10) {
+            // One surface, one row per line; the speaker shows as a dot and a name (no side stripes).
+            LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(detail.segments) { segment in
+                    if segment.id != detail.segments.first?.id { RowDivider() }
                     CallSegmentRow(segment: segment,
                                    speakerLabel: label(for: segment.speaker),
                                    isMe: segment.speaker != nil && segment.speaker == detail.meSpeakerId,
@@ -64,6 +66,8 @@ struct CallTranscriptView: View {
                                    onToggleDispute: { toggleDispute(segment) })
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+            .contentSurface()
         }
     }
 
@@ -142,13 +146,9 @@ struct CallSegmentRow: View {
                 .font(.footnote)
             }
         }
-        .padding(12)
-        .padding(.leading, 4)
+        .padding(.horizontal, 16).padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(highlighted ? color.opacity(0.25) : FeaturePalette.solid, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 3).padding(.vertical, 10)
-        }
+        .background(highlighted ? color.opacity(0.22) : Color.clear)
         .contextMenu {
             if let start = segment.start, let onSeek {
                 Button("Слушать отсюда", systemImage: "play") { onSeek(start) }

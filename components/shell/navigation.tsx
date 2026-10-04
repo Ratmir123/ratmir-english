@@ -43,9 +43,9 @@ export function Sidebar() {
   return <aside className="sidebar glass" aria-label="Навигация">
     <button type="button" className="brand" onClick={() => app.go('today')} aria-label={`${APP_NAME} — на главную`}>
       <span className="brand-mark" aria-hidden="true">S</span>
-      <span>{APP_NAME}<small>Тренинг общения</small></span>
+      <span className="brand-copy">{APP_NAME}<small>Тренинг общения</small></span>
     </button>
-    {minimized && <button type="button" className="nav-session" onClick={() => nav.openSession()}>
+    {minimized && <button type="button" className="nav-session" onClick={() => nav.openSession()} aria-label={`Текущее занятие: ${sessionStatusLabel(minimized)}`} title="Вернуться к занятию">
       <span className="pulse" aria-hidden="true" />
       <span style={{ minWidth: 0 }}><strong>Текущее занятие</strong><small>{sessionStatusLabel(minimized)}</small></span>
       <ArrowRightIcon size={16} style={{ marginLeft: 'auto', flexShrink: 0 }} />
@@ -68,14 +68,16 @@ export function Sidebar() {
       {progression && <button type="button" className="sidebar-rank" data-xp-target onClick={() => app.go('progress', { progress: 'rewards' })}
         aria-label={`Ранг «${rankProgress(progression).band.title}», ${progression.xp} XP. Открыть награды`}>
         <span className="row"><RankMedal level={progression.level} size={34} animated={false} />
-          <span style={{ minWidth: 0 }}><strong>{rankProgress(progression).band.title}</strong><span className="caption tabular" style={{ display: 'block' }}><RollingNumber value={progression.xp} /> XP · ур. {progression.level}</span></span></span>
+          <span className="sidebar-rank-copy"><strong>{rankProgress(progression).band.title}</strong><span className="caption tabular"><RollingNumber value={progression.xp} /> XP · ур. {progression.level}</span></span></span>
         <span className="progress-track lime" style={{ '--value': rankProgress(progression).ratio } as CSSProperties}><span /></span>
       </button>}
-      <button type="button" className="nav-item" onClick={app.launchQuick} title="Ctrl+Alt+E — из любого окна">
-        <LightningIcon size={21} aria-hidden="true" /><span>Быстрый разбор</span><kbd className="footnote" style={{ marginLeft: 'auto' }}>Ctrl+Alt+E</kbd>
+      <button type="button" className="nav-item" onClick={app.launchQuick} title="Быстрый разбор фразы — Ctrl+Alt+E из любого окна" aria-keyshortcuts="Control+Alt+E">
+        <LightningIcon size={21} aria-hidden="true" /><span>Быстрый разбор</span>
       </button>
-      <div className="engine-status" role="status"><i data-ok={engineOk} aria-hidden="true" />
-        <span>GPT‑6.1 Sol · {data.status ? engineOk ? data.status.brain.mode === 'siwc' ? 'подписка ChatGPT' : 'подписка Codex' : 'нужно подключение' : data.statusFailed ? 'статус недоступен' : 'проверяю…'}</span></div>
+      {(() => {
+        const engine = `Sol · ${data.status ? engineOk ? data.status.brain.mode === 'siwc' ? 'подписка ChatGPT' : 'подписка Codex' : 'нужно подключение' : data.statusFailed ? 'статус недоступен' : 'проверяю…'}`;
+        return <div className="engine-status" role="status" title={`GPT‑6.1 ${engine}`}><i data-ok={engineOk} aria-hidden="true" /><span>{engine}</span></div>;
+      })()}
     </div>
     {lesson.starting && <span className="visually-hidden" role="status">{lesson.starting.label}</span>}
   </aside>;

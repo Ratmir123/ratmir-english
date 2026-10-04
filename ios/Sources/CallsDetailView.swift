@@ -339,6 +339,12 @@ struct CallDetailHeader: View {
         if let duration = FeatureFormat.duration(summary.durationSeconds) { parts.append(duration) }
         return parts.joined(separator: " · ")
     }
+    private var kindLine: String {
+        var parts = [FeatureLabels.context(summary.context)]
+        if let kind = detail?.review?.kind, !kind.isEmpty { parts.append(kind) }
+        parts.append(FeatureLabels.callSource(summary.source).lowercased())
+        return parts.joined(separator: " · ")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -347,15 +353,10 @@ struct CallDetailHeader: View {
                 .fontDesign(.rounded)
                 .fixedSize(horizontal: false, vertical: true)
             if !meta.isEmpty {
-                Text(meta).font(.subheadline).foregroundStyle(.secondary)
+                Text(meta).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 8) {
-                FeatureChip(text: FeatureLabels.callSource(summary.source), icon: FeatureLabels.callSourceIcon(summary.source))
-                FeatureChip(text: FeatureLabels.context(summary.context), tint: FeaturePalette.cyan)
-                if let kind = detail?.review?.kind, !kind.isEmpty {
-                    FeatureChip(text: kind, tint: FeaturePalette.lime)
-                }
-            }
+            // Context, kind and source as one plain meta line (no pills: they never change).
+            Text(kindLine).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let outcome = detail?.review?.outcome ?? summary.outcome, !outcome.isEmpty {
                 Text(outcome).font(.headline).fixedSize(horizontal: false, vertical: true)
             }

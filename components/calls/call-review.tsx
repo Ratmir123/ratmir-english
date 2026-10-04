@@ -1,18 +1,24 @@
 'use client';
 
-/** «Разбор» of a call, in the owner's debrief order (DESIGN-SYSTEM §3 Calls, audit-product §3.5). */
+/**
+ * «Разбор» of a call, in the owner's debrief order (DESIGN-SYSTEM §3 Calls, audit-product §3.5).
+ * Each section is one surface; entries inside are rows split by hairlines. Only a quote (sunken) and a better
+ * line (lime) get a tinted well, and never inside another well (DESIGN-PASS-0.5.1).
+ */
 import { useState, type ReactNode } from 'react';
 import {
-  ArrowRightIcon, BrainIcon, CheckIcon, FlagIcon, HandshakeIcon, InfoIcon, LightbulbIcon, ScalesIcon, SealCheckIcon, ShieldWarningIcon, WarningIcon, XIcon,
+  ArrowDownIcon, ArrowRightIcon, BrainIcon, CheckCircleIcon, CheckIcon, CircleHalfIcon, FlagIcon, HandshakeIcon, InfoIcon, LightbulbIcon,
+  MinusCircleIcon, ScalesIcon, SealCheckIcon, ShieldWarningIcon, WarningIcon, XCircleIcon, XIcon,
 } from '@phosphor-icons/react';
 import { api } from '@/lib/client/api';
 import type { CallDetail, CallReview, CommunicationPattern, ProfileFact } from '@/lib/calls/types';
 import { STRATEGY_MOVES, type StrategyMoveScore } from '@/lib/strategy-moves';
-import { Chip, CopyButton, cx, kit, TtsButton } from './kit';
+import { CopyButton, cx, kit, Spinner, TtsButton } from './kit';
 import {
   CLARITY_LABEL, COST_CATEGORY_LABEL, dealView, FACT_KIND_LABEL, formatClock, formatMoney, IMPACT_LABEL, LANGUAGE_IMPACT_LABEL, OUTCOME_GLYPH,
   splitPlaceholders, toneInk,
 } from './format';
+import { OUTCOME_ICON } from './patterns-panel';
 import styles from './review.module.css';
 
 function At({ at, onSeek }: { at: number | null | undefined; onSeek?: (at: number) => void }) {
@@ -31,19 +37,35 @@ function Quote({ quote, at, onSeek }: { quote: string | null | undefined; at?: n
   );
 }
 
+/** The stronger English line: label, listen, the line itself. */
+function Better({ label, text }: { label: string; text: string }) {
+  return (
+    <div className={styles.better}>
+      <div className={styles.betterHead}><span>{label}</span><TtsButton text={text} compact label="Послушать" /></div>
+      <p lang="en">{text}</p>
+    </div>
+  );
+}
+
 function Section({ id, title, hint, children }: { id: string; title: string; hint?: ReactNode; children: ReactNode }) {
   return (
-    <section id={id} className={cx(kit.solid, styles.section)} aria-labelledby={`${id}-title`}>
+    <section id={id} className={cx(kit.glass, styles.section)} aria-labelledby={`${id}-title`}>
       <div className={styles.sectionHead}><h3 id={`${id}-title`}>{title}</h3>{hint ? <small>{hint}</small> : null}</div>
       {children}
     </section>
   );
 }
 
-function MoveGlyph({ score }: { score: StrategyMoveScore['score'] }) {
-  const glyph = score === 2 ? '✓' : score === 1 ? '½' : score === 0 ? '✗' : '—';
-  const tone = score === 2 ? 'lime' : score === 1 ? 'violet' : score === 0 ? 'error' : 'neutral';
-  return <span className={cx(styles.outcomeGlyph, kit[`tone-${tone}`])} aria-hidden="true">{glyph}</span>;
+const MOVE_MARK = {
+  2: { Icon: CheckCircleIcon, tone: 'lime', label: 'получилось' },
+  1: { Icon: CircleHalfIcon, tone: 'violet', label: 'частично' },
+  0: { Icon: XCircleIcon, tone: 'error', label: 'не получилось' },
+  none: { Icon: MinusCircleIcon, tone: 'neutral', label: 'не было повода' },
+} as const;
+
+function MoveMark({ score }: { score: StrategyMoveScore['score'] }) {
+  const mark = MOVE_MARK[score === null ? 'none' : score];
+  return <span className={styles.mark} data-tone={mark.tone} aria-hidden="true"><mark.Icon size={20} weight="fill" /></span>;
 }
 
 export function CallReviewView({ detail, review, patterns, idPrefix, onSeek, onFactsChanged }: {
@@ -59,43 +81,49 @@ export function CallReviewView({ detail, review, patterns, idPrefix, onSeek, onF
     ['summary', 'Итог'], ...(review.timeline.length ? [['timeline', 'Ход звонка'] as [string, string]] : []),
     ...(review.wins.length ? [['wins', 'Сработало'] as [string, string]] : []), ...(review.costs.length ? [['costs', 'Стоило денег'] as [string, string]] : []),
     ...(review.agreedTerms.length || deal ? [['deal', 'Сделка'] as [string, string]] : []), ...(review.debatable.length ? [['debatable', 'Спорное'] as [string, string]] : []),
-    ...(!review.fromMemory && review.language.length ? [['language', 'Английский'] as [string, string]] : []),
+    ...(!review.fromMemory && (review.language.length || review.minorErrorsIgnored) ? [['language', 'Английский'] as [string, string]] : []),
     ...(review.followUp ? [['followup', 'Письмо'] as [string, string]] : []), ...(review.risks.length ? [['risks', 'Риски'] as [string, string]] : []),
     ...(review.patterns.length ? [['patterns', 'Паттерны'] as [string, string]] : []),
+    ...(review.strategyMoves.length ? [['moves', 'Ходы'] as [string, string]] : []),
+    ...(review.betterAnswers.length ? [['answers', 'Ответы'] as [string, string]] : []),
+    ...(suggested.length ? [['facts', 'Факты'] as [string, string]] : []),
   ];
 
   return (
     <div className={styles.review}>
-      <nav className={styles.toc} aria-label="Разделы разбора">
-        {toc.map(([key, label]) => <a key={key} href={`#${id(key)}`}>{label}</a>)}
+      <nav className={cx(kit.chrome, styles.toc)} aria-label="Разделы разбора">
+        <div className={styles.tocScroll}>{toc.map(([key, label]) => <a key={key} href={`#${id(key)}`}>{label}</a>)}</div>
       </nav>
 
       {review.fromMemory ? (
-        <div className={styles.banner}><BrainIcon size={18} weight="bold" />По памяти: разбор только про стратегию — без цитат, английского и темпа речи.</div>
+        <div className={styles.banner}><BrainIcon size={18} aria-hidden="true" />По памяти: разбор только про стратегию — без цитат, английского и темпа речи.</div>
       ) : null}
 
       <Section id={id('summary')} title="Итог" hint={review.kind}>
-        <p className={styles.lead}><strong>{review.outcome}</strong></p>
+        {/* The call header already shows the same outcome line right above the tabs. */}
+        {review.outcome && review.outcome !== detail.outcome ? <p className={styles.lead}>{review.outcome}</p> : null}
         {review.summary ? <p className={styles.muted}>{review.summary}</p> : null}
         {review.nextStep ? (
           <div className={styles.nextStep}>
-            <FlagIcon size={18} weight="bold" />
+            <FlagIcon size={18} aria-hidden="true" />
             <p>
               <strong>Следующий шаг:</strong> {review.nextStep.who} — {review.nextStep.what}{review.nextStep.when ? `, ${review.nextStep.when}` : ''}.{' '}
-              {review.nextStep.explicit ? <Chip tone="lime">договорились прямо</Chip> : <Chip tone="warning">не зафиксировано</Chip>}
+              <span className={styles.toneText} data-tone={review.nextStep.explicit ? 'lime' : 'warning'}>
+                {review.nextStep.explicit ? 'Договорились прямо.' : 'Не зафиксировано.'}
+              </span>
             </p>
           </div>
         ) : null}
         {metrics && !review.fromMemory ? (
-          <div className={styles.metrics}>
-            {metrics.myTalkShare !== null ? <div className={styles.metric}><strong>{Math.round(metrics.myTalkShare * 100)}%</strong><span>времени говорил ты</span></div> : null}
-            {metrics.myWordsPerMinute !== null ? <div className={styles.metric}><strong>{Math.round(metrics.myWordsPerMinute)}</strong><span>слов в минуту</span></div> : null}
-            {metrics.longestMonologueSeconds !== null ? <div className={styles.metric}><strong>{formatClock(metrics.longestMonologueSeconds)}</strong><span>самый длинный монолог</span></div> : null}
-            {metrics.responseLatencyMedianSeconds !== null ? <div className={styles.metric}><strong>{metrics.responseLatencyMedianSeconds.toFixed(1).replace('.', ',')} с</strong><span>до ответа (медиана)</span></div> : null}
-            {metrics.fillersPerMinute !== null ? <div className={styles.metric}><strong>{metrics.fillersPerMinute.toFixed(1).replace('.', ',')}</strong><span>заполнителей в минуту</span></div> : null}
-            <div className={styles.metric}><strong>{metrics.myQuestions}</strong><span>твоих вопросов (для справки)</span></div>
-            {metrics.clarifyRequests ? <div className={styles.metric}><strong>{metrics.clarifyRequests}</strong><span>раз переспросили тебя</span></div> : null}
-          </div>
+          <dl className={styles.metrics}>
+            {metrics.myTalkShare !== null ? <div className={styles.metric}><dt>времени говорил ты</dt><dd>{Math.round(metrics.myTalkShare * 100)}%</dd></div> : null}
+            {metrics.myWordsPerMinute !== null ? <div className={styles.metric}><dt>слов в минуту</dt><dd>{Math.round(metrics.myWordsPerMinute)}</dd></div> : null}
+            {metrics.longestMonologueSeconds !== null ? <div className={styles.metric}><dt>самый длинный монолог</dt><dd>{formatClock(metrics.longestMonologueSeconds)}</dd></div> : null}
+            {metrics.responseLatencyMedianSeconds !== null ? <div className={styles.metric}><dt>пауза до ответа (медиана)</dt><dd>{metrics.responseLatencyMedianSeconds.toFixed(1).replace('.', ',')} с</dd></div> : null}
+            {metrics.fillersPerMinute !== null ? <div className={styles.metric}><dt>заполнителей в минуту</dt><dd>{metrics.fillersPerMinute.toFixed(1).replace('.', ',')}</dd></div> : null}
+            <div className={styles.metric}><dt>твоих вопросов (для справки)</dt><dd>{metrics.myQuestions}</dd></div>
+            {metrics.clarifyRequests ? <div className={styles.metric}><dt>раз переспросили тебя</dt><dd>{metrics.clarifyRequests}</dd></div> : null}
+          </dl>
         ) : null}
       </Section>
 
@@ -114,49 +142,40 @@ export function CallReviewView({ detail, review, patterns, idPrefix, onSeek, onF
 
       {review.wins.length ? (
         <Section id={id('wins')} title="Что сработало">
-          <div className={styles.entries}>
+          <ul className={styles.entries}>
             {review.wins.map((win, index) => (
-              <div key={index} className={cx(styles.entry, styles.win)}>
-                <div className={styles.entryHead}><SealCheckIcon size={20} weight="fill" color="var(--k-lime-ink)" /><strong>{win.title}</strong></div>
+              <li key={index} className={styles.entry}>
+                <div className={styles.entryHead}><span className={styles.mark} data-tone="lime" aria-hidden="true"><SealCheckIcon size={20} weight="fill" /></span><h4>{win.title}</h4></div>
                 {win.detail ? <p>{win.detail}</p> : null}
                 <Quote quote={win.quote} at={win.at} onSeek={onSeek} />
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         </Section>
       ) : null}
 
       {review.costs.length ? (
-        <Section id={id('costs')} title="Что стоило денег" hint="по порядку цены">
-          <div className={styles.entries}>
+        <Section id={id('costs')} title="Что стоило денег" hint="сначала самое дорогое">
+          <ol className={styles.entries}>
             {[...review.costs].sort((a, b) => a.rank - b.rank).map((cost, index) => (
-              <article key={index} className={styles.entry}>
-                <div className={styles.entryHead}>
-                  <span className={styles.rank}>{cost.rank}</span>
-                  <strong>{cost.title}</strong>
-                </div>
-                <div className={styles.entryChips}>
-                  <Chip tone={IMPACT_LABEL[cost.impact].tone}>{IMPACT_LABEL[cost.impact].label}</Chip>
-                  <Chip>{COST_CATEGORY_LABEL[cost.category]}</Chip>
-                  {patternTitle(cost.patternId) ? <Chip tone="violet">{patternTitle(cost.patternId)}</Chip> : null}
-                </div>
+              <li key={index} className={styles.entry}>
+                <div className={styles.entryHead}><span className={styles.rank} aria-hidden="true">{cost.rank}</span><h4>{cost.title}</h4></div>
+                <p className={styles.entryMeta}>
+                  <span className={styles.toneText} data-tone={IMPACT_LABEL[cost.impact].tone}>{IMPACT_LABEL[cost.impact].label}</span>
+                  <span>{COST_CATEGORY_LABEL[cost.category]}</span>
+                  {patternTitle(cost.patternId) ? <span>Паттерн «{patternTitle(cost.patternId)}»</span> : null}
+                </p>
                 {cost.detail ? <p>{cost.detail}</p> : null}
                 <Quote quote={cost.quote} at={cost.at} onSeek={onSeek} />
                 {cost.impactUsd !== null ? (
-                  <div className={styles.impactMoney}>
-                    <strong>≈ {formatMoney(cost.impactUsd, 'USD')}</strong>
-                    {cost.impactBasis ? <span>{cost.impactBasis}</span> : null}
-                  </div>
+                  <p className={styles.impactMoney}>
+                    Цена ошибки: <strong>≈&nbsp;{formatMoney(cost.impactUsd, 'USD')}</strong>{cost.impactBasis ? <span> · {cost.impactBasis}</span> : null}
+                  </p>
                 ) : null}
-                {cost.better ? (
-                  <div className={styles.better}>
-                    <div className={styles.betterHead}><span>Как сказать сильнее</span><TtsButton text={cost.better} compact label="Послушать" /></div>
-                    <p lang="en">{cost.better}</p>
-                  </div>
-                ) : null}
-              </article>
+                {cost.better ? <Better label="Как сказать сильнее" text={cost.better} /> : null}
+              </li>
             ))}
-          </div>
+          </ol>
         </Section>
       ) : null}
 
@@ -171,8 +190,9 @@ export function CallReviewView({ detail, review, patterns, idPrefix, onSeek, onF
                     <tr key={index}>
                       <td>{term.term}</td>
                       <td>
-                        <strong>{term.value}</strong> <Chip tone={CLARITY_LABEL[term.clarity].tone}>{CLARITY_LABEL[term.clarity].label}</Chip>
-                        {term.quote ? <small lang="en">«{term.quote}» {term.at !== null ? formatClock(term.at) : ''}</small> : null}
+                        <strong>{term.value}</strong>{' '}
+                        <span className={styles.toneText} data-tone={CLARITY_LABEL[term.clarity].tone}>· {CLARITY_LABEL[term.clarity].label.toLowerCase()}</span>
+                        {term.quote ? <span className={styles.termQuote}><q lang="en">{term.quote}</q> <At at={term.at} onSeek={onSeek} /></span> : null}
                       </td>
                     </tr>
                   ))}
@@ -182,22 +202,34 @@ export function CallReviewView({ detail, review, patterns, idPrefix, onSeek, onF
           ) : null}
           {deal ? (
             <>
-              <div className={styles.formula}><HandshakeIcon size={18} weight="bold" />{deal.formula}{deal.floor ? <Chip tone="violet">твой пол {deal.floor}</Chip> : null}</div>
+              <p className={styles.formula}>
+                <HandshakeIcon size={18} aria-hidden="true" /><strong>{deal.formula}</strong>
+                {deal.floor ? <span className={styles.formulaFloor}>твой пол {deal.floor}</span> : null}
+              </p>
               {deal.rows.length ? (
                 <div className={styles.tableWrap}>
                   <table className={styles.dealTable}>
+                    <caption className={kit.visuallyHidden}>Сколько выходит при разной базе</caption>
                     <thead><tr><th scope="col">База</th><th scope="col">Процент</th><th scope="col">Итого</th></tr></thead>
                     <tbody>
                       {deal.rows.map((row, index) => (
                         <tr key={index} data-below={deal.floor ? row.belowFloor : undefined}>
-                          <td>{row.base}</td><td>{row.percentFee}</td><td>{row.total}{deal.floor ? (row.belowFloor ? ' ↓' : ' ✓') : ''}</td>
+                          <td>{row.base}</td><td>{row.percentFee}</td>
+                          <td>
+                            <span className={styles.total}>
+                              {row.total}
+                              {deal.floor ? (row.belowFloor
+                                ? <><ArrowDownIcon size={14} weight="bold" aria-hidden="true" /><span className={kit.visuallyHidden}>ниже пола</span></>
+                                : <><CheckIcon size={14} weight="bold" aria-hidden="true" /><span className={kit.visuallyHidden}>не ниже пола</span></>) : null}
+                            </span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               ) : null}
-              {deal.breakEvenNote ? <p className={styles.muted}><ScalesIcon size={16} weight="bold" style={{ display: 'inline-block', verticalAlign: -3, marginRight: 6 }} />{deal.breakEvenNote}</p> : null}
+              {deal.breakEvenNote ? <p className={styles.iconLine}><ScalesIcon size={16} aria-hidden="true" />{deal.breakEvenNote}</p> : null}
             </>
           ) : null}
         </Section>
@@ -205,41 +237,45 @@ export function CallReviewView({ detail, review, patterns, idPrefix, onSeek, onF
 
       {review.debatable.length ? (
         <Section id={id('debatable')} title="Спорные моменты">
-          <div className={styles.entries}>
+          <ul className={styles.entries}>
             {review.debatable.map((item, index) => (
-              <article key={index} className={styles.entry}>
-                <div className={styles.entryHead}><ScalesIcon size={20} weight="bold" /><strong>{item.title}</strong></div>
+              <li key={index} className={styles.entry}>
+                <div className={styles.entryHead}><span className={styles.mark} aria-hidden="true"><ScalesIcon size={20} /></span><h4>{item.title}</h4></div>
                 <Quote quote={item.quote} at={item.at} onSeek={onSeek} />
                 <div className={styles.sides}>
-                  <div className={cx(styles.side, styles.sideFor)}><b>За</b>{item.forSide}</div>
-                  <div className={cx(styles.side, styles.sideAgainst)}><b>Против</b>{item.againstSide}</div>
+                  <div className={styles.side}><b data-tone="lime">За</b><p>{item.forSide}</p></div>
+                  <div className={styles.side}><b data-tone="error">Против</b><p>{item.againstSide}</p></div>
                 </div>
-                <p className={styles.verdict}><LightbulbIcon size={16} weight="fill" />{item.verdict}</p>
-              </article>
+                <p className={styles.verdict}><LightbulbIcon size={16} weight="fill" aria-hidden="true" /><span><span className={kit.visuallyHidden}>Вывод: </span>{item.verdict}</span></p>
+              </li>
             ))}
-          </div>
+          </ul>
         </Section>
       ) : null}
 
       {!review.fromMemory && (review.language.length || review.minorErrorsIgnored) ? (
         <Section id={id('language')} title="Английский" hint="только то, что меняет смысл или звучит младше">
-          <div className={styles.entries}>
-            {review.language.map((item, index) => (
-              <div key={index} className={cx(styles.entry, item.asrSuspect && styles.suspect)}>
-                <div className={styles.fix}>
-                  <span className={styles.wrong} lang="en">{item.quote}</span>
-                  <ArrowRightIcon size={14} weight="bold" aria-hidden="true" />
-                  <span className={styles.right} lang="en">{item.correction}</span>
-                  <At at={item.at} onSeek={onSeek} />
-                </div>
-                <div className={styles.entryChips}>
-                  <Chip tone={LANGUAGE_IMPACT_LABEL[item.impact].tone}>{LANGUAGE_IMPACT_LABEL[item.impact].label}</Chip>
-                  {item.asrSuspect ? <Chip tone="warning" icon={<WarningIcon size={12} weight="bold" />}>возможно, неверно расслышано</Chip> : null}
-                </div>
-                {item.why ? <p>{item.why}</p> : null}
-              </div>
-            ))}
-          </div>
+          {review.language.length ? (
+            <ul className={styles.entries}>
+              {review.language.map((item, index) => (
+                <li key={index} className={cx(styles.entry, item.asrSuspect && styles.suspect)}>
+                  <div className={styles.fix}>
+                    <p>
+                      <span className={styles.wrong} lang="en">{item.quote}</span>
+                      <ArrowRightIcon size={14} weight="bold" aria-hidden="true" className={styles.fixArrow} /><span className={kit.visuallyHidden}> лучше так: </span>
+                      <span className={styles.right} lang="en">{item.correction}</span>
+                    </p>
+                    <At at={item.at} onSeek={onSeek} />
+                  </div>
+                  <p className={styles.entryMeta}>
+                    <span className={styles.toneText} data-tone={LANGUAGE_IMPACT_LABEL[item.impact].tone}>{LANGUAGE_IMPACT_LABEL[item.impact].label}</span>
+                    {item.asrSuspect ? <span className={styles.toneText} data-tone="warning"><WarningIcon size={13} weight="bold" aria-hidden="true" />возможно, неверно расслышано</span> : null}
+                  </p>
+                  {item.why ? <p>{item.why}</p> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {review.minorErrorsIgnored ? <p className={styles.muted}>Мелких оговорок не показываю: {review.minorErrorsIgnored}. Они не мешали понять тебя.</p> : null}
         </Section>
       ) : null}
@@ -254,81 +290,79 @@ export function CallReviewView({ detail, review, patterns, idPrefix, onSeek, onF
                 : <span key={index}>{part.text}</span>)}
             </p>
           </div>
-          <div className={kit.muted} style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 13 }}>Жёлтое — заполни перед отправкой.</span>
+          <div className={styles.letterFoot}>
+            {review.followUp.text.includes('[[') ? <span>Выделенное заполни перед отправкой.</span> : <span />}
             <CopyButton text={(review.followUp.subject ? `${review.followUp.subject}\n\n` : '') + review.followUp.text} label="Скопировать текст" />
           </div>
-          {review.followUp.notes.length ? <ul className={styles.bullets}>{review.followUp.notes.map((note, index) => <li key={index}><InfoIcon size={16} weight="bold" color="var(--k-violet-ink)" />{note}</li>)}</ul> : null}
+          {review.followUp.notes.length ? <ul className={styles.bullets}>{review.followUp.notes.map((note, index) => <li key={index}><InfoIcon size={16} color="var(--k-violet-ink)" aria-hidden="true" />{note}</li>)}</ul> : null}
         </Section>
       ) : null}
 
       {review.risks.length ? (
         <Section id={id('risks')} title="Риски">
           <ul className={styles.bullets}>
-            {review.risks.map((risk, index) => <li key={index}><ShieldWarningIcon size={16} weight="fill" color="var(--k-warning-ink)" /><span><strong>{risk.title}.</strong> {risk.detail}</span></li>)}
+            {review.risks.map((risk, index) => <li key={index}><ShieldWarningIcon size={16} weight="fill" color="var(--k-warning-ink)" aria-hidden="true" /><span><strong>{risk.title}.</strong> {risk.detail}</span></li>)}
           </ul>
         </Section>
       ) : null}
 
       {review.patterns.length ? (
-        <Section id={id('patterns')} title="Паттерны" hint="● повторилось ○ справился · не было повода ◐ лучше">
-          <div>
+        <Section id={id('patterns')} title="Паттерны" hint="что из твоих паттернов было в этом звонке">
+          <ul className={styles.outcomes}>
             {review.patterns.map((item, index) => {
               const glyph = OUTCOME_GLYPH[item.status];
+              const Mark = OUTCOME_ICON[item.status];
               return (
-                <div key={index} className={styles.outcomeRow}>
-                  <span className={cx(styles.outcomeGlyph, kit[`tone-${glyph.tone}`])} aria-hidden="true">{glyph.glyph}</span>
+                <li key={index} className={styles.outcomeRow}>
+                  <span className={styles.mark} data-tone={glyph.tone} aria-hidden="true"><Mark size={20} weight="fill" /></span>
                   <div>
                     <strong>{patternTitle(item.patternId) ?? item.patternId}</strong>
-                    <small>{glyph.label}</small>
+                    <small>{glyph.label[0].toUpperCase() + glyph.label.slice(1)}</small>
                     {item.evidence ? <q lang="en">{item.evidence}</q> : null}
                   </div>
-                </div>
+                </li>
               );
             })}
-          </div>
+          </ul>
         </Section>
       ) : null}
 
       {review.strategyMoves.length ? (
         <Section id={id('moves')} title="Ходы разговора" hint="стратегия, не английский">
-          <div className={styles.moves}>
+          <ul className={styles.moves}>
             {STRATEGY_MOVES.map(move => {
               const score = review.strategyMoves.find(item => item.id === move.id);
               const value = score ? score.score : null;
               return (
-                <div key={move.id} className={styles.outcomeRow} style={{ borderTop: 0 }}>
-                  <MoveGlyph score={value} />
+                <li key={move.id} className={styles.outcomeRow} data-idle={value === null || undefined}>
+                  <MoveMark score={value} />
                   <div>
                     <strong>{move.title}</strong>
                     <small>{value === 2 ? move.good : value === 0 ? move.bad : value === 1 ? 'Частично' : 'Не было повода'}</small>
                     {score?.quote ? <q lang="en">{score.quote}</q> : null}
                   </div>
-                </div>
+                </li>
               );
             })}
-          </div>
+          </ul>
         </Section>
       ) : null}
 
       {review.betterAnswers.length ? (
         <Section id={id('answers')} title="Готовые ответы на будущее" hint="произнеси вслух">
-          <div className={styles.entries}>
+          <ul className={styles.entries}>
             {review.betterAnswers.map((item, index) => (
-              <div key={index} className={styles.entry}>
-                <strong style={{ fontSize: 14.5 }}>{item.situation}</strong>
+              <li key={index} className={styles.entry}>
+                <h4 className={styles.situation}>{item.situation}</h4>
                 {item.trigger ? <Quote quote={item.trigger} at={item.at} onSeek={onSeek} /> : null}
-                <div className={styles.better}>
-                  <div className={styles.betterHead}><span>Твой ответ</span><TtsButton text={item.answer} compact label="Послушать" /></div>
-                  <p lang="en">{item.answer}</p>
-                </div>
-              </div>
+                <Better label="Твой ответ" text={item.answer} />
+              </li>
             ))}
-          </div>
+          </ul>
         </Section>
       ) : null}
 
-      {suggested.length ? <SuggestedFacts facts={suggested} idPrefix={idPrefix} onChanged={onFactsChanged} /> : null}
+      {suggested.length ? <SuggestedFacts facts={suggested} id={id('facts')} onChanged={onFactsChanged} /> : null}
 
       {review.limitations.length || review.dropped ? (
         <ul className={styles.footnote}>
@@ -340,7 +374,7 @@ export function CallReviewView({ detail, review, patterns, idPrefix, onSeek, onF
   );
 }
 
-function SuggestedFacts({ facts, idPrefix, onChanged }: { facts: ProfileFact[]; idPrefix: string; onChanged: (facts: ProfileFact[]) => void }) {
+function SuggestedFacts({ facts, id, onChanged }: { facts: ProfileFact[]; id: string; onChanged: (facts: ProfileFact[]) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   async function decide(fact: ProfileFact, decision: 'accept' | 'reject') {
@@ -352,23 +386,31 @@ function SuggestedFacts({ facts, idPrefix, onChanged }: { facts: ProfileFact[]; 
     finally { setBusy(null); }
   }
   return (
-    <Section id={`${idPrefix}-facts`} title="Что запомнить о тебе" hint="принятое попадёт в твой плейбук">
+    <Section id={id} title="Что запомнить о тебе" hint="принятое попадёт в твой плейбук">
       <p className={styles.muted}>Эти факты помогут собеседнику и тренеру: ставки, кейсы, цифры. Принимай только то, что правда.</p>
-      <div className={styles.entries}>
+      <ul className={styles.entries}>
         {facts.map(fact => (
-          <div key={fact.id} className={styles.fact}>
-            <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
-              <Chip tone="violet">{FACT_KIND_LABEL[fact.kind]}</Chip>
-              <p>{fact.text}</p>
-              {fact.quote ? <small className={kit.faint} lang="en">«{fact.quote}»</small> : null}
+          <li key={fact.id} className={cx(styles.entry, styles.fact)}>
+            <div className={styles.factCopy}>
+              <p className={styles.factText}>{fact.text}</p>
+              <p className={styles.entryMeta}>
+                <span>{FACT_KIND_LABEL[fact.kind]}</span>
+                {fact.quote ? <span lang="en">«{fact.quote}»</span> : null}
+              </p>
             </div>
             <div className={styles.factActions}>
-              <button type="button" className={cx(kit.btn, kit.primary, kit.small)} disabled={busy === fact.id} onClick={() => void decide(fact, 'accept')}><CheckIcon size={14} weight="bold" />Верно</button>
-              <button type="button" className={cx(kit.btn, kit.quiet, kit.small)} disabled={busy === fact.id} onClick={() => void decide(fact, 'reject')}><XIcon size={14} weight="bold" />Нет</button>
+              <button type="button" className={cx(kit.btn, kit.primary, kit.small)} disabled={busy === fact.id} onClick={() => void decide(fact, 'accept')}
+                aria-label={`Верно: ${fact.text}`}>
+                {busy === fact.id ? <Spinner /> : <CheckIcon size={14} weight="bold" />}Верно
+              </button>
+              <button type="button" className={cx(kit.btn, kit.quiet, kit.small)} disabled={busy === fact.id} onClick={() => void decide(fact, 'reject')}
+                aria-label={`Неверно: ${fact.text}`}>
+                <XIcon size={14} weight="bold" />Нет
+              </button>
             </div>
-          </div>
+          </li>
         ))}
-      </div>
+      </ul>
       {error ? <p className={styles.muted} role="alert" style={{ color: toneInk('error') }}>{error}</p> : null}
     </Section>
   );

@@ -272,11 +272,10 @@ struct ConversationView: View {
 
     private func liveHeader(_ value: Conversation) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                StatusPill(title: modeTitle(value), color: value.mode == "call" ? Theme.cyan : Theme.lavender)
-                if let format = value.lesson.format, format == "pitch" { StatusPill(title: "30–45 секунд", color: Theme.lime) }
-            }
             Text(value.lesson.title).font(TypeScale.title2).fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text(modeTitle(value) + (value.lesson.format == "pitch" ? " · 30–45 секунд" : ""))
+                .font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
             DisclosureGroup(isExpanded: $showBrief) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(value.lesson.goal).font(.subheadline.weight(.medium)).fixedSize(horizontal: false, vertical: true)
@@ -296,7 +295,7 @@ struct ConversationView: View {
     /// In a replay the opening is the counterpart's real line from the uploaded call.
     private func partnerLabel(_ value: Conversation, _ turn: Turn) -> String? {
         guard value.lesson.format == "replay", value.turns.first?.id == turn.id else { return nil }
-        return "РЕПЛИКА ИЗ ТВОЕГО СОЗВОНА"
+        return "Реплика из твоего созвона"
     }
 
     private func modeTitle(_ value: Conversation) -> String {
@@ -415,7 +414,6 @@ struct ConversationView: View {
     private func reviewHeader(_ value: Conversation) -> some View {
         let improved = hasConfirmedImprovement(value)
         let priorities = value.analysis?.priorities.count ?? 0
-        let eyebrow = value.awaitsRetry && value.status == "completed" ? "ПОПЫТКА ЖДЁТ" : value.status == "completed" ? "ЗАВЕРШЕНО" : improved ? "ЕСТЬ УЛУЧШЕНИЕ" : "СЛЕДУЮЩИЙ ШАГ"
         let headline: String
         if value.awaitsRetry && value.status == "completed" { headline = "Улучшенная попытка ждёт." }
         else if improved { headline = "Вот, уже сильнее." }
@@ -425,8 +423,8 @@ struct ConversationView: View {
         else { headline = "\(priorities) шага к ответу сильнее." }
         return HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(eyebrow).font(.caption2.weight(.bold)).tracking(1).foregroundStyle(Theme.violet)
                 Text(headline).font(TypeScale.title).tracking(-0.4).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
                 Text(value.lesson.title).font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -487,7 +485,7 @@ struct ConversationView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .modifier(LiquidChrome(radius: Radius.tile, tint: outcome.achieved == "yes" ? Theme.lime.opacity(0.25) : nil, interactive: false))
+        .contentSurface(radius: Radius.tile, tint: outcome.achieved == "yes" ? Theme.lime.opacity(0.25) : nil)
     }
 
     @ViewBuilder private func retriesSection(_ value: Conversation) -> some View {
@@ -537,8 +535,7 @@ struct ConversationView: View {
                 }
             }
             .padding(.horizontal, 14).padding(.vertical, 4)
-            .background(Theme.solid, in: RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: Radius.tile, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1) }
+            .contentSurface(radius: Radius.tile)
             if ignored > 0 {
                 Text("Ещё \(RuFormat.count(ignored, "мелкая ошибка", "мелкие ошибки", "мелких ошибок")) не мешали смыслу — их не разбираем.")
                     .font(.caption).foregroundStyle(Theme.inkSecondary)
@@ -556,7 +553,7 @@ struct ConversationView: View {
                 }
             }
             .padding(.horizontal, 14).padding(.vertical, 6)
-            .modifier(LiquidChrome(radius: Radius.tile, tint: nil, interactive: false))
+            .contentSurface(radius: Radius.tile)
         }
     }
 
@@ -1147,9 +1144,7 @@ private struct ReviewPriorityCard: View {
                     Text(priority.title).font(.headline).fixedSize(horizontal: false, vertical: true)
                 }
                 if !priority.quote.isEmpty {
-                    Text(priority.quote).font(.subheadline).foregroundStyle(Theme.inkSecondary)
-                        .padding(.leading, 12)
-                        .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(Theme.lavender).frame(width: 3) }
+                    FeatureQuote(text: priority.quote)
                 }
                 if !priority.example.isEmpty { example }
                 VStack(alignment: .leading, spacing: 6) {
@@ -1180,7 +1175,7 @@ private struct ReviewPriorityCard: View {
                     Image(systemName: active ? "stop.fill" : "play.fill")
                 }
             }
-            .buttonStyle(LiquidIconButton(size: 40, tint: Theme.cyan.opacity(0.45)))
+            .buttonStyle(SoftIconButton(size: 40, tint: Theme.cyan.opacity(0.32)))
             .disabled(client.recording)
             .accessibilityLabel(active ? "Остановить пример" : "Прослушать пример")
         }
@@ -1241,12 +1236,11 @@ private struct PushbackCard: View {
     var body: some View {
         if let pushback = retry.pushback {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: "bolt.horizontal.circle.fill").foregroundStyle(Theme.violet)
-                    Text(pushback.held == nil ? "ВЫЗОВ · НЕОБЯЗАТЕЛЬНО" : "ВЫЗОВ").font(.caption.weight(.bold)).tracking(0.9)
-                        .foregroundStyle(Theme.inkSecondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Собеседник возражает").font(.headline).accessibilityAddTraits(.isHeader)
+                    Text(pushback.held == nil ? "Стресс-тест, необязательно" : "Стресс-тест")
+                        .font(.footnote).foregroundStyle(Theme.inkSecondary)
                 }
-                Text("Собеседник возражает").font(.headline)
                 HStack(alignment: .top, spacing: 10) {
                     Text(pushback.npcLine).font(.subheadline.weight(.medium)).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1254,14 +1248,15 @@ private struct PushbackCard: View {
                     Button { Task { await client.pushbackSpeech(retryId: retryID) } } label: {
                         Image(systemName: active ? "stop.fill" : "play.fill")
                     }
-                    .buttonStyle(LiquidIconButton(size: 40, tint: Theme.cyan.opacity(0.45)))
+                    .buttonStyle(SoftIconButton(size: 40, tint: Theme.cyan.opacity(0.32)))
                     .disabled(client.recording)
                     .accessibilityLabel(active ? "Остановить" : "Послушать возражение")
                 }
                 result(pushback)
             }
             .padding(18)
-            .modifier(LiquidChrome(radius: Radius.card, tint: Theme.lavender.opacity(0.22), interactive: false))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentSurface()
         }
     }
     @ViewBuilder private func result(_ pushback: Retry.Pushback) -> some View {
@@ -1344,15 +1339,14 @@ struct LessonMaterialCard: View {
 private struct AvoidChips: View {
     let phrases: [String]
     var body: some View {
-        ChipFlow(spacing: 6) {
-            ForEach(Array(phrases.prefix(6).enumerated()), id: \.offset) { _, phrase in
-                Text("Не говори: «\(phrase)»")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(Theme.pink.opacity(0.18), in: Capsule())
-                    .overlay { Capsule().strokeBorder(Theme.pink.opacity(0.45), lineWidth: 1) }
-            }
+        // A plain line, not a row of pills: these phrases never change state.
+        Label {
+            Text("Не говори: " + phrases.prefix(6).map { "«" + $0 + "»" }.joined(separator: ", "))
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "nosign").foregroundStyle(Theme.danger)
         }
+        .font(.footnote)
         .accessibilityElement(children: .combine)
     }
 }

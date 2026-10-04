@@ -42,7 +42,7 @@ export function LiveCaptions({ text, status, state }: LiveCaptionsProps) {
   if (!visible) return null;
   const resume = () => { following.current = true; setShowLatest(false); followLatest(); };
   return <section className={`live-caption ${styles.caption}`} data-testid="live-caption" aria-label="Живая расшифровка">
-    <div className={styles.heading}><span className="eyebrow">{status || 'Живые субтитры'}</span><span className={styles.liveDot} aria-hidden="true" /></div>
+    <div className={styles.heading}><span className={styles.status}>{status || 'Живые субтитры'}</span><span className={styles.liveDot} aria-hidden="true" /></div>
     <div ref={viewport} className={styles.viewport} data-testid="live-caption-viewport" tabIndex={0} role="region" aria-label="Твои слова. Можно прокрутить предыдущие реплики."
       onScroll={event => {
         const element = event.currentTarget;

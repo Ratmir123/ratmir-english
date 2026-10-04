@@ -11,7 +11,7 @@ import {
 } from '@phosphor-icons/react';
 import { api } from '@/lib/client/api';
 import { MAX_CALL_UPLOAD_BYTES, type CallContext, type CallDetail, type CreateCallRequest } from '@/lib/calls/types';
-import { cx, kit, Segmented, Spinner } from './kit';
+import { cx, kit, Segmented, Sheet, Spinner } from './kit';
 import {
   classifyCallFile, CONTEXT_LABEL, DEBRIEF_MIN_CHARS, FILE_ACCEPT, formatBytes, MEMORY_MIN_CHARS, TEXT_LIMIT_BYTES, titleFromFileName, utf8Bytes,
   type CallFileKind,
@@ -120,41 +120,72 @@ export function CallUploadCard({ onCreated, variant = 'full' }: { onCreated: (ca
     } finally { setBusy(false); }
   }
 
-  if (!draft) {
+  const dropTarget = {
+    onDragOver: (event: DragEvent) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; },
+    onDragEnter: (event: DragEvent) => { event.preventDefault(); setDragging(true); },
+    onDragLeave: (event: DragEvent) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); },
+    onDrop,
+  };
+  const fileInput = <input ref={input} className={styles.fileInput} type="file" accept={FILE_ACCEPT} onChange={event => choose(event.target.files?.[0])} aria-label="Выбрать файл звонка" />;
+
+  // Compact (Today's quick list): a single row; the details form opens in a sheet instead of growing the list.
+  if (compact) {
     return (
-      <section className={cx(kit.scope, kit.glass, styles.upload, compact && styles.uploadCompact)} aria-label="Загрузить созвон">
-        <label className={cx(styles.drop, compact && styles.dropCompact)} data-dragging={dragging}
-          onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
-          onDragEnter={event => { event.preventDefault(); setDragging(true); }}
-          onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }}
-          onDrop={onDrop}>
-          <input ref={input} className={styles.fileInput} type="file" accept={FILE_ACCEPT} onChange={event => choose(event.target.files?.[0])} aria-label="Выбрать файл звонка" />
-          <span className={styles.dropIcon} aria-hidden="true"><UploadSimpleIcon size={compact ? 22 : 26} weight="bold" /></span>
-          <strong>{dragging ? 'Отпускай — разберу' : compact ? 'Загрузить созвон'
-            : <><span className={styles.pointerOnly}>Перетащи запись или расшифровку</span><span className={styles.touchOnly}>Выбери запись или расшифровку</span></>}</strong>
-          <span className={styles.dropHint}>{compact ? 'Запись, видео или текст звонка'
-            : <><span className={styles.pointerOnly}>или нажми, чтобы выбрать файл: </span>аудио, видео, .txt, .vtt, .srt, .md</>}</span>
+      <section className={cx(kit.scope, styles.quickUpload)} aria-label="Загрузить созвон">
+        <label className={cx(styles.drop, styles.dropCompact)} data-dragging={dragging} {...dropTarget}>
+          {fileInput}
+          <span className={styles.dropIcon} aria-hidden="true"><UploadSimpleIcon size={20} weight="bold" /></span>
+          <strong>{dragging ? 'Отпускай — разберу' : 'Загрузить созвон'}</strong>
+          <span className={styles.dropHint}><span className={styles.pointerOnly}>Перетащи сюда запись, видео или текст</span><span className={styles.touchOnly}>Запись, видео или текст звонка</span></span>
         </label>
         <div className={styles.altRow}>
-          <button type="button" className={cx(kit.btn, kit.secondary, kit.small)} onClick={() => { setDraft({ mode: 'memory' }); setTitle('Звонок по памяти'); }}>
-            <BrainIcon size={16} weight="bold" />Описать по памяти
+          <button type="button" className={cx(kit.btn, kit.quiet, kit.small)} onClick={() => { setDraft({ mode: 'memory' }); setTitle('Звонок по памяти'); }}>
+            <BrainIcon size={16} weight="bold" />По памяти
           </button>
-          {compact ? null : (
-            <button type="button" className={cx(kit.btn, kit.secondary, kit.small)} onClick={() => { setDraft({ mode: 'paste', kind: 'transcript' }); setTitle('Расшифровка звонка'); }}>
-              <ClipboardTextIcon size={16} weight="bold" />Вставить текст
-            </button>
-          )}
         </div>
-        {error ? <div className={styles.error} role="alert"><WarningIcon size={16} weight="bold" />{error}</div> : null}
-        {compact ? null : <p className={styles.tip}>Лучше всего — запись, где слышно обоих. Сырые записи хранятся 30 дней, расшифровка и разбор — пока не удалишь. Скажи собеседнику, что пишешь звонок.</p>}
+        {error && !draft ? <div className={styles.error} role="alert"><WarningIcon size={16} weight="bold" />{error}</div> : null}
+        {draft ? <Sheet open onClose={() => { if (!busy) reset(); }} title={draft.mode === 'memory' ? 'Звонок по памяти' : 'Новый созвон'}>{renderDetails(draft, true)}</Sheet> : null}
       </section>
     );
   }
 
+  // Full (Calls tab): one surface that is itself the drop target — the file row first, the no-file options under a hairline.
+  if (!draft) {
+    return (
+      <section className={cx(kit.scope, kit.glass, styles.upload)} aria-label="Загрузить созвон" data-dragging={dragging} {...dropTarget}>
+        <label className={styles.pick}>
+          {fileInput}
+          <span className={styles.dropIcon} aria-hidden="true"><UploadSimpleIcon size={22} weight="bold" /></span>
+          <span className={styles.pickCopy}>
+            <strong>{dragging ? 'Отпускай — разберу' : 'Загрузить запись или расшифровку'}</strong>
+            <span>
+              <span className={styles.pointerOnly}>Перетащи файл сюда или нажми, чтобы выбрать. </span>
+              <span className={styles.touchOnly}>Нажми, чтобы выбрать файл. </span>
+              Аудио, видео, .txt, .vtt, .srt, .md
+            </span>
+          </span>
+        </label>
+        <div className={styles.uploadAlt}>
+          <span className={styles.uploadAltLabel}>Нет файла?</span>
+          <button type="button" className={cx(kit.btn, kit.quiet, kit.small)} onClick={() => { setDraft({ mode: 'memory' }); setTitle('Звонок по памяти'); }}>
+            <BrainIcon size={16} weight="bold" />Описать по памяти
+          </button>
+          <button type="button" className={cx(kit.btn, kit.quiet, kit.small)} onClick={() => { setDraft({ mode: 'paste', kind: 'transcript' }); setTitle('Расшифровка звонка'); }}>
+            <ClipboardTextIcon size={16} weight="bold" />Вставить текст
+          </button>
+        </div>
+        {error ? <div className={cx(styles.error, styles.uploadError)} role="alert"><WarningIcon size={16} weight="bold" />{error}</div> : null}
+        <p className={styles.tip}>Лучше всего — запись, где слышно обоих. Сырые записи хранятся 30 дней, расшифровка и разбор — пока не удалишь. Предупреди собеседника, что записываешь звонок.</p>
+      </section>
+    );
+  }
+  return renderDetails(draft, false);
+
+  function renderDetails(draft: Draft, inSheet: boolean) {
   const isText = draft.mode !== 'file';
   const textLabel = draft.mode === 'memory' ? 'Как прошёл звонок' : draft.kind === 'debrief' ? 'Готовый разбор' : 'Расшифровка';
   return (
-    <section className={cx(kit.scope, kit.glass, styles.upload)} aria-label="Детали созвона">
+    <section className={inSheet ? styles.uploadSheet : cx(kit.scope, kit.glass, styles.uploadForm)} aria-label="Детали созвона">
       {draft.mode === 'file' ? (
         <div className={styles.fileChip}>
           <span className={styles.fileIcon} aria-hidden="true">{draft.kind === 'audio' ? <FileAudioIcon size={22} weight="bold" /> : <FileTextIcon size={22} weight="bold" />}</span>
@@ -168,7 +199,7 @@ export function CallUploadCard({ onCreated, variant = 'full' }: { onCreated: (ca
         <div className={styles.uploadHead}>
           <span className={styles.fileIcon} aria-hidden="true">{draft.mode === 'memory' ? <BrainIcon size={22} weight="bold" /> : <NotePencilIcon size={22} weight="bold" />}</span>
           <strong style={{ fontSize: 16 }}>{draft.mode === 'memory' ? 'Звонок по памяти' : 'Текст звонка'}</strong>
-          <button type="button" className={kit.iconBtn} onClick={reset} aria-label="Отменить"><XIcon size={16} weight="bold" /></button>
+          {inSheet ? null : <button type="button" className={kit.iconBtn} onClick={reset} aria-label="Отменить"><XIcon size={16} weight="bold" /></button>}
         </div>
       )}
 
@@ -237,4 +268,5 @@ export function CallUploadCard({ onCreated, variant = 'full' }: { onCreated: (ca
       </div>
     </section>
   );
+  }
 }

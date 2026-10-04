@@ -4,12 +4,13 @@
  * Placement result (audit-product §2.9): shape first, every band with its range, confidence and basis,
  * skipped sections «не измерено», never percentages. Also the compact level card for Today / Progress.
  */
-import { useEffect, useId, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  ArrowClockwiseIcon, ArrowRightIcon, CaretDownIcon, CheckIcon, GaugeIcon, HourglassIcon, PlayIcon, SealCheckIcon, WarningIcon, XIcon,
+  ArrowClockwiseIcon, ArrowRightIcon, CaretDownIcon, ChatsCircleIcon, CheckIcon, CircleHalfIcon, GaugeIcon, HourglassIcon, MinusIcon, PlayIcon,
+  SealCheckIcon, WarningIcon, XIcon,
 } from '@phosphor-icons/react';
 import type { PlacementResult, PlacementView } from '@/lib/placement/types';
-import { Chip, cx, kit, ProgressBar, Spinner, TtsButton } from '../calls/kit';
+import { cx, kit, ProgressBar, Spinner, TtsButton } from '../calls/kit';
 import { LANGUAGE_IMPACT_LABEL } from '../calls/format';
 import {
   badgeFill, CONFIDENCE_LABEL, CRITERIA, dayLabel, moveRows, NOT_MEASURED, REVIEW_SECTION_TITLE, retakeNote, SKILL_ORDER, SKILL_TITLE,
@@ -70,7 +71,24 @@ function celebrateOnce(result: PlacementResult): boolean {
   return true;
 }
 
-export function PlacementResultView({ view, onRetake, onStartPractice }: { view: PlacementView; onRetake: () => void; onStartPractice: () => void }) {
+const MOVE_ICON = { 2: CheckIcon, 1: CircleHalfIcon, 0: XIcon } as const;
+
+/** Next step after a result: the retake button and its note depend on where a retake stands. */
+function retakeAction(view: PlacementView): { label: string; note: string } {
+  if (view.status === 'in-progress') return { label: 'Продолжить пересдачу', note: 'Пересдача уже идёт — продолжи её, когда будет время.' };
+  if (view.status === 'scoring') return { label: 'Открыть пересдачу', note: 'Считаю результат пересдачи — он появится здесь сам.' };
+  if (view.status === 'error') return { label: 'Повторить подсчёт', note: 'Результат пересдачи не посчитался. Ответы сохранены.' };
+  return { label: 'Пересдать', note: retakeNote(view).text ?? 'Повторный тест — с новыми заданиями.' };
+}
+
+/**
+ * Full result, one place per question: the hero says what the level is and why, «Что дальше» says what to do,
+ * then the evidence. `aside` (Progress: the experience rank) sits beside the hero when there is room;
+ * without it the mascot celebrates in the hero (the flow right after the test).
+ */
+export function PlacementResultView({ view, onRetake, onStartPractice, aside }: {
+  view: PlacementView; onRetake: () => void; onStartPractice: () => void; aside?: ReactNode;
+}) {
   const result = view.result;
   const [celebrate, setCelebrate] = useState(0);
   useEffect(() => {
@@ -82,7 +100,7 @@ export function PlacementResultView({ view, onRetake, onStartPractice }: { view:
   if (!result) {
     return (
       <section className={cx(kit.scope, styles.result)}>
-        <div className={cx(kit.solid, styles.card)}><p className={kit.muted} style={{ margin: 0 }}>Результата пока нет — он появится после теста уровня.</p></div>
+        <div className={cx(kit.glass, styles.card)}><p className={kit.muted} style={{ margin: 0 }}>Результата пока нет — он появится после теста уровня.</p></div>
       </section>
     );
   }
@@ -90,78 +108,94 @@ export function PlacementResultView({ view, onRetake, onStartPractice }: { view:
   const moves = moveRows(result);
   const figures = timingFigures(result.speaking.timing);
   const brake = speakingBrake(result);
-  const note = retakeNote(view);
+  const retake = retakeAction(view);
   const points = sparkline(view.history);
-  const retakeInProgress = view.status === 'in-progress';
   const speakingMeasured = CRITERIA.some(item => result.speaking[item.id] !== null);
+  const errors = result.speaking.errors.filter(error => error.impact !== 'minor').slice(0, 5);
   const reviewGroups = (['listening', 'reading', 'language'] as const)
     .map(section => ({ section, items: result.review.filter(item => item.section === section) }))
     .filter(group => group.items.length);
+  const meta = [dayLabel(result.completedAt), `медиана навыков, уверенность ${CONFIDENCE_LABEL[result.overall.confidence]}`, 'ориентир, не сертификат', `тест ${result.procedureVersion}`]
+    .filter(Boolean).join(' · ');
 
   return (
     <section className={cx(kit.scope, styles.result)} aria-label="Результат теста уровня">
-      <header className={cx(kit.glass, styles.hero, kit.rise)}>
-        <div className={styles.badgeCol}>
+      <div className={styles.top} data-aside={!!aside}>
+        <header className={cx(kit.glass, styles.hero, kit.rise)}>
           <LevelBadge label={result.overall.label} score={result.overall.score} caption="общий ориентир" />
-          <div className={styles.mascotPeek}><FeatureMascot size={64} emotion="proud" celebrate={celebrate} celebrateEmotion="excited" label="Гордится тобой" /></div>
-        </div>
-        <div className={styles.heroText}>
-          <span className={kit.eyebrow}>Твой профиль · тест {result.procedureVersion} · {dayLabel(result.completedAt)} · ориентир, не сертификат</span>
-          <h2 className={styles.headline}>{result.headline}</h2>
-          {result.overall.summary ? <p className={styles.summary}>{result.overall.summary}</p> : null}
-          <div className={styles.facts}>
-            <Chip tone="lime">Общий ориентир {result.overall.label}</Chip>
-            <Chip>медиана навыков · уверенность {CONFIDENCE_LABEL[result.overall.confidence]}</Chip>
-            {result.partnerLevel ? <Chip tone="violet">Собеседники заговорят на {result.partnerLevel}</Chip> : null}
+          <div className={styles.heroText}>
+            <h2 className={styles.headline}>{result.headline}</h2>
+            {result.overall.summary ? <p className={styles.summary}>{result.overall.summary}</p> : null}
+            <p className={styles.heroMeta}>{meta}</p>
+            {spread && spread.gap >= 0.5 ? <p className={styles.heroMeta}>Разброс: от {spread.low} до {spread.high}.</p> : null}
+            {result.partnerLevel ? <p className={styles.partner}><ChatsCircleIcon size={17} weight="bold" aria-hidden="true" />Собеседники в практике заговорят на {result.partnerLevel}.</p> : null}
           </div>
-          {spread && spread.gap >= 0.5 ? <p className={cx(kit.muted)} style={{ margin: 0, fontSize: 14 }}>Разброс: от {spread.low} до {spread.high}.</p> : null}
-        </div>
-      </header>
+          {aside ? null : (
+            <div className={styles.heroMascot}><FeatureMascot size={72} emotion="proud" celebrate={celebrate} celebrateEmotion="excited" label="Гордится тобой" /></div>
+          )}
+        </header>
+        {aside}
+      </div>
 
-      <section className={cx(kit.solid, styles.card)} aria-labelledby="placement-skills">
-        <div className={styles.cardHead}><h2 id="placement-skills">Навыки</h2><small>диапазон, где уровень почти наверняка</small></div>
-        <div className={styles.skills}>
-          {rows.map((row, index) => (
-            <div key={row.id} className={styles.skill}>
-              <span className={styles.skillName}>{row.title}</span>
-              <span className={cx(styles.skillLabel, !row.measured && styles.skillLabelMuted)}>{row.label}</span>
-              <div className={styles.axis} aria-hidden="true" style={{ ['--i' as string]: index } as CSSProperties}>
-                {row.measured ? (
-                  <>
-                    <span className={styles.axisTrack} />
-                    <span className={styles.axisRange} style={{ left: `${row.rangeStart * 100}%`, width: `${(row.rangeEnd - row.rangeStart) * 100}%` }} />
-                    {row.marker !== null ? <span className={styles.axisMarker} style={{ left: `${row.marker * 100}%` }} /> : null}
-                  </>
-                ) : <span className={styles.axisEmpty} />}
-                <span className={styles.axisTicks}>{CEFR_AXIS.map(level => <span key={level}>{level}</span>)}</span>
-              </div>
-              <div className={styles.skillMeta}>
-                <span>{row.measured ? `диапазон ${row.range} · уверенность ${row.confidence} · ${row.basis}` : row.basis || NOT_MEASURED}</span>
-                {row.note ? <span className={styles.skillNote}>{row.note}</span> : null}
-              </div>
-            </div>
-          ))}
+      <section className={cx(kit.glass, styles.card)} aria-labelledby="placement-next">
+        <div className={styles.cardHead}><h2 id="placement-next">{result.priorities.length ? 'Что быстрее всего поднимет уровень' : 'Что дальше'}</h2></div>
+        {result.priorities.length ? (
+          <ol className={styles.priorities}>
+            {result.priorities.slice(0, 3).map((priority, index) => (
+              <li key={index} className={styles.priority}>
+                <span className={styles.priorityNumber} aria-hidden="true">{index + 1}</span>
+                <div className={styles.priorityCopy}>
+                  <h3>{priority.title}</h3>
+                  <p>{priority.why}</p>
+                  <p className={styles.action}>{priority.action}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        <div className={styles.nextActions}>
+          <button type="button" className={cx(kit.btn, kit.primary)} onClick={onStartPractice}>Начать практику<ArrowRightIcon size={18} weight="bold" /></button>
+          <button type="button" className={cx(kit.btn, kit.secondary)} onClick={onRetake}>
+            {view.status === 'scoring' ? <Spinner /> : <ArrowClockwiseIcon size={18} weight="bold" />}{retake.label}
+          </button>
+          <p className={styles.retakeNote}>{retake.note}</p>
         </div>
       </section>
 
-      {result.priorities.length ? (
-        <section className={cx(kit.solid, styles.card)} aria-labelledby="placement-priorities">
-          <div className={styles.cardHead}><h2 id="placement-priorities">Что быстрее всего поднимет уровень</h2></div>
-          <div className={styles.priorities}>
-            {result.priorities.slice(0, 3).map((priority, index) => (
-              <article key={index} className={cx(styles.priority, kit.rise)} style={{ ['--i' as string]: index } as CSSProperties}>
-                <span className={styles.priorityNumber}>{index + 1}</span>
-                <h3>{priority.title}</h3>
-                <p>{priority.why}</p>
-                <p className={styles.action}>{priority.action}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
+      <section className={cx(kit.glass, styles.card)} aria-labelledby="placement-skills">
+        <div className={styles.cardHead}><h2 id="placement-skills">Навыки по тесту</h2><small>полоса — диапазон, где уровень почти наверняка</small></div>
+        <div className={styles.skills}>
+          {rows.map((row, index) => {
+            const basis = row.measured ? `диапазон ${row.range} · уверенность ${row.confidence} · ${row.basis}`
+              : row.basis && row.basis.toLowerCase() !== NOT_MEASURED ? row.basis : '';
+            return (
+              <div key={row.id} className={styles.skill}>
+                <span className={styles.skillName}>{row.title}</span>
+                <span className={cx(styles.skillLabel, !row.measured && styles.skillLabelMuted)}>{row.label}</span>
+                <div className={styles.axis} aria-hidden="true" style={{ ['--i' as string]: index } as CSSProperties}>
+                  {row.measured ? (
+                    <>
+                      <span className={styles.axisTrack} />
+                      <span className={styles.axisRange} style={{ left: `${row.rangeStart * 100}%`, width: `${(row.rangeEnd - row.rangeStart) * 100}%` }} />
+                      {row.marker !== null ? <span className={styles.axisMarker} style={{ left: `${row.marker * 100}%` }} /> : null}
+                    </>
+                  ) : <span className={styles.axisEmpty} />}
+                  <span className={styles.axisTicks}>{CEFR_AXIS.map(level => <span key={level}>{level}</span>)}</span>
+                </div>
+                {basis || row.note ? (
+                  <div className={styles.skillMeta}>
+                    {basis ? <span>{basis}</span> : null}
+                    {row.note ? <span className={styles.skillNote}>{row.note}</span> : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       <div className={styles.grid2}>
-        <section className={cx(kit.solid, styles.card)} aria-labelledby="placement-speaking">
+        <section className={cx(kit.glass, styles.card)} aria-labelledby="placement-speaking">
           <div className={styles.cardHead}><h2 id="placement-speaking">Речь</h2>{!speakingMeasured ? <small>{NOT_MEASURED}</small> : null}</div>
           {speakingMeasured ? (
             <div className={styles.criteria}>
@@ -173,78 +207,95 @@ export function PlacementResultView({ view, onRetake, onStartPractice }: { view:
                 </div>
               ))}
             </div>
-          ) : <p className={kit.muted} style={{ margin: 0 }}>Голосовой раздел пропущен — речь оценим в следующей попытке.</p>}
+          ) : <p className={styles.plain}>Голосовой раздел пропущен — речь оценим в следующей попытке.</p>}
           {figures.length ? (
-            <div className={styles.figures}>
-              {figures.map(figure => <div key={figure.id} className={styles.figure}><strong>{figure.value}</strong><span>{figure.label}</span></div>)}
-            </div>
+            <dl className={styles.figures}>
+              {figures.map(figure => <div key={figure.id} className={styles.figure}><dt>{figure.label}</dt><dd>{figure.value}</dd></div>)}
+            </dl>
           ) : null}
           {result.speaking.notes.length ? <ul className={styles.bullets}>{result.speaking.notes.map((item, index) => <li key={index}><GaugeIcon size={16} weight="bold" />{item}</li>)}</ul> : null}
           {result.speaking.examples.slice(0, 3).map((example, index) => (
             <div key={index} className={styles.example}>
               <blockquote className={cx(kit.quote, kit.en)} lang="en">{example.quote}</blockquote>
-              <p className={kit.muted} style={{ margin: 0, fontSize: 14 }}>{example.comment}</p>
+              <p className={styles.comment}>{example.comment}</p>
               {example.better ? <div className={styles.better}><p lang="en">{example.better}</p><TtsButton text={example.better} compact label="Послушать вариант" /></div> : null}
             </div>
           ))}
-          {result.speaking.errors.filter(error => error.impact !== 'minor').slice(0, 5).map((error, index) => (
-            <div key={`e${index}`} className={styles.correction}>
-              <span className={styles.wrong} lang="en">{error.quote}</span>
-              <ArrowRightIcon size={14} weight="bold" aria-hidden="true" />
-              <span className={styles.right} lang="en">{error.correction}</span>
-              <Chip tone={LANGUAGE_IMPACT_LABEL[error.impact].tone}>{LANGUAGE_IMPACT_LABEL[error.impact].label}</Chip>
-            </div>
-          ))}
+          {errors.length ? (
+            <ul className={styles.corrections}>
+              {errors.map((error, index) => (
+                <li key={index} className={styles.correction}>
+                  <span className={styles.wrong} lang="en">{error.quote}</span>
+                  <ArrowRightIcon size={14} weight="bold" aria-hidden="true" />
+                  <span className={styles.right} lang="en">{error.correction}</span>
+                  <span className={styles.impact} data-impact={error.impact}>{LANGUAGE_IMPACT_LABEL[error.impact].label}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </section>
 
-        <section className={cx(kit.solid, styles.card)} aria-labelledby="placement-moves">
+        <section className={cx(kit.glass, styles.card)} aria-labelledby="placement-moves">
           <div className={styles.cardHead}>
             <h2 id="placement-moves">Ходы разговора</h2>
             <small>{moves.withOpportunity ? `${moves.strong} из ${moves.withOpportunity} с поводом` : 'сцена не дала повода'}</small>
           </div>
-          <p className={kit.muted} style={{ margin: 0, fontSize: 13.5 }}>Это не уровень английского, а стратегия: что ты делал в рабочей сцене.</p>
-          <div className={styles.moves}>
-            {moves.rows.map(row => (
-              <div key={row.id} className={styles.move}>
-                <span className={styles.glyph} data-score={row.score === null ? 'na' : row.score} aria-hidden="true">{row.glyph}</span>
-                <div>
-                  <strong>{row.title}</strong>
-                  <small>{row.meaning}</small>
-                  {row.quote ? <q lang="en">{row.quote}</q> : null}
-                </div>
-              </div>
-            ))}
-          </div>
+          <p className={styles.plain}>Это не уровень английского, а стратегия: что ты делал в рабочей сцене.</p>
+          {moves.withOpportunity ? (
+            <ul className={styles.moves}>
+              {moves.rows.map(row => {
+                const MoveIcon = row.score === null ? MinusIcon : MOVE_ICON[row.score];
+                return (
+                  <li key={row.id} className={styles.move}>
+                    <span className={styles.glyph} data-score={row.score === null ? 'na' : row.score} role="img"
+                      aria-label={row.score === 2 ? 'получилось' : row.score === 1 ? 'частично' : row.score === 0 ? 'не получилось' : 'не было повода'}>
+                      <MoveIcon size={15} weight="bold" aria-hidden="true" />
+                    </span>
+                    <div>
+                      <strong>{row.title}</strong>
+                      <small>{row.meaning}</small>
+                      {row.quote ? <q lang="en">{row.quote}</q> : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            // Eight identical «Не было повода» rows say nothing: one line naming what the next attempt will look at.
+            <p className={styles.movesEmpty}>В следующей попытке посмотрим: {moves.rows.map(row => row.title.toLowerCase()).join(', ')}.</p>
+          )}
         </section>
       </div>
 
-      {result.languageTargets.length || result.communication.strengths.length || result.communication.risks.length ? (
+      {result.languageTargets.length || result.communication.strengths.length || result.communication.risks.length || result.communication.observations.length ? (
         <div className={styles.grid2}>
           {result.languageTargets.length ? (
-            <section className={cx(kit.solid, styles.card)} aria-labelledby="placement-targets">
+            <section className={cx(kit.glass, styles.card)} aria-labelledby="placement-targets">
               <div className={styles.cardHead}><h2 id="placement-targets">Английский: цели</h2><small>сначала базовые вещи</small></div>
-              {result.languageTargets.map((target, index) => (
-                <div key={index} className={styles.example} style={index === 0 ? { borderTop: 0, paddingTop: 0 } : undefined}>
-                  <strong style={{ fontSize: 15 }}>{target.title}</strong>
-                  {target.quote ? (
-                    <div className={styles.correction}>
-                      <span className={styles.wrong} lang="en">{target.quote}</span>
-                      {target.correction ? <><ArrowRightIcon size={14} weight="bold" aria-hidden="true" /><span className={styles.right} lang="en">{target.correction}</span></> : null}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
+              <ul className={styles.targets}>
+                {result.languageTargets.map((target, index) => (
+                  <li key={index}>
+                    <strong>{target.title}</strong>
+                    {target.quote ? (
+                      <span className={styles.correction}>
+                        <span className={styles.wrong} lang="en">{target.quote}</span>
+                        {target.correction ? <><ArrowRightIcon size={14} weight="bold" aria-hidden="true" /><span className={styles.right} lang="en">{target.correction}</span></> : null}
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
             </section>
           ) : null}
           {result.communication.strengths.length || result.communication.risks.length || result.communication.observations.length ? (
-            <section className={cx(kit.solid, styles.card)} aria-labelledby="placement-communication">
+            <section className={cx(kit.glass, styles.card)} aria-labelledby="placement-communication">
               <div className={styles.cardHead}><h2 id="placement-communication">Общение</h2></div>
               {result.communication.strengths.length ? <ul className={styles.bullets}>{result.communication.strengths.map((item, index) => <li key={index}><SealCheckIcon size={16} weight="fill" color="var(--k-lime-ink)" />{item}</li>)}</ul> : null}
               {result.communication.risks.length ? <ul className={styles.bullets}>{result.communication.risks.map((item, index) => <li key={index}><WarningIcon size={16} weight="fill" color="var(--k-warning-ink)" />{item}</li>)}</ul> : null}
               {result.communication.observations.map((item, index) => (
                 <div key={index} className={styles.example}>
-                  <strong style={{ fontSize: 15 }}>{item.title}</strong>
-                  <p className={kit.muted} style={{ margin: 0, fontSize: 14 }}>{item.detail}</p>
+                  <strong className={styles.exampleTitle}>{item.title}</strong>
+                  <p className={styles.comment}>{item.detail}</p>
                   {item.quote ? <blockquote className={cx(kit.quote, kit.en)} lang="en">{item.quote}</blockquote> : null}
                 </div>
               ))}
@@ -254,19 +305,24 @@ export function PlacementResultView({ view, onRetake, onStartPractice }: { view:
       ) : null}
 
       {points.length ? (
-        <section className={cx(kit.solid, styles.card)} aria-labelledby="placement-history">
+        <section className={cx(kit.glass, styles.card)} aria-labelledby="placement-history">
           <div className={styles.cardHead}><h2 id="placement-history">Как менялся уровень</h2><small>сравниваем только изменения больше погрешности</small></div>
           <Sparkline points={points} />
         </section>
       ) : null}
 
       {reviewGroups.length ? (
-        <details className={cx(kit.solid, kit.details, styles.review)}>
-          <summary>Разбор заданий <CaretDownIcon size={20} weight="bold" aria-hidden="true" /></summary>
+        <details className={cx(kit.glass, kit.details, styles.review)}>
+          <summary>
+            <span className={styles.reviewTitle}>Разбор заданий
+              <small>{reviewGroups.map(group => `${REVIEW_SECTION_TITLE[group.section]}: ${group.items.filter(item => item.correct).length} из ${group.items.length}`).join(' · ')}</small>
+            </span>
+            <CaretDownIcon size={20} weight="bold" aria-hidden="true" />
+          </summary>
           <div className={styles.reviewBody}>
             {reviewGroups.map(group => (
               <div key={group.section} className={styles.reviewGroup}>
-                <h4>{REVIEW_SECTION_TITLE[group.section]} · {group.items.filter(item => item.correct).length} из {group.items.length}</h4>
+                <h3>{REVIEW_SECTION_TITLE[group.section]} · {group.items.filter(item => item.correct).length} из {group.items.length}</h3>
                 {group.items.map(item => (
                   <article key={item.itemId} className={styles.item}>
                     <p className={cx(styles.itemPrompt, kit.en)} lang="en"><PromptText prompt={item.prompt} filled={item.options[item.answer] ?? null} /></p>
@@ -275,7 +331,7 @@ export function PlacementResultView({ view, onRetake, onStartPractice }: { view:
                         <li key={index} data-key={index === item.answer} data-chosen={index === item.chosen} lang="en">
                           {index === item.answer ? <CheckIcon size={14} weight="bold" /> : index === item.chosen ? <XIcon size={14} weight="bold" /> : <span style={{ width: 14 }} />}
                           {option}
-                          {index === item.chosen ? <small>твой ответ</small> : index === item.answer ? <small>верно</small> : null}
+                          {index === item.chosen ? <small lang="ru">твой ответ</small> : index === item.answer ? <small lang="ru">верно</small> : null}
                         </li>
                       ))}
                     </ul>
@@ -294,32 +350,12 @@ export function PlacementResultView({ view, onRetake, onStartPractice }: { view:
         </details>
       ) : null}
 
-      {result.limitations.length ? <ul className={styles.limitations}>{result.limitations.map((item, index) => <li key={index}>* {item}</li>)}</ul> : null}
-
-      {/* Small screens: the retake lives at the end; only the primary action stays sticky. */}
-      <div className={cx(kit.solid, styles.retakeBlock)}>
-        <span className={styles.actionsNote}>{retakeInProgress ? 'Пересдача уже идёт — продолжи её, когда будет время.' : note.text ?? 'Повторный тест — с новыми заданиями.'}</span>
-        <button type="button" className={cx(kit.btn, kit.secondary)} onClick={onRetake}>
-          <ArrowClockwiseIcon size={18} weight="bold" />{retakeInProgress ? 'Продолжить пересдачу' : 'Пересдать'}
-        </button>
-      </div>
-      <div className={cx(kit.glass, styles.actionsBar)}>
-        <span className={styles.actionsNote}>
-          {retakeInProgress ? 'Пересдача уже идёт — продолжи её, когда будет время.' : note.text ?? 'Повторный тест — с новыми заданиями.'}
-        </span>
-        <div className={styles.actionsButtons}>
-          <button type="button" className={cx(kit.btn, kit.secondary, styles.retakeButton)} onClick={onRetake}>
-            <ArrowClockwiseIcon size={18} weight="bold" />{retakeInProgress ? 'Продолжить пересдачу' : 'Пересдать'}
-          </button>
-          <button type="button" className={cx(kit.btn, kit.primary)} onClick={onStartPractice}>Начать практику<ArrowRightIcon size={18} weight="bold" /></button>
-        </div>
-      </div>
+      {result.limitations.length ? <ul className={styles.limitations} aria-label="Ограничения оценки">{result.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul> : null}
     </section>
   );
 }
 
 function Sparkline({ points }: { points: ReturnType<typeof sparkline> }) {
-  const gradient = `spark-${safeId(useId())}`;
   const width = 600; const height = 110; const pad = 12;
   const xy = points.map(point => [pad + point.x * (width - pad * 2), pad + point.y * (height - pad * 2)] as const);
   const line = xy.map(([x, y], index) => `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
@@ -328,12 +364,7 @@ function Sparkline({ points }: { points: ReturnType<typeof sparkline> }) {
     <div>
       <div className={styles.sparkBox} role="img" aria-label={`История: ${points.map(point => `${point.label}${point.date ? ` (${point.date})` : ''}`).join(', ')}`}>
         <svg className={styles.spark} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-          <defs>
-            <linearGradient id={gradient} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor="var(--k-violet)" stopOpacity=".28" /><stop offset="1" stopColor="var(--k-violet)" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <path d={area} fill={`url(#${gradient})`} />
+          <path className={styles.sparkArea} d={area} />
           <path className={styles.sparkLine} d={line} />
         </svg>
         {/* Dots as HTML so they stay round while the line stretches with the width. */}
@@ -346,8 +377,9 @@ function Sparkline({ points }: { points: ReturnType<typeof sparkline> }) {
   );
 }
 
-/** Compact card for Today / Progress. */
-export function PlacementLevelCard({ view, onOpen, onStart }: { view: PlacementView; onOpen: () => void; onStart: () => void }) {
+/** Compact card for Today / Progress. `embedded` drops its own surface when a parent card already provides one. */
+export function PlacementLevelCard({ view, onOpen, onStart, embedded = false }: { view: PlacementView; onOpen: () => void; onStart: () => void; embedded?: boolean }) {
+  const surface = embedded ? styles.levelEmbedded : cx(kit.glass, styles.levelCard);
   const result = view.result;
   const progress = progressModel(view);
   const inProgress = view.status === 'in-progress';
@@ -356,7 +388,7 @@ export function PlacementLevelCard({ view, onOpen, onStart }: { view: PlacementV
     const scoring = view.status === 'scoring';
     const failed = view.status === 'error';
     return (
-      <section className={cx(kit.scope, kit.glass, styles.levelCard)} aria-label="Тест уровня">
+      <section className={cx(kit.scope, surface)} aria-label="Тест уровня">
         <div className={styles.levelTop}>
           <span className={styles.levelIcon} aria-hidden="true">{scoring ? <HourglassIcon size={26} weight="bold" /> : <GaugeIcon size={26} weight="bold" />}</span>
           <div className={styles.levelTitle}>
@@ -382,7 +414,7 @@ export function PlacementLevelCard({ view, onOpen, onStart }: { view: PlacementV
 
   const rows = skillRows(result);
   return (
-    <section className={cx(kit.scope, kit.glass, styles.levelCard)} aria-label="Уровень по тесту">
+    <section className={cx(kit.scope, surface)} aria-label="Уровень по тесту">
       <div className={styles.levelTop}>
         <span className={styles.levelBig}>{result.overall.label}</span>
         <div className={styles.levelTitle}>
@@ -390,21 +422,21 @@ export function PlacementLevelCard({ view, onOpen, onStart }: { view: PlacementV
           <span>уверенность {CONFIDENCE_LABEL[result.overall.confidence]} · {dayLabel(result.completedAt)}</span>
         </div>
       </div>
-      <div className={styles.miniBars} role="list" aria-label="Навыки">
+      <ul className={styles.skillGrid} aria-label="Навыки">
         {SKILL_ORDER.map((id, index) => {
           const row = rows.find(item => item.id === id)!;
-          const height = row.marker === null ? 0 : Math.max(0.1, row.marker);
+          const fill = row.marker === null ? 0 : Math.max(0.06, row.marker);
           return (
-            <div key={id} className={styles.mini} role="listitem" aria-label={`${SKILL_TITLE[id]}: ${row.label}`}>
-              <strong>{row.measured ? row.label : '—'}</strong>
-              <span className={styles.miniTrack} data-empty={!row.measured}>
-                {row.measured ? <span className={styles.miniFill} style={{ height: `${height * 100}%`, ['--i' as string]: index } as CSSProperties} /> : null}
+            <li key={id} aria-label={`${SKILL_TITLE[id]}: ${row.measured ? row.label : 'не измерено'}`}>
+              <span className={styles.skillName}>{SHORT_SKILL[id]}</span>
+              <strong data-empty={!row.measured}>{row.measured ? row.label : 'нет'}</strong>
+              <span className={styles.skillTrack} data-empty={!row.measured} aria-hidden="true">
+                {row.measured ? <span style={{ ['--fill' as string]: fill, ['--i' as string]: index } as CSSProperties} /> : null}
               </span>
-              <span className={styles.miniLabel}>{SHORT_SKILL[id]}</span>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ul>
       <p className={styles.levelHeadline}>{result.headline}</p>
       {view.status === 'scoring' ? <p className={styles.levelHeadline} style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Spinner />Пересдача: считаю новый результат…</p> : null}
       {view.status === 'error' ? <p className={styles.levelHeadline} style={{ color: 'var(--k-error-ink)' }}>Пересдача: результат не посчитался — ответы сохранены.</p> : null}
@@ -421,5 +453,5 @@ export function PlacementLevelCard({ view, onOpen, onStart }: { view: PlacementV
 }
 
 const SHORT_SKILL: Record<(typeof SKILL_ORDER)[number], string> = {
-  listening: 'Слух', reading: 'Чтение', grammar: 'Грамм.', vocabulary: 'Слова', speaking: 'Речь', interaction: 'Разговор',
+  listening: 'Слух', reading: 'Чтение', grammar: 'Грамматика', vocabulary: 'Слова', speaking: 'Речь', interaction: 'Разговор',
 };

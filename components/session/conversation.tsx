@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { ArrowsClockwiseIcon, BookOpenTextIcon, CheckIcon, EyeIcon, LightbulbIcon, PlayIcon, SpeakerHighIcon, SquareIcon } from '@phosphor-icons/react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { ArrowsClockwiseIcon, BookOpenTextIcon, CaretRightIcon, CheckIcon, EyeIcon, LightbulbIcon, PlayIcon, SpeakerHighIcon, SquareIcon } from '@phosphor-icons/react';
 import type { Session } from '@/lib/types';
 import { useApp } from '../app/app-context';
 import { CTA } from '../app/labels';
@@ -12,9 +12,22 @@ import { FinishDialog, type FinishIntent } from './dialogs';
 import { UnuploadedRecording } from './recording-panels';
 import styles from './session.module.css';
 
-export function LessonMaterial({ material }: { material: NonNullable<Session['lesson']['material']> }) {
-  return <section className={`card solid ${styles.material}`} aria-label={material.type === 'reading-passage' ? 'Текст для чтения' : 'Задание для письма'}>
-    <span className="eyebrow">{material.type === 'reading-passage' ? 'Текст для чтения' : 'Задание для письма'}</span>
+type Turn = Session['turns'][number];
+
+/** The conversation as a plain list: who spoke, what was said. `note` and `extra` add review-only details. */
+export function Turns({ turns, note, extra }: { turns: Turn[]; note?: (turn: Turn) => string; extra?: (turn: Turn) => ReactNode }) {
+  return <ol className={styles.turns}>{turns.map(turn => <li key={turn.id} data-role={turn.role}>
+    <span className={styles.speaker}>{turn.role === 'user' ? 'Ты' : 'Собеседник'}{note?.(turn)}</span>
+    <p lang="en">{turn.text}</p>
+    {extra?.(turn)}
+  </li>)}</ol>;
+}
+
+/** Reading passage or writing brief. `embedded` drops the surface when it sits inside another one. */
+export function LessonMaterial({ material, embedded = false }: { material: NonNullable<Session['lesson']['material']>; embedded?: boolean }) {
+  const label = material.type === 'reading-passage' ? 'Текст для чтения' : 'Задание для письма';
+  return <section className={`${embedded ? '' : 'surface '}${styles.material}`} data-embedded={embedded} aria-label={label}>
+    <h2 className={styles.label}>{label}</h2>
     <p lang="en" className={styles.materialText}>{material.text}</p>
     <p lang="en" className={styles.materialInstruction}>{material.instruction}</p>
     <small>Учебный материал создан для этой практики, это не официальный экзаменационный вариант.</small>
@@ -35,7 +48,7 @@ function PitchTimer({ listening }: { listening: boolean }) {
   const zone = seconds < 25 ? 'short' : seconds <= 45 ? 'good' : 'long';
   return <p className={styles.pitchTimer} data-zone={zone} role="timer" aria-live="off">
     <span className="tabular">{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</span>
-    <span className={styles.pitchTrack} aria-hidden="true"><i style={{ width: `${Math.min(100, seconds / 60 * 100)}%` }} /></span>
+    <span className={styles.pitchTrack} aria-hidden="true"><b data-zone="good" /><b data-zone="long" /><i style={{ transform: `scaleX(${Math.min(1, seconds / 60)})` }} /></span>
     <span>{zone === 'short' ? 'цель 30–45 с' : zone === 'good' ? 'в цели' : 'пора закругляться'}</span>
   </p>;
 }
@@ -71,6 +84,8 @@ export function ConversationView() {
         : waitingReply ? 'Подожди ответ собеседника.'
           : baseline && baselineReplies < 2 ? 'Сначала хотя бы два своих ответа голосом.' : null;
   const awaitingPartner = last?.role === 'user' && !waitingReply;
+  const showSupports = !baseline && s.mode === 'learning' && !textActivity;
+  const showTranscript = !baseline && s.turns.length > 1;
 
   return <div className={styles.conversation}>
     <FinishDialog intent={finishIntent} textActivity={textActivity} hasDraft={!!draft?.text.trim()}
@@ -79,13 +94,13 @@ export function ConversationView() {
       onSendAndFinish={() => { setFinishIntent(null); void lesson.finishWithDraft('send'); }}
       onDiscardAndConfirm={() => { setFinishIntent(null); void lesson.finishWithDraft('discard'); }} />
 
-    <section className={`glass ${styles.stage}`} data-voice={voice.state} aria-label="Разговор">
+    <section className={`surface ${styles.stage}`} data-voice={voice.state} aria-label="Разговор">
       <div className={styles.stageMascot}>
         <Companion state={mascotState} emotion={emotion} micLevelStore={voice.meterStore} speechLevelStore={voice.speechLevelStore} status={status} />
       </div>
       <p className={styles.voiceState} aria-live="polite">{status}{waitingReply && <> · <ElapsedTime startedAt={lesson.busySince ?? (s.processing ? Date.parse(s.processing.startedAt) : null)} /></>}</p>
       {s.lesson.format === 'pitch' && <PitchTimer listening={listening} />}
-      {s.lesson.format === 'replay' && s.lesson.seed && <div className={styles.seed}><span className="eyebrow">Реплика из твоего созвона</span><p lang="en">«{s.lesson.seed}»</p></div>}
+      {s.lesson.format === 'replay' && s.lesson.seed && <figure className={styles.seed}><figcaption className={styles.label}>Реплика из твоего созвона</figcaption><blockquote lang="en">«{s.lesson.seed}»</blockquote></figure>}
       {lastPartner && !textActivity && <div className={styles.partnerLine}>
         {showText ? <p lang="en" className={styles.partnerText}>{lastPartner.text}</p>
           : <p className={styles.partnerHidden}>Реплика собеседника звучит голосом. Текст можно открыть — это учтётся как опора.</p>}
@@ -97,36 +112,33 @@ export function ConversationView() {
           {showText && s.mode === 'call' && !baseline && audioReady && <button type="button" className="text-button muted" disabled={pending || listening} onClick={() => lesson.setTextMode(false)}>Скрыть текст</button>}
         </div>
       </div>}
-      {voice.autoplayBlocked && lastPartner && <div className="banner info"><PlayIcon size={18} weight="fill" /><span className="banner-copy"><span>Браузер ждёт нажатия, чтобы включить звук.</span>
+      {voice.autoplayBlocked && lastPartner && <div className={`banner info ${styles.stageBanner}`}><PlayIcon size={18} weight="fill" /><span className="banner-copy"><span>Браузер ждёт нажатия, чтобы включить звук.</span>
         <span className="banner-actions"><button type="button" className="button small primary" disabled={pending || listening} onClick={() => void voice.speak(s, lastPartner)}>Включить голос</button></span></span></div>}
       {voice.canRetry && !voice.hasUnuploadedRecording && <button type="button" className="button small secondary" disabled={pending || listening} onClick={() => void voice.retry()}><ArrowsClockwiseIcon size={15} />{voice.retryLabel || 'Повторить'}</button>}
     </section>
 
     {s.lesson.material && <LessonMaterial material={s.lesson.material} />}
-    {textActivity && lastPartner && <section className={`card solid ${styles.prompt}`}><span className="eyebrow">Собеседник</span><p lang="en">{lastPartner.text}</p></section>}
+    {textActivity && lastPartner && <section className={`surface ${styles.prompt}`} aria-labelledby="prompt-label"><h2 id="prompt-label" className={styles.label}>Собеседник</h2><p lang="en">{lastPartner.text}</p></section>}
 
     <UnuploadedRecording />
     {awaitingPartner && <div className="banner warning" role="status"><ArrowsClockwiseIcon size={18} /><span className="banner-copy">
       <span>{s.error ? `Собеседник не ответил: ${s.error}` : 'Твоя реплика сохранена, ответ собеседника не пришёл.'}</span>
       <span className="banner-actions"><button type="button" className="button small primary" disabled={pending} onClick={lesson.resend}>Повторить ответ собеседника</button></span></span></div>}
 
-    {!baseline && s.mode === 'learning' && !textActivity && <section className={`glass flat ${styles.supports}`} aria-labelledby="supports-title">
-      <h3 id="supports-title"><LightbulbIcon size={17} />Подсказка</h3>
-      <p className="caption">Сначала попробуй сам — опора учитывается в разборе.</p>
-      <div className={styles.hintButtons}>{([1, 2, 3] as const).map(level => <button key={level} type="button" className="button small secondary" aria-pressed={lesson.hintLevel === level}
-        disabled={pending || listening} onClick={() => void lesson.hint(level)}>{level === 1 ? 'Намёк' : level === 2 ? 'Конструкция' : 'Пример'}</button>)}</div>
-      {lesson.hintText && <p className={styles.hint} lang="en">{lesson.hintText}</p>}
-    </section>}
-
-    {!baseline && s.turns.length > 1 && <details className={`glass flat ${styles.transcript}`}
-      onToggle={event => { if (event.currentTarget.open && !lesson.transcript && !pending && !listening && s.mode === 'call') void lesson.showTranscript(); }}>
-      <summary><BookOpenTextIcon size={17} />{textActivity ? 'Задание и твои ответы' : 'Весь разговор'}</summary>
-      <ol className={styles.turns}>{s.turns.map(turn => <li key={turn.id} data-role={turn.role}><span className="eyebrow">{turn.role === 'user' ? 'Ты' : 'Собеседник'}</span><p lang="en">{turn.text}</p></li>)}</ol>
-    </details>}
-
-    <div className={styles.goalNote}><strong>Твоя задача:</strong> {s.lesson.goal}</div>
-    {!!s.lesson.mustAvoid?.length && <div className={styles.avoid} aria-label="Чего не говорить"><span className="caption">Не говори:</span>
-      {s.lesson.mustAvoid.slice(0, 6).map(item => <span key={item} className="chip warning" lang="en">{item}</span>)}</div>}
+    {(showSupports || showTranscript) && <div className={`surface flat rows ${styles.tools}`}>
+      {showSupports && <section className={styles.supports} aria-labelledby="supports-title">
+        <h2 id="supports-title"><LightbulbIcon size={18} />Подсказка</h2>
+        <p className="caption">Сначала попробуй сам — опора учитывается в разборе.</p>
+        <div className={styles.hintButtons}>{([1, 2, 3] as const).map(level => <button key={level} type="button" className="button small secondary" aria-pressed={lesson.hintLevel === level}
+          disabled={pending || listening} onClick={() => void lesson.hint(level)}>{level === 1 ? 'Намёк' : level === 2 ? 'Конструкция' : 'Пример'}</button>)}</div>
+        {lesson.hintText && <p className={styles.hint} lang="en">{lesson.hintText}</p>}
+      </section>}
+      {showTranscript && <details className={styles.transcript}
+        onToggle={event => { if (event.currentTarget.open && !lesson.transcript && !pending && !listening && s.mode === 'call') void lesson.showTranscript(); }}>
+        <summary><BookOpenTextIcon size={18} />{textActivity ? 'Задание и твои ответы' : 'Весь разговор'}<CaretRightIcon size={14} weight="bold" className={styles.caret} /></summary>
+        <Turns turns={s.turns} />
+      </details>}
+    </div>}
 
     <div className={styles.dockArea}>
       <Dock intent="message" placeholder={s.lesson.activity === 'writing' ? 'Write your text here…' : 'Your reply…'} label={s.lesson.activity === 'writing' ? 'Твой текст по-английски' : 'Твой ответ по-английски'}

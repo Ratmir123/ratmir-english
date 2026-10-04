@@ -1,23 +1,23 @@
+/* Content surface (opaque, hairline, soft shadow in light) — glass is only for floating chrome. */
 .card {
   position: relative; min-width: 0; padding: 22px; border-radius: var(--radius-card); color: var(--text-primary);
-  background: var(--surface-glass);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  box-shadow: inset 0 1px 0 var(--surface-glass-highlight), inset 0 0 0 1px var(--surface-glass-hairline), var(--shadow-float);
+  background: var(--surface-card); box-shadow: inset 0 0 0 1px var(--hairline), var(--e1);
 }
+.embedded { position: relative; min-width: 0; color: var(--text-primary); }
 .header, .heading, .periodRow { display: flex; align-items: center; }
 .header { justify-content: space-between; gap: 12px; }
 .heading { min-width: 0; gap: 10px; }
 .heading h3 { font-family: var(--font-display); font-size: 20px; font-weight: 750; line-height: 1.3; }
-.symbol { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; background: var(--surface-sunken); color: var(--text-secondary); }
-.refresh { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; background: var(--surface-sunken); color: var(--text-primary); transition: transform var(--spring-bouncy-ms) var(--spring-bouncy), background-color 160ms var(--ease-out); }
+.embedded .heading h3 { font-family: var(--font-body); font-size: var(--text-17); font-weight: 700; }
+.refresh { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; background: var(--surface-sunken); color: var(--text-primary); transition: transform var(--press-ms) var(--ease-out), background-color 160ms var(--ease-out); }
 .refresh:active:not(:disabled) { transform: scale(.94); transition-duration: 90ms; }
 .refresh:disabled { cursor: wait; }
 .spinner { animation: refreshSpin 650ms linear infinite; }
 @keyframes refreshSpin { to { transform: rotate(360deg); } }
-.plan { display: inline-block; max-width: 100%; margin-top: 10px; padding: 4px 10px; border-radius: var(--radius-pill); background: var(--accent-lime-soft); color: var(--accent-lime-ink); font-size: 12px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
+.plan { display: block; max-width: 100%; margin-top: 8px; color: var(--text-primary); font-size: 13px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
 .scope { margin-top: 8px; font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; }
 .buckets { margin-top: 18px; }
-.bucket + .bucket { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--surface-glass-hairline); }
+.bucket + .bucket { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--hairline); }
 .bucketName { margin: 0 0 12px; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .windows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 20px 24px; }
 .window { min-width: 0; }
@@ -45,8 +45,8 @@
 .unavailable { margin: 16px 0 2px; }
 .unavailableTitle { display: block; font-size: 16px; font-weight: 650; }
 .unavailable p { margin-top: 6px; color: var(--text-secondary); font-size: 13px; line-height: 1.6; max-width: 58ch; }
-.footer { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--surface-glass-hairline); }
-.activity { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--surface-glass-hairline); }
+.footer { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+.activity { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--hairline); }
 .activityHeading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .activityHeading h4 { margin: 0; font-size: 13px; font-weight: 650; }
 .activityHeading > span, .activity p { font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
@@ -63,7 +63,7 @@
 .skeletonNumber { width: 90px; height: 34px; }
 .skeletonMeter { width: 100%; height: 8px; }
 .compact .windows { grid-template-columns: 1fr; }
-.compact .window + .window { padding-top: 16px; border-top: 1px solid var(--surface-glass-hairline); }
+.compact .window + .window { padding-top: 16px; border-top: 1px solid var(--hairline); }
 @media (hover: hover) and (pointer: fine) {
   .refresh:hover:not(:disabled) { background: var(--surface-sunken-2); }
   .footer a:hover svg { transform: translate(1px, -1px); }

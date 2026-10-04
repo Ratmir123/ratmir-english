@@ -44,7 +44,7 @@ private struct CallUploadCardContent: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .featureGlass(radius: 28, tint: FeaturePalette.lavender.opacity(0.45))
+        .featureGlass(radius: 28)
         .animation(reduceMotion ? nil : FeatureMotion.standard, value: uploads.job?.phase)
         .fileImporter(isPresented: $importing, allowedContentTypes: CallUploadCenter.allowedTypes) { result in
             handlePick(result)
@@ -70,37 +70,55 @@ private struct CallUploadCardContent: View {
         }
     }
 
-    private var idle: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "phone.bubble.fill")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(FeaturePalette.violet)
-                    .frame(width: 44, height: 44)
-                    .featureGlass(radius: 22, tint: FeaturePalette.lavender)
-                    .accessibilityHidden(true)
+    @ViewBuilder private var idle: some View {
+        if compact {
+            VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Разбор реального звонка").font(.headline)
-                    Text(compact ? "Запись, транскрипт или рассказ по памяти."
-                                 : "Запись, видео, транскрипт или готовый разбор. Найду, что сработало и что стоило денег, и соберу тренировки из твоих же моментов.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Разбор реального звонка").font(.headline).accessibilityAddTraits(.isHeader)
+                    Text("Запись, транскрипт или рассказ по памяти.")
+                        .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-            }
-            if compact {
                 HStack(spacing: 10) {
                     Button { importing = true } label: { Label("Загрузить", systemImage: "square.and.arrow.up") }
                         .buttonStyle(PrimaryButton())
                     Button { showMemory = true } label: { Label("По памяти", systemImage: "text.bubble") }
                         .buttonStyle(QuietButton())
                 }
-            } else {
-                Button { importing = true } label: { Label("Загрузить созвон", systemImage: "square.and.arrow.up") }
-                    .buttonStyle(PrimaryButton())
-                Button { showMemory = true } label: { Label("Описать по памяти", systemImage: "text.bubble") }
-                    .buttonStyle(QuietButton())
-                Text("Аудио хранится 30 дней, текст и разбор — пока не удалишь. Лучше предупреждать собеседников, что звонок записывается.")
+            }
+        } else {
+            // Web upload card: the file row is the pick target; the no-file options sit under a hairline.
+            VStack(alignment: .leading, spacing: 14) {
+                Button { importing = true } label: {
+                    HStack(alignment: .center, spacing: 14) {
+                        Image(systemName: "arrow.up.doc")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(Theme.onAccent)
+                            .frame(width: 48, height: 48)
+                            .background(FeaturePalette.lime, in: Circle())
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Загрузить запись или расшифровку").font(.headline).multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Нажми, чтобы выбрать файл. Аудио, видео, .txt, .vtt, .srt, .md")
+                                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .foregroundStyle(Color.primary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(FeatureTileButtonStyle())
+                .accessibilityLabel("Загрузить запись или расшифровку")
+                .accessibilityHint("Открывает выбор файла")
+                RowDivider(inset: 0)
+                HStack(spacing: 10) {
+                    Text("Нет файла?").font(.subheadline).foregroundStyle(.secondary)
+                    Button { showMemory = true } label: { Label("Описать по памяти", systemImage: "text.bubble") }
+                        .buttonStyle(QuietButton())
+                }
+                Text("Лучше всего — запись, где слышно обоих. Сырые записи хранятся 30 дней, расшифровка и разбор — пока не удалишь. Предупреди собеседника, что записываешь звонок.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

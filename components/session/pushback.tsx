@@ -58,7 +58,7 @@ export function PushbackRound({ retry, retryId }: { retry: Retry; retryId: strin
   if (skipped) return <button type="button" className="text-button" onClick={() => setSkipped(false)}>Вернуться к возражению собеседника</button>;
   return <section className={styles.pushback} aria-labelledby={`pushback-${retryId}`}>
     <div className={styles.pushbackHead}>
-      <span className="eyebrow" id={`pushback-${retryId}`}>Раунд давления · по желанию</span>
+      <h4 id={`pushback-${retryId}`}>Раунд давления<span> · по желанию</span></h4>
       <button type="button" className="text-button muted" onClick={() => setSkipped(true)}>Пропустить</button>
     </div>
     <p className="caption">Собеседник не сдаётся. Удержи свою позицию ещё раз — это не обязательно для завершения.</p>

@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { ArrowRightIcon, CheckIcon, LockSimpleIcon } from '@phosphor-icons/react';
 import type { AppState, ProgressionState } from '@/lib/types';
 import { achievementArt, achievementTarget, EXPERIENCE_BANDS, experienceBand, type AchievementTarget } from '@/lib/achievement-targets';
 import { shortDate } from '../app/labels';
+import { MEDAL, medalEdges, useMedal3D, useReducedMotion } from './medal-3d';
 import { RollingNumber } from './rolling-number';
 import styles from './rewards.module.css';
 
@@ -34,36 +35,65 @@ export function rankProgress(value: Pick<ProgressionState, 'xp' | 'level'>) {
   return { band, next, floor, nextXP, ratio: nextXP === null ? 1 : Math.min(1, Math.max(0, (value.xp - floor) / Math.max(1, nextXP - floor))), toNext: nextXP === null ? 0 : Math.max(0, nextXP - value.xp) };
 }
 
-/** Existing 3D rank art: ambient float, press squash and a pointer-tilt parallax. Decorative unless `interactive`. */
+/**
+ * Rank art as a physical medal (DESIGN-PASS-0.5.1): stacked silhouettes give it a rim, light and foil
+ * move against the turn, drag spins it with inertia, a tap turns it once, `drop` is the rank-up entrance.
+ * Below 48 px it stays flat art with a float. Decorative unless `interactive`.
+ */
 export function RankMedal({ level, size = 96, animated = true, interactive = false, drop = false, label }: {
   level: number; size?: number; animated?: boolean; interactive?: boolean; drop?: boolean; label?: string;
 }) {
   const { ref, moving } = useRewardMotion(animated);
+  const reduced = useReducedMotion();
   const [pressed, setPressed] = useState(false);
+  const [nested, setNested] = useState(false);
+  const sheen = useRef<HTMLElement>(null);
+  const light = useRef<HTMLElement>(null);
   const band = experienceBand(level);
   const kind = band.art.replace('rank-', '');
   const count = kind === 'gold' ? 10 : kind === 'rose' ? 6 : kind === 'sky' ? 3 : kind === 'mint' ? 2 : 4;
-  const tilt = (event: PointerEvent<HTMLElement>) => {
-    if (event.pointerType !== 'mouse' || !ref.current) return;
-    const box = ref.current.getBoundingClientRect();
-    const x = (event.clientX - box.left) / box.width - .5, y = (event.clientY - box.top) / box.height - .5;
-    ref.current.style.setProperty('--tilt-y', `${(x * 18).toFixed(1)}deg`);
-    ref.current.style.setProperty('--tilt-x', `${(-y * 18).toFixed(1)}deg`);
-  };
-  const untilt = () => { ref.current?.style.setProperty('--tilt-x', '0deg'); ref.current?.style.setProperty('--tilt-y', '0deg'); setPressed(false); };
-  const art = <><span className={styles.rankFloor} /><span className={styles.rankFeedback}>
+  const lit = size >= MEDAL.solidMin;
+  const responsive = lit && (animated || interactive || drop);
+  const solid = responsive && !reduced;
+  const gestures = solid && !nested;
+  const holo = lit && (kind === 'violet' || kind === 'rose' || kind === 'gold');
+  const { depth, layers } = medalEdges(size);
+  const glint = useCallback((delay = 0) => {
+    if (reduced) { light.current?.animate?.([{ opacity: 1 }, { opacity: 1, filter: 'brightness(1.6)' }, { opacity: 1 }], { duration: 700, delay }); return; }
+    sheen.current?.animate?.([{ transform: 'translateX(0) rotate(24deg)' }, { transform: 'translateX(770%) rotate(24deg)' }],
+      { duration: 820, delay, easing: 'cubic-bezier(.45, 0, .55, 1)' });
+  }, [reduced]);
+  // Inside a row button or link the host owns clicks and drags; the medal only tilts and sways.
+  useLayoutEffect(() => { setNested(!!ref.current?.parentElement?.closest('button, a[href], [role="button"], [role="link"], label, summary')); }, [ref]);
+  const medal = useMedal3D(ref, { size, solid, responsive, nested, entrance: drop, onPress: setPressed, onGlint: glint });
+  const release = () => setPressed(false);
+  const art = <><span className={styles.rankFloor}><i /></span><span className={styles.rankFeedback}>
     <span className={styles.rankFloat}>
-      <span className={styles.rankAtmosphere}>{Array.from({ length: count }, (_, index) => <i key={index} style={{ '--i': index, '--angle': `${360 * index / count - 90}deg` } as CSSProperties} />)}</span>
-      <img className={styles.rankArt} src={`/rewards-v041/${band.art}.png`} width={size} height={size} alt="" draggable={false} />
-      <span className={styles.rankSheen}><i /></span>
+      {lit && <span className={styles.rankAtmosphere}>{Array.from({ length: count }, (_, index) => <i key={index} style={{ '--i': index, '--angle': `${360 * index / count - 90}deg` } as CSSProperties} />)}</span>}
+      <span className={styles.rankBody}><span className={styles.rankSway}>
+        {solid && <>
+          <i className={styles.rankBack} />
+          {layers.map(layer => <i key={layer.z} className={styles.rankEdge} style={{ '--z': `${layer.z.toFixed(2)}px`, '--mix': `${(layer.mix * 100).toFixed(1)}%` } as CSSProperties} />)}
+          <i className={styles.rankSide} />
+          <i className={styles.rankEdgeGlint} />
+        </>}
+        <span className={styles.rankFace}>
+          <img className={styles.rankArt} src={`/rewards-v041/${band.art}.png`} width={size} height={size} alt="" draggable={false} />
+          {lit && <span ref={light} className={styles.rankLight}><i /></span>}
+          {holo && <span className={styles.rankHolo}><i /></span>}
+          {lit && <span className={styles.rankSheen}><i ref={sheen} /></span>}
+        </span>
+      </span></span>
     </span>
   </span></>;
   return <span ref={ref} className={styles.rankEmblem} data-rank={kind} data-moving={animated && moving} data-pressed={pressed} data-drop={drop}
-    style={{ width: size, height: size, '--rank-art': `url('/rewards-v041/${band.art}.png')`, '--rank-radius': `${size * .32}px` } as CSSProperties}
-    onPointerMove={tilt} onPointerLeave={untilt}>
+    data-lit={lit} data-solid={solid} data-gestures={gestures} data-holo={holo}
+    style={{ width: size, height: size, '--rank-art': `url('/rewards-v041/${band.art}.png')`, '--rank-radius': `${size * .32}px`, '--medal-size': `${size}px`, '--depth': `${depth.toFixed(2)}px` } as CSSProperties}
+    onPointerDown={medal.onPointerDown} onPointerMove={medal.onPointerMove} onPointerUp={event => { release(); medal.onPointerUp(event); }}
+    onPointerCancel={event => { release(); medal.onPointerCancel(event); }} onPointerLeave={() => { release(); medal.onPointerLeave(); }} onClick={medal.onClick}>
     {interactive
       ? <button type="button" className={styles.rankTouch} aria-label={label ?? `Ранг «${band.title}»`}
-        onPointerDown={() => setPressed(true)} onPointerUp={() => setPressed(false)} onPointerCancel={untilt} onBlur={untilt}>{art}</button>
+        onPointerDown={() => setPressed(true)} onBlur={release}>{art}</button>
       : <span className={styles.rankStatic} aria-hidden="true">{art}</span>}
   </span>;
 }
@@ -102,6 +132,12 @@ export function RankLadder({ value }: { value: Pick<ProgressionState, 'xp' | 'le
   })}</ol>;
 }
 
+/** The arrow rides on the last word, so a wrapped label never leaves it alone on a line. */
+function TargetLabel({ label }: { label: string }) {
+  const cut = label.lastIndexOf(' ');
+  return <>{cut > 0 ? label.slice(0, cut + 1) : ''}<span className={styles.targetTail}>{label.slice(cut + 1)}<ArrowRightIcon size={15} aria-hidden="true" /></span></>;
+}
+
 /** Counters never exceed their target (DESIGN-SYSTEM §3 Progress); an unlocked rubric reads «Открыто». */
 export function Achievements({ value, state, onTarget, limit }: { value: ProgressionState; state: AppState; onTarget: (target: AchievementTarget) => void; limit?: number }) {
   const ratio = (current: number, target: number) => Math.min(1, Math.max(0, target > 0 ? current / target : 0));
@@ -111,14 +147,15 @@ export function Achievements({ value, state, onTarget, limit }: { value: Progres
   return <div className={styles.achievements} data-testid="achievements">{ordered.map((item, index) => {
     const shown = Math.min(item.current, item.target);
     const target = item.unlocked ? null : achievementTarget(item.id, state);
-    return <article key={item.id} className={`glass flat ${styles.achievement} reveal`} style={{ '--i': index } as CSSProperties} data-unlocked={item.unlocked}>
+    return <article key={item.id} className={`surface flat ${styles.achievement} reveal`} style={{ '--i': index } as CSSProperties} data-unlocked={item.unlocked}>
       <AchievementMedal id={item.id} motion={item.unlocked ? 'earned' : index === 0 ? 'goal' : 'still'} locked={!item.unlocked} />
       <div className={styles.achievementCopy}><strong>{item.title}</strong>
         <small>{item.unlocked ? `Открыто${item.unlockedAt ? ' · ' + shortDate(item.unlockedAt) : ''}` : `${shown} из ${item.target}`}</small></div>
       <div className={styles.achievementDetail}>
         <p>{item.description}</p>
         {!item.unlocked && <div className="progress-track" role="progressbar" aria-label={item.title} aria-valuemin={0} aria-valuemax={item.target} aria-valuenow={shown} style={{ '--value': ratio(shown, item.target) } as CSSProperties}><span /></div>}
-        {target?.available && <button type="button" className="text-button" onClick={() => onTarget(target)} title={target.reason}>{target.label}<ArrowRightIcon size={15} /></button>}
+        {target?.available && <button type="button" className={`text-button ${styles.targetLink}`} onClick={() => onTarget(target)} title={target.reason}>
+          <TargetLabel label={target.label} /></button>}
       </div>
     </article>;
   })}</div>;

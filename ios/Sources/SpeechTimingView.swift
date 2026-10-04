@@ -140,12 +140,12 @@ struct SpeechTimingView: View {
             VStack(alignment: .leading, spacing: 16) {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: 6) {
-                        Label("Твоя речь в записи", systemImage: "waveform").font(.headline)
+                        Text("Паузы и темп").font(.headline)
                         Text("По аудио").font(.caption).foregroundStyle(Theme.secondary)
                     }
                 } else {
                     HStack {
-                        Label("Твоя речь в записи", systemImage: "waveform").font(.headline)
+                        Text("Паузы и темп").font(.headline)
                         Spacer(minLength: 8)
                         Text("По аудио").font(.caption).foregroundStyle(Theme.secondary)
                     }
@@ -161,8 +161,9 @@ struct SpeechTimingView: View {
                         }.padding(.top, 12)
                     } label: { Text("Другие записи: \(answers.count - 1)").font(.footnote.weight(.medium)) }
                 }
-            }.padding(20).background(Theme.solid, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-                .overlay { RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1) }
+            }.padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentSurface()
                 .foregroundStyle(Theme.ink)
         }
     }

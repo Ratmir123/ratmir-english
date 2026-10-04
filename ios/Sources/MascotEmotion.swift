@@ -23,19 +23,21 @@ struct MascotRGB {
     static let pink = MascotRGB(r: 1.0, g: 143.0 / 255.0, b: 177.0 / 255.0)
     static let blue = MascotRGB(r: 59.0 / 255.0, g: 91.0 / 255.0, b: 219.0 / 255.0)
     static let violet = MascotRGB(r: 123.0 / 255.0, g: 108.0 / 255.0, b: 246.0 / 255.0)
+    static let cyan = MascotRGB(r: 63.0 / 255.0, g: 213.0 / 255.0, b: 234.0 / 255.0)
 }
 
-/// Fixed colours of the face and of celebrations (identical in light and dark themes).
+/// Fixed colours of the face and of celebrations (identical in light and dark themes; PC: lib/mascot/palette.ts).
 enum MascotPalette {
     static let eyeWhite = Color(red: 253.0 / 255.0, green: 254.0 / 255.0, blue: 1.0)
-    static let mouthInterior = Color(red: 42.0 / 255.0, green: 31.0 / 255.0, blue: 94.0 / 255.0)
+    /// Soft emissive halo around eyes and mouth (#E9E4FF at 55 %).
+    static let faceGlow = Color(red: 233.0 / 255.0, green: 228.0 / 255.0, blue: 1.0).opacity(0.55)
+    /// Open mouth on the deep opal core (#0E0A22 at 95 %).
+    static let mouthInterior = Color(red: 14.0 / 255.0, green: 10.0 / 255.0, blue: 34.0 / 255.0)
     static let pink = Color(red: 1.0, green: 143.0 / 255.0, blue: 177.0 / 255.0)
     static let lime = Color(red: 218.0 / 255.0, green: 241.0 / 255.0, blue: 99.0 / 255.0)
     static let lavender = Color(red: 187.0 / 255.0, green: 178.0 / 255.0, blue: 245.0 / 255.0)
     static let cyan = Color(red: 63.0 / 255.0, green: 213.0 / 255.0, blue: 234.0 / 255.0)
     static let violet = Color(red: 123.0 / 255.0, green: 108.0 / 255.0, blue: 246.0 / 255.0)
-    static let floorLight = Color(red: 0.35, green: 0.45, blue: 0.77)
-    static let floorDark = Color(red: 0.30, green: 0.80, blue: 0.95)
 }
 
 /// Target face for one emotion. Eye values are per eye where the spec differs per eye.
@@ -121,7 +123,7 @@ extension MascotEmotion {
             return MascotFaceTarget(open: 0.85, squint: 0.2, gazeX: -0.6, gazeY: -0.7, w: 0.06, o: 0, s: 0, r: 0,
                                     mouthDX: 0.03, tint: .violet, tintAmount: 0.15)
         case .listening:
-            return MascotFaceTarget(open: 1.15, w: 0.06, o: 0, s: 0.3, r: 0)
+            return MascotFaceTarget(open: 1.15, w: 0.06, o: 0, s: 0.3, r: 0, tint: .cyan, tintAmount: 0.10)
         case .speaking:
             // `o` is replaced by the speech envelope while lip-sync runs (0.08 + 0.85 * envelope).
             return MascotFaceTarget(open: 1.0, smile: 0.2, w: 0.10, o: 0.08, s: 0.4, r: 0.2)

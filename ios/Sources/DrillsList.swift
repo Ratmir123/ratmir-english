@@ -1,11 +1,16 @@
 import SwiftUI
 
 /// Personal drills (from calls, patterns or the placement result). Due ones first, done ones last.
+/// One surface, one row per drill (web: components/calls/drills-list.tsx). `grouped: false` renders
+/// bare rows for a host surface (a pattern card), so cards never nest.
 /// «Начать» opens the practice conversation through `TrainingClient.startDrill(id:mode:)`:
 /// tier 1 starts «С опорами», tiers 2–3 start «Как на созвоне»; the other mode is in the context menu.
 struct DrillsList: View {
     let drills: [PersonalDrill]
     var limit: Int? = nil
+    var grouped = true
+    /// Inside a pattern card the meta line starts with «Тренировка: <тип>».
+    var inPattern = false
     @EnvironmentObject private var client: TrainingClient
     @State private var startingId: String?
 
@@ -24,20 +29,33 @@ struct DrillsList: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             if visible.isEmpty {
-                FeatureEmptyState(icon: "figure.run", title: "Тренировок пока нет",
-                                  text: "Они появятся после разбора звонка: из моментов, которые стоили денег, и спорных мест.")
-            }
-            ForEach(visible) { drill in
-                DrillCard(drill: drill, starting: startingId == drill.id, disabled: startingId != nil) { mode in
-                    start(drill, mode: mode)
-                }
+                Text("Тренировок пока нет — они появятся из разборов звонков и теста уровня.")
+                    .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else if grouped {
+                rows
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                    .contentSurface()
+            } else {
+                rows
             }
             if let limit, drills.count > limit {
                 Text("Ещё " + FeatureFormat.count(drills.count - limit, "тренировка", "тренировки", "тренировок") + " — на вкладке «Практика».")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(visible.enumerated()), id: \.element.id) { index, drill in
+                if index > 0 { RowDivider(inset: grouped ? 16 : 0) }
+                DrillCard(drill: drill, starting: startingId == drill.id, disabled: startingId != nil, inset: grouped ? 16 : 0,
+                          prominent: index == 0, inPattern: inPattern) { mode in
+                    start(drill, mode: mode)
+                }
             }
         }
     }
@@ -52,120 +70,146 @@ struct DrillsList: View {
     }
 }
 
+/// One drill as a row (no surface of its own): title, why, the line to replay, a meta line, one action.
 struct DrillCard: View {
     let drill: PersonalDrill
     let starting: Bool
     let disabled: Bool
+    var inset: CGFloat = 16
+    /// Only the first drill of a list carries the filled button; the rest are secondary.
+    var prominent = true
+    var inPattern = false
     let onStart: (String) -> Void
+    @EnvironmentObject private var client: TrainingClient
+    private var lineKey: String { "drill-seed:" + drill.id }
+    private var playing: Bool { client.playingModelLine == lineKey || client.loadingModelLine == lineKey }
 
     private var defaultMode: String { drill.tier >= 2 ? "call" : "learning" }
     private var otherMode: String { defaultMode == "call" ? "learning" : "call" }
-    private var dueText: String? {
-        guard !drill.isDone, let due = FeatureFormat.date(drill.dueAt) else { return nil }
-        if due <= Date() || Calendar.current.isDateInToday(due) { return "на сегодня" }
-        return "с " + (FeatureFormat.shortDate(drill.dueAt) ?? "")
+    /// Same wording as the web's `dueLabel`: overdue drills are simply «можно сегодня».
+    private var dueText: (label: String, due: Bool) {
+        guard let due = FeatureFormat.date(drill.dueAt) else { return ("Когда удобно", false) }
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: Date()), to: calendar.startOfDay(for: due)).day ?? 0
+        if days <= 0 { return ("Можно сегодня", true) }
+        if days == 1 { return ("Завтра", false) }
+        return ("Через \(days) " + FeatureFormat.plural(days, "день", "дня", "дней"), false)
     }
-    private var statusText: String {
-        switch drill.status {
-        case "done": return "Готово"
-        case "started": return "Начата"
-        default: return "Новая"
-        }
+    private var stateText: (label: String, color: Color) {
+        if drill.isDone { return ("Готово", FeaturePalette.success) }
+        if drill.status == "started" { return ("Начата", FeaturePalette.violet) }
+        let due = dueText
+        return (due.label, due.due ? FeaturePalette.success : Color.secondary)
+    }
+    private var modeLine: String {
+        var parts: [String] = []
+        if !drill.isDone { parts.append("Режим: " + (defaultMode == "call" ? "созвон" : "с опорами")) }
+        if drill.attempts > 0 { parts.append(FeatureFormat.count(drill.attempts, "попытка", "попытки", "попыток")) }
+        return parts.joined(separator: " · ")
+    }
+    private var typeLine: String {
+        var text = (inPattern ? "Тренировка: " + FeatureLabels.drillType(drill.type).lowercased() : FeatureLabels.drillType(drill.type))
+        if drill.source.type == "call", let at = drill.source.at { text += ", момент " + FeatureFormat.clock(at) }
+        return text
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
+        VStack(alignment: .leading, spacing: 8) {
+            Text(drill.title).font(.headline).fixedSize(horizontal: false, vertical: true)
             if !drill.why.isEmpty {
-                Text(drill.why).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            if let seed = drill.seedLine, !seed.isEmpty {
-                FeatureQuote(text: seed)
-            }
-            if !drill.goal.isEmpty {
-                Label(drill.goal, systemImage: "target")
-                    .font(.subheadline)
+                Text(drill.why).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if !drill.successCriteria.isEmpty || !drill.mustAvoid.isEmpty {
-                criteria
+            if let seed = drill.seedLine, !seed.isEmpty {
+                HStack(alignment: .center, spacing: 8) {
+                    FeatureQuote(text: seed)
+                    Button { Task { await client.speakModelLine(seed, key: lineKey) } } label: {
+                        if client.loadingModelLine == lineKey { ProgressView() } else { Image(systemName: playing ? "stop.fill" : "play.fill") }
+                    }
+                    .buttonStyle(SoftIconButton(size: 40))
+                    .disabled(client.recording)
+                    .accessibilityLabel(playing ? "Остановить реплику" : "Послушать реплику")
+                }
             }
-            footer
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    meta
+                    Spacer(minLength: 8)
+                    startButton
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    meta
+                    startButton
+                }
+            }
+            .padding(.top, 2)
         }
-        .padding(16)
+        .padding(.horizontal, inset).padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .featureGlass(radius: 24)
         .opacity(drill.isDone ? 0.75 : 1)
     }
 
-    private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: FeatureLabels.drillTypeIcon(drill.type))
-                .font(.body.weight(.semibold))
-                .foregroundStyle(FeaturePalette.violet)
-                .frame(width: 40, height: 40)
-                .background(FeaturePalette.lavender.opacity(0.35), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(FeatureLabels.drillType(drill.type)).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(drill.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+    private var meta: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            (Text(stateText.label).foregroundColor(stateText.color).fontWeight(.semibold)
+             + Text(" · " + typeLine).foregroundColor(.secondary))
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                TierBars(tier: drill.tier)
+                Text(modeLine).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 6)
-            FeatureChip(text: statusText, icon: drill.isDone ? "checkmark" : nil,
-                        tint: drill.isDone ? FeaturePalette.lime : FeaturePalette.lavender)
         }
     }
 
-    private var criteria: some View {
-        DisclosureGroup {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(drill.successCriteria, id: \.self) { item in
-                    Label(item, systemImage: "checkmark.circle").font(.footnote).fixedSize(horizontal: false, vertical: true)
+    @ViewBuilder private var startButton: some View {
+        if !drill.isDone {
+            Button {
+                onStart(defaultMode)
+            } label: {
+                HStack(spacing: 6) {
+                    if starting { ProgressView() }
+                    Text(starting ? "Готовлю…" : drill.status == "started" ? "Продолжить" : "Начать")
                 }
-                if !drill.mustAvoid.isEmpty {
-                    Text("Не говорить: " + drill.mustAvoid.map { "«" + $0 + "»" }.joined(separator: ", "))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                .padding(.horizontal, 4)
             }
-            .padding(.top, 6)
-        } label: {
-            Text("Что засчитаем").font(.footnote.weight(.semibold))
+            .modifier(DrillStartStyle(prominent: prominent))
+            .fixedSize()
+            .disabled(disabled)
+            .contextMenu {
+                Button(otherMode == "call" ? "Как на созвоне" : "С опорами",
+                       systemImage: otherMode == "call" ? "phone" : "lightbulb") { onStart(otherMode) }
+            }
+            .accessibilityLabel((drill.status == "started" ? "Продолжить: " : "Начать: ") + drill.title)
+            .accessibilityHint(defaultMode == "call" ? "Без подсказок, как на настоящем звонке" : "С подсказками")
+            .accessibilityAction(named: Text(otherMode == "call" ? "Начать как на созвоне" : "Начать с опорами")) { onStart(otherMode) }
         }
     }
+}
 
-    private var footer: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Нажим \(drill.tier) из 3").font(.caption.weight(.semibold))
-                if let dueText {
-                    Text(dueText).font(.caption).foregroundStyle(.secondary)
-                } else if drill.attempts > 0 {
-                    Text("Попыток: \(drill.attempts)").font(.caption).foregroundStyle(.secondary)
+/// «Давление ▮▮▯»: how hard the counterpart pushes (1–3).
+struct TierBars: View {
+    let tier: Int
+    var body: some View {
+        HStack(spacing: 5) {
+            Text("Давление").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 2) {
+                ForEach(1...3, id: \.self) { level in
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(level <= tier ? FeaturePalette.violet : FeaturePalette.track)
+                        .frame(width: 5, height: 11)
                 }
-            }
-            Spacer(minLength: 8)
-            if !drill.isDone {
-                Button {
-                    onStart(defaultMode)
-                } label: {
-                    HStack(spacing: 6) {
-                        if starting { ProgressView() }
-                        Text(starting ? "Готовлю…" : drill.status == "started" ? "Продолжить" : "Начать")
-                    }
-                    .padding(.horizontal, 6)
-                }
-                .buttonStyle(PrimaryButton())
-                .fixedSize()
-                .disabled(disabled)
-                .contextMenu {
-                    Button(otherMode == "call" ? "Как на созвоне" : "С опорами",
-                           systemImage: otherMode == "call" ? "phone" : "lightbulb") { onStart(otherMode) }
-                }
-                .accessibilityHint(defaultMode == "call" ? "Без подсказок, как на настоящем звонке" : "С подсказками")
-                .accessibilityAction(named: Text(otherMode == "call" ? "Начать как на созвоне" : "Начать с опорами")) { onStart(otherMode) }
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Давление \(min(3, max(1, tier))) из 3")
+    }
+}
+
+/// The start button of a drill row: filled for the first drill of a list, quiet for the rest.
+private struct DrillStartStyle: ViewModifier {
+    let prominent: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if prominent { content.buttonStyle(PrimaryButton()) } else { content.buttonStyle(SecondaryButton()) }
     }
 }

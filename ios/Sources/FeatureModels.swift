@@ -1754,18 +1754,18 @@ enum FeatureLabels {
     }
     static func patternStatus(_ value: String) -> String {
         switch value {
-        case "watch": return "Наблюдаю"
+        case "watch": return "Замечено"
         case "active": return "В работе"
-        case "improving": return "Улучшается"
-        case "resolved": return "Решён"
-        default: return "Наблюдаю"
+        case "improving": return "Лучше"
+        case "resolved": return "Закрыто"
+        default: return "Замечено"
         }
     }
     static func patternOutcome(_ value: String) -> String {
         switch value {
         case "repeated": return "повторилось"
-        case "avoided": return "удержал"
-        case "improved": return "лучше, чем было"
+        case "avoided": return "был повод — справился"
+        case "improved": return "частично лучше"
         case "new": return "замечено впервые"
         default: return "не было повода"
         }
@@ -1784,8 +1784,8 @@ enum FeatureLabels {
         case "pitch": return "Питч"
         case "price": return "Цена"
         case "questions": return "Вопросы"
-        case "closing": return "Закрытие"
-        case "language": return "Язык"
+        case "closing": return "Следующий шаг"
+        case "language": return "Английский"
         case "story": return "История"
         case "followup": return "Письмо после звонка"
         case "rapidfire": return "Быстрые вопросы"

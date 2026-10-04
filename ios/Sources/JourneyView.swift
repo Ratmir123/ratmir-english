@@ -21,43 +21,46 @@ struct JourneyProgressBar: View {
     }
 }
 
-/// Compact rank and XP for Today (44 pt medal, rank, XP bar → Progress).
+/// Compact rank and XP inside Today's «Уровень» surface (a row, not a card of its own).
 struct RankStrip: View {
     let progression: ProgressionState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var rank: PracticeRank { RewardArt.practiceRank(progression.level) }
     private var next: PracticeRank? { RewardArt.nextRank(progression.level) }
+    private var xpLine: String {
+        guard let next else { return RuFormat.xp(progression.xp) + " · все ранги открыты" }
+        return RuFormat.xp(progression.xp) + " · до «\(next.title)» " + RuFormat.xp(max(0, next.minimumXP - progression.xp))
+    }
     var body: some View {
         HStack(spacing: 14) {
-            RankEmblem(level: progression.level, size: 48, animated: false)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(rank.title).font(.subheadline.weight(.semibold))
-                    Text("уровень опыта").font(.caption).foregroundStyle(Theme.inkSecondary)
-                    Spacer(minLength: 4)
-                    Text(RuFormat.xp(progression.xp)).font(.footnote.weight(.semibold)).monospacedDigit()
-                        .contentTransition(reduceMotion ? .identity : .numericText(value: Double(progression.xp)))
+            RankEmblem(level: progression.level, size: 56, animated: false)
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(rank.title).font(TypeScale.title3)
+                    Text("ур. \(progression.level)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
                 }
                 if let next {
                     LiquidProgressBar(value: Double(max(0, progression.xp - rank.minimumXP)) / Double(max(1, next.minimumXP - rank.minimumXP)), height: 6)
-                    Text("До «\(next.title)» — \(RuFormat.xp(max(0, next.minimumXP - progression.xp)))")
-                        .font(.caption).foregroundStyle(Theme.inkSecondary).monospacedDigit()
-                } else {
-                    Text("Все ранги открыты").font(.caption).foregroundStyle(Theme.inkSecondary)
                 }
+                Text(xpLine).font(.footnote).foregroundStyle(Theme.inkSecondary).monospacedDigit()
+                    .contentTransition(reduceMotion ? .identity : .numericText(value: Double(progression.xp)))
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
         }
         .foregroundStyle(Theme.ink)
-        .padding(14)
-        .modifier(LiquidChrome(radius: Radius.tile, tint: nil, interactive: false))
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Ранг «\(rank.title)», уровень опыта \(progression.level), \(RuFormat.xp(progression.xp))")
     }
 }
 
 /// The full rank card on Progress: medal, rank, XP bar and the ladder link.
 struct JourneySummary: View {
     let progression: ProgressionState
+    /// Practice facts in words (web RankCard): «12 практик с разбором, 5 дней с практикой. На этой неделе — 3 из 7.»
+    var facts: String? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var rank: PracticeRank { RewardArt.practiceRank(progression.level) }
     private var nextRank: PracticeRank? { RewardArt.nextRank(progression.level) }
@@ -75,11 +78,14 @@ struct JourneySummary: View {
                 } else {
                     Text("Все шесть рангов открыты. Опыт практики продолжает расти.").font(.footnote).foregroundStyle(Theme.inkSecondary)
                 }
+                if let facts, !facts.isEmpty {
+                    Text(facts).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                }
                 NavigationLink { RankLadderView() } label: {
                     HStack {
                         Text("Все ранги").font(.subheadline.weight(.semibold))
                         Spacer()
-                        Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
                     }
                     .frame(minHeight: 44).contentShape(Rectangle())
                 }
@@ -88,11 +94,12 @@ struct JourneySummary: View {
         }
     }
     private var rankHeading: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("ТВОЙ РАНГ · ОПЫТ ПРАКТИКИ").font(.caption2.weight(.bold)).tracking(1).foregroundStyle(Theme.inkSecondary)
-            Text(rank.title).font(TypeScale.title)
-            Text(RuFormat.xp(progression.xp)).font(TypeScale.stat)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(rank.title).font(TypeScale.title).accessibilityAddTraits(.isHeader)
+            Text(RuFormat.xp(progression.xp) + " · ранг опыта — растёт от практики, не от языка")
+                .font(.subheadline).foregroundStyle(Theme.inkSecondary).monospacedDigit()
                 .contentTransition(reduceMotion ? .identity : .numericText(value: Double(progression.xp)))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -147,12 +154,9 @@ struct RankLadder: View {
                 .saturation(unlocked ? 1 : 0)
                 .opacity(unlocked ? 1 : 0.45)
             VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    Text(rank.title).font(TypeScale.title3)
-                    if isCurrent { StatusPill(title: "Твой ранг", color: Theme.lime) }
-                }
+                Text(rank.title).font(TypeScale.title3)
                 Text("от \(RuFormat.xp(rank.minimumXP))").font(.caption).foregroundStyle(Theme.inkSecondary).monospacedDigit()
-                Text(isCurrent ? "\(RuFormat.xp(progression.xp)) сейчас" : isNext ? "Ещё \(RuFormat.xp(max(0, rank.minimumXP - progression.xp)))" : unlocked ? "Открыт" : "Впереди")
+                Text(isCurrent ? "Твой ранг · \(RuFormat.xp(progression.xp)) сейчас" : isNext ? "Ещё \(RuFormat.xp(max(0, rank.minimumXP - progression.xp)))" : unlocked ? "Открыт" : "Впереди")
                     .font(.footnote.weight(isNext ? .semibold : .regular))
                     .foregroundStyle(isNext || isCurrent ? Theme.ink : Theme.inkSecondary).monospacedDigit()
             }
@@ -161,7 +165,10 @@ struct RankLadder: View {
                 .font(.caption.weight(.semibold)).foregroundStyle(isCurrent ? Theme.violet : Theme.inkSecondary)
         }
         .padding(12)
-        .background(isCurrent ? Theme.lavender.opacity(0.22) : Color.clear, in: RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
+        .background(isCurrent ? Theme.solid : Color.clear, in: RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
+        .overlay {
+            if isCurrent { RoundedRectangle(cornerRadius: Radius.tile, style: .continuous).strokeBorder(Theme.violet.opacity(0.5), lineWidth: 1.5) }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(rank.title), от \(rank.minimumXP) XP. " + (isCurrent ? "Твой текущий ранг." : unlocked ? "Открыт." : isNext ? "Следующий ранг." : "Пока впереди."))
     }

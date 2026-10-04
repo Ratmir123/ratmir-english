@@ -51,49 +51,104 @@ enum RewardArt {
     }
 }
 
-/// Light, a small physical sway and a fixed floor shadow give the medal weight.
-/// Only the current rank animates; it is decorative (navigation wraps it where useful, L-08).
+/// The rank art as a physical medal (DESIGN-PASS-0.5.1, RankMedalSolid.swift): a rim when it turns, light
+/// and foil that move against the turn and the phone's tilt, a floor shadow that slides and shrinks.
+/// The current rank sways and floats; a drag spins it with inertia, a tap turns it once. Locked and small
+/// medals stay still. Decorative (navigation wraps it where useful, L-08).
 struct RankEmblem: View {
     let level: Int
     var size: CGFloat = 124
     var animated = true
+    /// Rank-up: starts back-facing and lands face-front after 1.5 decelerating turns with a flash.
+    var entrance = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.scenePhase) private var scenePhase
     @State private var visible = false
+    @State private var spin = MedalSpinModel()
+    /// A finger or a throw is on the medal: full frame rate until it rests.
+    @State private var handling = false
+    @State private var motionHeld = false
     private var rank: PracticeRank { RewardArt.practiceRank(level) }
     private var moving: Bool { animated && !reduceMotion && contrast != .increased && visible && scenePhase == .active }
+    private var lit: Bool { size >= MedalTuning.solidMin }
+    private var gestures: Bool { lit && animated && !reduceMotion }
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !moving)) { context in
-            let time = moving ? context.date.timeIntervalSinceReferenceDate : 0
-            let pose = RewardMotionPose.rank(art: rank.art, time: time, size: size, active: moving)
-            emblem(time: time, pose: pose)
+        TimelineView(.animation(minimumInterval: handling ? nil : 1.0 / 30, paused: !(moving || handling))) { context in
+            emblem(time: context.date.timeIntervalSinceReferenceDate)
         }
         .frame(width: size, height: size)
+        .overlay {
+            if gestures { MascotTouchLayer(handler: { touch($0) }) }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Ранг «\(rank.title)»")
         .modifier(RewardVisibility(visible: $visible))
+        .onAppear {
+            guard entrance, lit, !reduceMotion else { return }
+            spin.enter(at: Date().timeIntervalSinceReferenceDate)
+            handling = true
+        }
+        .onChange(of: moving, initial: true) { _, value in holdMotion(value) }
+        .onDisappear { holdMotion(false) }
+        .task(id: handling) { await releaseFrames() }
     }
-    private func emblem(time: TimeInterval, pose: RewardMotionPose) -> some View {
-        ZStack {
+    private func emblem(time: TimeInterval) -> some View {
+        let idle = moving ? time : 0
+        let pose = RewardMotionPose.rank(art: rank.art, time: idle, size: size, active: moving)
+        let hand = spin.advance(to: time)
+        // Idle yaw sway keeps the rim readable at rest; it eases between ±yaw like the web's alternate animation.
+        let sway = moving ? -MedalTuning.yaw(for: rank.art) * cos(time * .pi / MedalTuning.turnPeriod) : 0
+        let yaw = lit ? hand.yaw + sway : 0
+        let pitch = lit ? hand.pitch : 0
+        let device = moving && lit ? MedalMotion.shared.light(at: time) : (yaw: 0.0, pitch: 0.0)
+        let shape = MedalLight(yaw: yaw, pitch: pitch, size: size)
+        return ZStack {
             Ellipse().fill(Theme.ink.opacity(pose.shadowOpacity))
                 .frame(width: size * 0.43, height: size * 0.075)
-                .scaleEffect(x: pose.shadowScale, y: 1).offset(y: size * 0.32)
+                .scaleEffect(x: pose.shadowScale * shape.shadowWidth, y: 1)
+                .offset(x: shape.shadowX, y: size * 0.32)
             ZStack {
-                RankAtmosphere(art: rank.art, time: time)
-                Image("reward-" + rank.art + "-v041").resizable().scaledToFit()
-                    .overlay {
-                        if moving {
-                            LinearGradient(colors: [.clear, .white.opacity(0.08), .white.opacity(0.52), .clear], startPoint: .leading, endPoint: .trailing)
-                                .frame(width: size * 0.30, height: size * 1.6)
-                                .rotationEffect(.degrees(24))
-                                .offset(x: size * CGFloat((time.truncatingRemainder(dividingBy: 5.4) / 5.4) * 3.2 - 1.6))
-                                .frame(width: size, height: size)
-                                .mask(Image("reward-" + rank.art + "-v041").resizable().scaledToFit())
-                        }
-                    }
+                if lit { RankAtmosphere(art: rank.art, time: idle) }
+                if lit {
+                    MedalSolid(art: rank.art, size: size, yaw: yaw, pitch: pitch, lightYaw: yaw + device.yaw, lightPitch: pitch + device.pitch,
+                               holo: ["rank-violet", "rank-rose", "rank-gold"].contains(rank.art), glint: spin.flash(at: time) ?? glint(idle))
+                } else {
+                    Image("reward-" + rank.art + "-v041").resizable().scaledToFit()
+                }
             }.scaleEffect(pose.scale).rotationEffect(.degrees(pose.rotation), anchor: UnitPoint(x: 0.5, y: 0.64)).offset(y: pose.lift)
         }.frame(width: size, height: size)
+    }
+    /// An occasional glint across the face while the medal idles.
+    private func glint(_ time: TimeInterval) -> Double? {
+        guard moving else { return nil }
+        let phase = ((time + 2.2) / MedalTuning.glintPeriod).truncatingRemainder(dividingBy: 1)
+        guard phase < MedalTuning.glintShare else { return nil }
+        return (1 - cos(phase / MedalTuning.glintShare * .pi)) / 2
+    }
+    private func touch(_ event: MascotTouchEvent) {
+        let now = Date().timeIntervalSinceReferenceDate
+        switch event {
+        case .began(let point, let side): spin.touchBegan(point, side: side)
+        case .moved(let point, let side): spin.touchMoved(point, side: side, time: now)
+        case .ended(let point, let side, let quick): spin.touchEnded(point, side: side, time: now, quick: quick)
+        case .cancelled: spin.touchCancelled()
+        }
+        if !handling { handling = true }
+    }
+    /// Drops back to the idle 30 fps (or a paused timeline) once the medal rests.
+    private func releaseFrames() async {
+        guard handling else { return }
+        while !Task.isCancelled {
+            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+            if !spin.isBusy(at: Date().timeIntervalSinceReferenceDate) { handling = false; return }
+        }
+    }
+    private func holdMotion(_ on: Bool) {
+        let wanted = on && lit
+        guard wanted != motionHeld else { return }
+        motionHeld = wanted
+        if wanted { MedalMotion.shared.acquire() } else { MedalMotion.shared.release() }
     }
 }
 
@@ -197,15 +252,24 @@ private struct RankAtmosphere: View {
                     context.stroke(air, with: .color(accent.opacity(sin(phase * .pi) * 0.35)), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
                 }
             case "rank-violet", "rank-pearl":
+                // Four-point sparkles, the same shape as the web's clip-path stars.
                 for index in 0..<4 {
                     let angle = Double(index) * .pi / 2 + 0.45
                     let point = CGPoint(x: center.x + CGFloat(cos(angle)) * side * 0.39, y: center.y + CGFloat(sin(angle)) * side * 0.33)
                     let flicker = (sin(time * (art == "rank-pearl" ? 1.0 : 2.2) + Double(index) * 1.8) + 1) / 2
-                    let reach = side * CGFloat(0.012 + flicker * 0.021)
+                    let reach = side * CGFloat(0.037 + flicker * 0.019)
+                    let waist = reach * 0.18
                     var spark = Path()
-                    spark.move(to: CGPoint(x: point.x - reach, y: point.y)); spark.addLine(to: CGPoint(x: point.x + reach, y: point.y))
-                    spark.move(to: CGPoint(x: point.x, y: point.y - reach)); spark.addLine(to: CGPoint(x: point.x, y: point.y + reach))
-                    context.stroke(spark, with: .color(accent.opacity(0.20 + flicker * 0.45)), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+                    spark.move(to: CGPoint(x: point.x, y: point.y - reach))
+                    spark.addLine(to: CGPoint(x: point.x + waist, y: point.y - waist))
+                    spark.addLine(to: CGPoint(x: point.x + reach, y: point.y))
+                    spark.addLine(to: CGPoint(x: point.x + waist, y: point.y + waist))
+                    spark.addLine(to: CGPoint(x: point.x, y: point.y + reach))
+                    spark.addLine(to: CGPoint(x: point.x - waist, y: point.y + waist))
+                    spark.addLine(to: CGPoint(x: point.x - reach, y: point.y))
+                    spark.addLine(to: CGPoint(x: point.x - waist, y: point.y - waist))
+                    spark.closeSubpath()
+                    context.fill(spark, with: .color(accent.opacity(0.20 + flicker * 0.45)))
                 }
             case "rank-rose", "rank-gold":
                 let count = art == "rank-gold" ? 10 : 6

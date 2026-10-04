@@ -76,13 +76,13 @@ export function CallTranscript({ detail, seek, onDetail, onReanalyse, reanalysin
   }
 
   if (!detail.segments.length) {
-    return <div className={cx(kit.solid, styles.section)}><p className={styles.muted}>{detail.source === 'memory' ? 'Звонок описан по памяти — расшифровки нет.' : detail.source === 'debrief' ? 'Импортирован готовый разбор — расшифровки нет.' : 'Расшифровки пока нет.'}</p></div>;
+    return <div className={cx(kit.glass, styles.section)}><p className={styles.muted}>{detail.source === 'memory' ? 'Звонок описан по памяти — расшифровки нет.' : detail.source === 'debrief' ? 'Импортирован готовый разбор — расшифровки нет.' : 'Расшифровки пока нет.'}</p></div>;
   }
 
   return (
     <div className={styles.review}>
       {audioSrc ? (
-        <div className={cx(kit.glass, styles.player)}>
+        <div className={cx(kit.chrome, styles.player)}>
           <button type="button" className={cx(kit.iconBtn)} style={{ background: 'var(--k-cta-bg)', color: 'var(--k-cta-fg)' }}
             onClick={() => { const element = audio.current; if (!element) return; if (element.paused) void element.play().catch(() => setAudioError(true)); else element.pause(); }}
             aria-label={playing ? 'Пауза' : 'Слушать запись'}>
@@ -123,7 +123,7 @@ export function CallTranscript({ detail, seek, onDetail, onReanalyse, reanalysin
       ) : null}
       {error ? <div className={styles.banner} role="alert" style={{ background: 'var(--k-error-soft)', color: 'var(--k-error-ink)' }}><WarningIcon size={18} weight="bold" />{error}</div> : null}
 
-      <div className={cx(kit.solid, styles.lines)} role="list" aria-label="Расшифровка звонка">
+      <div className={cx(kit.glass, styles.lines)} role="list" aria-label="Расшифровка звонка">
         {detail.segments.map((segment, index) => {
           const speaker = segment.speaker ? speakers.get(segment.speaker) : undefined;
           return (

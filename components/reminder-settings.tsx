@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { BellIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
+import { CheckIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
 import { APP_NAME } from '@/lib/app-info';
 import type { DailyReminderSettings } from './desktop-bridge';
 import styles from './reminder-settings.module.css';
@@ -32,12 +32,13 @@ export function ReminderSettings() {
     try {
       const result = await window.ratmirDesktop?.saveReminderSettings?.(value);
       if (!result) { setMessage('Обнови приложение на компьютере, чтобы настроить время.'); return; }
-      setValue(result); setDirty(false); setMessage(result.enabled ? 'Расписание сохранено.' : 'Напоминания выключены.');
+      setValue(result); setDirty(false); // «Сохранено» next to the actions and the state chip say it; no second message.
     } catch { setMessage('Не удалось сохранить расписание. Изменения не применились — попробуй ещё раз.'); }
     finally { setBusy(false); }
   }
-  return <div className={styles.section} aria-labelledby="reminder-title">
-    <div className="section-title"><h2 id="reminder-title">Напоминания</h2><BellIcon size={21} /></div>
+  // The host card carries aria-labelledby="reminder-title".
+  return <div className={styles.section}>
+    <div className={styles.head}><h2 id="reminder-title">Напоминания</h2>{value && !dirty && <span className={`chip ${value.enabled ? 'lime' : ''}`}>{value.enabled ? 'Включены' : 'Выключены'}</span>}</div>
     {value ? <>
       <label className={styles.toggle}><input type="checkbox" checked={value.enabled} disabled={busy}
         onChange={event => update({ ...value, enabled: event.target.checked, times: event.target.checked && !value.times.length ? ['19:00'] : value.times })} />Каждый день в выбранное время</label>
@@ -47,12 +48,15 @@ export function ReminderSettings() {
         <button type="button" className="icon-button plain" disabled={busy || !value.enabled} aria-label={`Удалить напоминание в ${time}`}
           onClick={() => update({ ...value, times: value.times.filter((_, position) => position !== index) })}><TrashIcon size={18} /></button>
       </div>)}</div>
-      <div className={styles.actions}>
+      <div className={styles.actions} aria-live="polite">
         <button type="button" className="text-button" disabled={busy || !value.enabled || value.times.length >= 8} onClick={() => {
           const next = SUGGESTED.find(time => !value.times.includes(time));
           if (next) update({ ...value, times: [...value.times, next] });
         }}><PlusIcon size={17} />Добавить время</button>
-        <button type="button" className="button secondary" disabled={busy || !dirty || !!problem || value.times.some(time => !time)} onClick={() => void save()}>{busy ? 'Сохраняю…' : 'Сохранить'}</button>
+        {/* No greyed-out button while nothing changed: the save action appears with the first edit. */}
+        {dirty
+          ? <button type="button" className="button primary small" disabled={busy || !!problem || value.times.some(time => !time)} onClick={() => void save()}>{busy ? 'Сохраняю…' : 'Сохранить'}</button>
+          : <span className={styles.saved}><CheckIcon size={15} weight="bold" aria-hidden="true" />Сохранено</span>}
       </div>
       {problem && <p className="disabled-reason">{problem}</p>}
       <p className="caption">Часовой пояс этого компьютера. Напоминания приходят, пока {APP_NAME} запущен, в том числе в трее. На iPhone время настраивается отдельно.</p>

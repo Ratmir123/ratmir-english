@@ -51,12 +51,12 @@ export function QuickCoach({ onDismiss }: { onDismiss: () => void }) {
 
   return <main className={styles.page}>
     <header className={styles.header}>
-      <div><span className="eyebrow"><LightningIcon size={13} weight="fill" /> {APP_NAME}</span><h1>Быстрый разбор</h1></div>
+      <h1><LightningIcon size={24} weight="fill" aria-hidden="true" />Быстрый разбор</h1>
       <button type="button" className="icon-button" onClick={() => void close()} aria-label="Закрыть быстрый разбор"><XIcon size={20} /></button>
     </header>
     <p className="muted">Фраза из видео, статьи или переписки: пойми её и попробуй сам.</p>
     {desktop && <p className="footnote">{desktop.shortcutRegistered ? `${desktop.shortcut} — вызов из любого окна` : 'Горячая клавиша занята. Быстрый разбор доступен из значка в трее.'}</p>}
-    <section className={`glass ${styles.card}`}>
+    <section className={`surface ${styles.card}`}>
       <div className={styles.labelRow}><label htmlFor="quick-source">Что встретилось?</label>
         <button type="button" className="button small secondary" onClick={() => void paste()} disabled={!!busy}><ClipboardTextIcon size={15} />Вставить</button></div>
       <textarea ref={sourceInput} id="quick-source" lang="en" maxLength={6000} rows={4} placeholder="Paste an English phrase or a short passage…" value={source} disabled={!!busy || !!explanation} onChange={event => setSource(event.target.value)} />
@@ -69,12 +69,12 @@ export function QuickCoach({ onDismiss }: { onDismiss: () => void }) {
     </section>
     {error && <p className="banner error" role="alert">{error}</p>}
     {explanation && <>
-      <section className={`card solid ${styles.result}`} aria-label="Объяснение">
-        <span className="eyebrow">{explanation.focus}</span><h2>{explanation.meaning}</h2><p>{explanation.explanation}</p>
+      <section className={`surface ${styles.card}`} aria-label="Объяснение">
+        <div className={styles.resultHead}><h2>{explanation.meaning}</h2>{explanation.focus && <p className="caption">{explanation.focus}</p>}</div><p className={styles.explanation}>{explanation.explanation}</p>
         <div className={styles.examples}>{explanation.examples.map((example, index) => <div key={index}><p lang="en">{example.english}</p><span className="caption">{example.russian}</span></div>)}</div>
         {explanation.limitations.length > 0 && <details><summary>Контекст и ограничения</summary>{explanation.limitations.map((item, index) => <p key={index} className="caption">{item}</p>)}</details>}
       </section>
-      <section className={`glass ${styles.card}`}>
+      <section className={`surface ${styles.card}`}>
         <strong>Твоя короткая попытка</strong><p className="muted">{explanation.practice.instruction}</p>
         <textarea aria-label="Твоя попытка по-английски" lang="en" rows={3} maxLength={2000} value={answer} disabled={!!busy} placeholder="Your own sentence…" onChange={event => { setAnswer(event.target.value); setAssessment(null); }} />
         <button type="button" className="button primary large block" disabled={!!busy || !answer.trim()} onClick={check}>{busy || 'Проверить попытку'}<ArrowRightIcon size={18} /></button>

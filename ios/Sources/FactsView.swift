@@ -57,21 +57,24 @@ struct FactsView: View {
                     .featureGlass(radius: 24)
             }
             if !suggested.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    FeatureSectionTitle(title: "Новые предложения", subtitle: "Прими только то, что верно. Ставки — для своего типа клиента.")
-                    ForEach(suggested) { fact in row(fact) }
+                VStack(alignment: .leading, spacing: 10) {
+                    FeatureSectionTitle(title: "Проверь, всё ли верно · \(suggested.count)", subtitle: "Прими только то, что верно. Ставки — для своего типа клиента.")
+                    group(suggested)
                 }
             }
             ForEach(acceptedKinds, id: \.self) { kind in
                 VStack(alignment: .leading, spacing: 10) {
-                    FeatureSectionTitle(title: FeatureLabels.factKind(kind), icon: FeatureLabels.factKindIcon(kind))
-                    ForEach(accepted.filter { $0.kind == kind }) { fact in row(fact) }
+                    FeatureSectionTitle(title: FeatureLabels.factKind(kind))
+                    group(accepted.filter { $0.kind == kind })
                 }
             }
             if !rejected.isEmpty {
                 DisclosureGroup {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(rejected) { fact in row(fact) }
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(rejected.enumerated()), id: \.element.id) { index, fact in
+                            if index > 0 { RowDivider(inset: 0) }
+                            row(fact, inset: 0)
+                        }
                     }
                     .padding(.top, 8)
                 } label: {
@@ -84,8 +87,17 @@ struct FactsView: View {
         .onChange(of: signature) { _, _ in overrides = nil }
     }
 
-    private func row(_ fact: ProfileFact) -> some View {
-        FactRow(fact: fact, busy: busy.contains(fact.id),
+    private func group(_ facts: [ProfileFact]) -> some View {
+        GroupedRows {
+            ForEach(Array(facts.enumerated()), id: \.element.id) { index, fact in
+                if index > 0 { RowDivider(inset: 48) }
+                row(fact)
+            }
+        }
+    }
+
+    private func row(_ fact: ProfileFact, inset: CGFloat = 16) -> some View {
+        FactRow(fact: fact, busy: busy.contains(fact.id), inset: inset,
                 onAccept: { decide(fact, accept: true) },
                 onReject: { decide(fact, accept: false) })
     }
@@ -113,6 +125,7 @@ struct FactsView: View {
 struct FactRow: View {
     let fact: ProfileFact
     let busy: Bool
+    var inset: CGFloat = 16
     let onAccept: () -> Void
     let onReject: () -> Void
 
@@ -132,7 +145,7 @@ struct FactRow: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: FeatureLabels.factKindIcon(fact.kind))
-                    .foregroundStyle(FeaturePalette.violet)
+                    .foregroundStyle(Color.primary)
                     .frame(width: 22)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
@@ -147,9 +160,8 @@ struct FactRow: View {
             }
             actions
         }
-        .padding(14)
+        .padding(.horizontal, inset).padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .featureGlass(radius: 20, tint: fact.status == "suggested" ? FeaturePalette.lime.opacity(0.35) : nil)
         .opacity(fact.status == "rejected" ? 0.7 : 1)
         .accessibilityElement(children: .contain)
     }
@@ -158,8 +170,12 @@ struct FactRow: View {
         switch fact.status {
         case "suggested":
             HStack(spacing: 10) {
-                Button("Верно", action: onAccept).buttonStyle(SecondaryButton()).disabled(busy)
-                Button("Неверно", action: onReject).buttonStyle(QuietButton()).disabled(busy)
+                Button(action: onAccept) { Label("Верно", systemImage: "checkmark") }
+                    .buttonStyle(PrimaryButton()).fixedSize().disabled(busy)
+                    .accessibilityLabel("Верно: " + fact.text)
+                Button(action: onReject) { Label("Нет", systemImage: "xmark") }
+                    .buttonStyle(QuietButton()).disabled(busy)
+                    .accessibilityLabel("Неверно: " + fact.text)
             }
         case "accepted":
             Menu {

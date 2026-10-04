@@ -185,7 +185,8 @@ struct CallSummarySection: View {
     var body: some View {
         CallReviewSection("Итог", icon: "flag") {
             if review.fromMemory {
-                FeatureChip(text: "По памяти: только стратегия, без цитат и языка", icon: "brain.head.profile", tint: FeaturePalette.cyan)
+                Label("По памяти: только стратегия, без цитат и языка", systemImage: "brain.head.profile")
+                    .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if !review.summary.isEmpty {
                 Text(review.summary).font(.body).fixedSize(horizontal: false, vertical: true)
@@ -327,8 +328,11 @@ struct CallCostsSection: View {
 
     var body: some View {
         CallReviewSection("Что стоило денег", icon: "dollarsign.circle", subtitle: "По порядку цены: сначала деньги и условия, потом всё остальное.") {
-            ForEach(FeatureIndexed.list(costs)) { item in
-                CallCostCard(cost: item.value, patternTitle: patternTitle(item.value.patternId), store: store, player: player, onSeek: onSeek)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(FeatureIndexed.list(costs).enumerated()), id: \.offset) { index, item in
+                    if index > 0 { RowDivider(inset: 0).padding(.vertical, 14) }
+                    CallCostCard(cost: item.value, patternTitle: patternTitle(item.value.patternId), store: store, player: player, onSeek: onSeek)
+                }
             }
         }
     }
@@ -339,6 +343,8 @@ struct CallCostsSection: View {
     }
 }
 
+/// One cost as a row of the section: rank and title, a plain meta line, the moment, the price of the
+/// mistake in words and the stronger line in one sunken well (no nested card, no red box).
 struct CallCostCard: View {
     let cost: CallCost
     let patternTitle: String?
@@ -349,25 +355,30 @@ struct CallCostCard: View {
     private var impactTint: Color {
         switch cost.impact {
         case "high": return FeaturePalette.error
-        case "low": return FeaturePalette.lavender
+        case "low": return Color.secondary
         default: return FeaturePalette.warning
         }
     }
 
+    private var meta: Text {
+        var text = Text(FeatureLabels.costImpact(cost.impact)).foregroundColor(impactTint).fontWeight(.semibold)
+        text = text + Text(" · " + FeatureLabels.costCategory(cost.category)).foregroundColor(.secondary)
+        if let patternTitle { text = text + Text(" · Паттерн «" + patternTitle + "»").foregroundColor(.secondary) }
+        return text
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("\(cost.rank)")
-                    .font(.subheadline.weight(.bold))
+                    .font(.headline)
                     .fontDesign(.rounded)
-                    .frame(width: 30, height: 30)
-                    .background(impactTint.opacity(0.3), in: Circle())
-                VStack(alignment: .leading, spacing: 6) {
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Место \(cost.rank)")
+                VStack(alignment: .leading, spacing: 4) {
                     Text(cost.title).font(.headline).fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 6) {
-                        FeatureChip(text: FeatureLabels.costImpact(cost.impact), tint: impactTint)
-                        FeatureChip(text: FeatureLabels.costCategory(cost.category), tint: FeaturePalette.lavender)
-                    }
+                    meta.font(.footnote).fixedSize(horizontal: false, vertical: true)
                 }
             }
             if !cost.detail.isEmpty {
@@ -376,23 +387,19 @@ struct CallCostCard: View {
             if let quote = cost.quote, !quote.isEmpty {
                 HStack(alignment: .top) {
                     FeatureQuote(text: quote)
-                    Spacer(minLength: 6)
                     CallTimeButton(at: cost.at, onSeek: onSeek)
                 }
             }
             if let usd = cost.impactUsd {
-                VStack(alignment: .leading, spacing: 2) {
-                    Label("Цена ошибки ≈ " + FeatureFormat.money(usd, currency: "USD"), systemImage: "chart.line.downtrend.xyaxis")
-                        .font(.subheadline.weight(.semibold))
-                    if let basis = cost.impactBasis, !basis.isEmpty {
-                        Text(basis).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+                (Text("Цена ошибки: ≈ " + FeatureFormat.money(usd, currency: "USD")).fontWeight(.semibold)
+                 + Text(cost.impactBasis.map { $0.isEmpty ? "" : " · " + $0 } ?? "").foregroundColor(.secondary))
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if !cost.better.isEmpty {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Как сказать сильнее").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text("Как сказать сильнее").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                         Text(cost.better)
                             .font(.subheadline.weight(.semibold))
                             .textSelection(.enabled)
@@ -402,16 +409,10 @@ struct CallCostCard: View {
                     CallSpeakButton(text: cost.better, store: store, player: player)
                 }
                 .padding(12)
-                .featureGlass(radius: 18, tint: FeaturePalette.lime.opacity(0.55))
-            }
-            if let patternTitle {
-                Label("Паттерн: " + patternTitle, systemImage: "point.3.connected.trianglepath.dotted")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                .background(FeaturePalette.lime.opacity(0.18), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
         }
-        .padding(14)
-        .background(FeaturePalette.track, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -423,28 +424,33 @@ struct CallBetterAnswersSection: View {
 
     var body: some View {
         CallReviewSection("Лучшие ответы", icon: "text.bubble", subtitle: "Готовые реплики твоим голосом — проговори вслух до автоматизма.") {
-            ForEach(FeatureIndexed.list(answers)) { item in
-                VStack(alignment: .leading, spacing: 8) {
-                    if !item.value.situation.isEmpty {
-                        Text(item.value.situation).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let trigger = item.value.trigger, !trigger.isEmpty {
-                        HStack(alignment: .top) {
-                            FeatureQuote(text: trigger)
-                            Spacer(minLength: 6)
-                            CallTimeButton(at: item.value.at, onSeek: onSeek)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(FeatureIndexed.list(answers).enumerated()), id: \.offset) { index, item in
+                    if index > 0 { RowDivider(inset: 0).padding(.vertical, 14) }
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !item.value.situation.isEmpty {
+                            Text(item.value.situation).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
                         }
+                        if let trigger = item.value.trigger, !trigger.isEmpty {
+                            HStack(alignment: .top) {
+                                FeatureQuote(text: trigger)
+                                CallTimeButton(at: item.value.at, onSeek: onSeek)
+                            }
+                        }
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Твой ответ").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                                Text(item.value.answer)
+                                    .font(.subheadline)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                            CallSpeakButton(text: item.value.answer, store: store, player: player)
+                        }
+                        .padding(12)
+                        .background(FeaturePalette.lime.opacity(0.18), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
-                    HStack(alignment: .top, spacing: 12) {
-                        Text(item.value.answer)
-                            .font(.subheadline)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                        CallSpeakButton(text: item.value.answer, store: store, player: player)
-                    }
-                    .padding(12)
-                    .featureGlass(radius: 18, tint: FeaturePalette.lime.opacity(0.45))
                 }
             }
         }
@@ -465,7 +471,8 @@ struct CallDealSection: View {
                         Text(item.value.term).font(.subheadline.weight(.semibold))
                         Spacer(minLength: 6)
                         if item.value.clarity != "explicit" {
-                            FeatureChip(text: item.value.clarity == "implied" ? "подразумевается" : "неясно", tint: FeaturePalette.warning)
+                            Text(item.value.clarity == "implied" ? "подразумевается" : "неясно")
+                                .font(.footnote.weight(.semibold)).foregroundStyle(FeaturePalette.warning)
                         }
                     }
                     Text(item.value.value).font(.subheadline).fixedSize(horizontal: false, vertical: true)
@@ -529,37 +536,44 @@ struct CallDebatableSection: View {
 
     var body: some View {
         CallReviewSection("Спорные моменты", icon: "scale.3d", subtitle: "Решения с аргументами в обе стороны. Вывод — ориентир, не приговор.") {
-            ForEach(FeatureIndexed.list(items)) { item in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(item.value.title).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-                    if let quote = item.value.quote, !quote.isEmpty {
-                        HStack(alignment: .top) {
-                            FeatureQuote(text: quote)
-                            Spacer(minLength: 6)
-                            CallTimeButton(at: item.value.at, onSeek: onSeek)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(FeatureIndexed.list(items).enumerated()), id: \.offset) { index, item in
+                    if index > 0 { RowDivider(inset: 0).padding(.vertical, 14) }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(item.value.title).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                        if let quote = item.value.quote, !quote.isEmpty {
+                            HStack(alignment: .top) {
+                                FeatureQuote(text: quote)
+                                CallTimeButton(at: item.value.at, onSeek: onSeek)
+                            }
+                        }
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .top, spacing: 16) { sides(item.value) }
+                            VStack(alignment: .leading, spacing: 10) { sides(item.value) }
+                        }
+                        if !item.value.verdict.isEmpty {
+                            (Text("Вывод: ").fontWeight(.semibold) + Text(item.value.verdict))
+                                .font(.subheadline)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    if !item.value.forSide.isEmpty { side("За", item.value.forSide, icon: "plus.circle") }
-                    if !item.value.againstSide.isEmpty { side("Против", item.value.againstSide, icon: "minus.circle") }
-                    if !item.value.verdict.isEmpty {
-                        Text("Вывод: " + item.value.verdict)
-                            .font(.subheadline.weight(.semibold))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 }
-                .padding(12)
-                .background(FeaturePalette.track, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
         }
     }
 
-    private func side(_ title: String, _ text: String, icon: String) -> some View {
-        Label {
-            Text(title + ": ").font(.subheadline.weight(.semibold)) + Text(text).font(.subheadline)
-        } icon: {
-            Image(systemName: icon).foregroundStyle(FeaturePalette.violet)
+    @ViewBuilder private func sides(_ item: CallDebatable) -> some View {
+        if !item.forSide.isEmpty { side("За", item.forSide) }
+        if !item.againstSide.isEmpty { side("Против", item.againstSide) }
+    }
+
+    /// «За» / «Против» as two labelled columns (no side stripes).
+    private func side(_ title: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+            Text(text).font(.subheadline).fixedSize(horizontal: false, vertical: true)
         }
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -586,13 +600,11 @@ struct CallLanguageSection: View {
                     if !item.value.why.isEmpty {
                         Text(item.value.why).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
-                    HStack(spacing: 6) {
-                        FeatureChip(text: FeatureLabels.languageImpact(item.value.impact),
-                                    tint: item.value.impact == "meaning" ? FeaturePalette.error : FeaturePalette.warning)
-                        if item.value.asrSuspect {
-                            FeatureChip(text: "возможно, неверно расслышано", icon: "questionmark.circle", tint: FeaturePalette.cyan)
-                        }
-                    }
+                    (Text(FeatureLabels.languageImpact(item.value.impact))
+                        .foregroundColor(item.value.impact == "meaning" ? FeaturePalette.error : FeaturePalette.warning)
+                        .fontWeight(.semibold)
+                     + Text(item.value.asrSuspect ? " · возможно, неверно расслышано" : "").foregroundColor(.secondary))
+                        .font(.footnote)
                 }
                 .opacity(item.value.asrSuspect ? 0.75 : 1)
             }

@@ -62,6 +62,8 @@
 }
 .row button[aria-pressed='true'] { background: #18171c; color: #daf163; border-color: #18171c; }
 .row button:focus-visible { outline: 3px solid #6f5cf2; outline-offset: 2px; }
+.paletteLink { padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(20, 18, 40, 0.1); background: #fff; color: inherit; font-size: 13px; text-decoration: none; }
+.paletteLink[aria-current='page'] { background: #18171c; color: #daf163; border-color: #18171c; }
 .inline { font-size: 12px; font-weight: 400; color: rgba(24, 23, 28, 0.62); display: inline-flex; align-items: center; gap: 6px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 14px; }
 .slider { display: grid; gap: 6px; font-size: 13px; }

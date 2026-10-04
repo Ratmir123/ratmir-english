@@ -46,21 +46,21 @@ struct PracticeScreen: View {
     @ViewBuilder private var forYouSection: some View {
         let drills = client.state?.drills ?? []
         VStack(alignment: .leading, spacing: 12) {
-            LiquidSectionHeader(title: "Для тебя", systemImage: "sparkles")
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Для тебя").font(TypeScale.title3).accessibilityAddTraits(.isHeader)
+                Text(drills.isEmpty ? "Тренировки из твоих созвонов: моменты, которые стоили денег, и спорные места."
+                                    : "Переиграй реальные моменты — по одному за раз.")
+                    .font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+            }
             if drills.isEmpty {
-                LiquidCard(radius: Radius.tile, padding: 16) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Здесь появятся тренировки из твоих созвонов: моменты, которые стоили денег, и спорные места.")
-                            .font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
-                        Button { client.requestedTab = .calls } label: {
-                            Label("Загрузить созвон", systemImage: "square.and.arrow.up")
-                        }
-                        .buttonStyle(QuietButton())
+                GroupedRows {
+                    Button { client.requestedTab = .calls } label: {
+                        ListRowLabel(icon: "square.and.arrow.up", title: "Загрузить созвон",
+                                     detail: "После разбора здесь появятся тренировки из твоих моментов")
                     }
+                    .buttonStyle(RowButtonStyle())
                 }
             } else {
-                Text("Переиграй реальные моменты — по одному за раз.")
-                    .font(.footnote).foregroundStyle(Theme.inkSecondary)
                 DrillsList(drills: drills)
             }
         }
@@ -99,6 +99,7 @@ struct PracticeStartRequest {
     let topic: String
 }
 
+/// One catalog group: a title, its description and one surface of scenario rows.
 private struct CatalogSectionView: View {
     let section: CatalogSection
     let onSelect: (CatalogFamily) -> Void
@@ -106,18 +107,20 @@ private struct CatalogSectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                LiquidSectionHeader(title: section.title, systemImage: CatalogFamily.categorySymbol(section.id))
+                Text(section.title).font(TypeScale.title3).accessibilityAddTraits(.isHeader)
                 if !section.description.isEmpty {
                     Text(section.description).font(.footnote).foregroundStyle(Theme.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            ForEach(Array(section.families.enumerated()), id: \.element.id) { index, family in
-                Button { onSelect(family) } label: {
-                    FamilyTile(family: family, starting: client.isStarting(TrainingClient.familyKey(family.id)))
+            GroupedRows {
+                ForEach(Array(section.families.enumerated()), id: \.element.id) { index, family in
+                    if index > 0 { RowDivider(inset: 56) }
+                    Button { onSelect(family) } label: {
+                        FamilyTile(family: family, starting: client.isStarting(TrainingClient.familyKey(family.id)))
+                    }
+                    .buttonStyle(RowButtonStyle())
                 }
-                .buttonStyle(PressButton())
-                .staggeredReveal(index)
             }
         }
     }
@@ -136,43 +139,39 @@ enum FamilyAccent {
     static func modeTitle(_ mode: String) -> String { mode == "call" ? "Созвон" : "С опорами" }
 }
 
+/// A scenario row: stroke icon in the text colour, title, one-line description and a meta line.
 private struct FamilyTile: View {
     let family: CatalogFamily
     let starting: Bool
+    private var meta: String {
+        var parts = ["\(family.minutes) мин", FamilyAccent.modeTitle(family.fixedLearningMode ? "learning" : family.preferredMode)]
+        if family.isNew { parts.append("новое") }
+        return parts.joined(separator: " · ")
+    }
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
-            Image(systemName: family.symbol).font(.title3.weight(.semibold)).foregroundStyle(Theme.onAccent)
-                .frame(width: 46, height: 46)
-                .background(FamilyAccent.color(family.category), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(family.title).font(.subheadline.weight(.semibold)).multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if family.isNew {
-                        Text("НОВОЕ").font(.caption2.weight(.bold)).foregroundStyle(Theme.onAccent)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Theme.lime, in: Capsule())
-                    }
+            Image(systemName: family.symbol).font(.body.weight(.medium)).foregroundStyle(Theme.ink)
+                .frame(width: 26).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(family.title).font(.subheadline.weight(.semibold)).multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !family.description.isEmpty {
+                    Text(family.description).font(.footnote).foregroundStyle(Theme.inkSecondary).lineLimit(2)
+                        .multilineTextAlignment(.leading)
                 }
-                Text(family.description).font(.caption).foregroundStyle(Theme.inkSecondary).lineLimit(1)
-                HStack(spacing: 10) {
-                    Label("\(family.minutes) мин", systemImage: "clock")
-                    Label(FamilyAccent.modeTitle(family.fixedLearningMode ? "learning" : family.preferredMode),
-                          systemImage: family.preferredMode == "call" && !family.fixedLearningMode ? "phone" : "lightbulb")
-                }
-                .font(.caption2.weight(.medium)).foregroundStyle(Theme.inkSecondary)
+                Text(meta).font(.caption).foregroundStyle(Theme.inkSecondary)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             if starting {
                 ProgressView().tint(Theme.violet)
             } else {
-                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
             }
         }
         .foregroundStyle(Theme.ink)
-        .padding(14)
-        .modifier(LiquidChrome(radius: Radius.tile, tint: nil, interactive: false))
-        .contentShape(RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Открывает описание и запуск")
     }
@@ -218,27 +217,18 @@ struct FamilyDetailSheet: View {
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
-            Image(systemName: family.symbol).font(.title2.weight(.semibold)).foregroundStyle(Theme.onAccent)
-                .frame(width: 56, height: 56)
-                .background(FamilyAccent.color(family.category), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            VStack(alignment: .leading, spacing: 4) {
-                Text(family.title).font(TypeScale.title3).fixedSize(horizontal: false, vertical: true)
-                Text("Около \(family.minutes) мин").font(.subheadline).foregroundStyle(Theme.inkSecondary)
-            }
+        VStack(alignment: .leading, spacing: 4) {
+            Text(family.title).font(TypeScale.title2).fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text("Около \(family.minutes) мин" + (family.isNew ? " · новое" : "")).font(.subheadline).foregroundStyle(Theme.inkSecondary)
         }
     }
 
     private var skills: some View {
         VStack(alignment: .leading, spacing: 8) {
             InputLabel(title: "Что тренируем")
-            ChipFlow(spacing: 6) {
-                ForEach(family.skills, id: \.self) { skill in
-                    Text(SkillCopy.title(skill)).font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(Theme.lavender.opacity(0.28), in: Capsule())
-                }
-            }
+            Text(family.skills.map(SkillCopy.title).joined(separator: " · "))
+                .font(.subheadline.weight(.medium)).fixedSize(horizontal: false, vertical: true)
         }
     }
 

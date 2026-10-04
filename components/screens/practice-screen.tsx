@@ -1,13 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { ArrowRightIcon, CaretRightIcon, ClockCounterClockwiseIcon, LightbulbIcon, SparkleIcon, TargetIcon, WarningCircleIcon } from '@phosphor-icons/react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ArrowRightIcon, CaretRightIcon, LightbulbIcon, SparkleIcon, TargetIcon, WarningCircleIcon } from '@phosphor-icons/react';
 import type { Mode } from '@/lib/types';
-import { familyForPattern, type CatalogFamily, type LessonFormat } from '@/lib/training';
+import { familyForPattern, type CatalogFamily, type CatalogSection, type LessonFormat } from '@/lib/training';
 import { DrillsList } from '../calls/drills-list';
 import { useApp } from '../app/app-context';
 import { CatalogIcon } from '../app/catalog-icons';
-import { MODE_HINT, MODE_LABEL, sessionStatusLabel, shortDate, skillLabel } from '../app/labels';
+import { MODE_HINT, MODE_LABEL, sessionStatusLabel, sessionTone, shortDate, skillLabel } from '../app/labels';
 import { laterSessions, pendingDrills } from '../app/today-plan';
 import { Segmented } from '../ui/segmented';
 import { Sheet } from '../ui/sheet';
@@ -24,6 +24,14 @@ const FORMAT_NOTE: Record<LessonFormat, string> = {
   listening: 'Сначала слушаешь — текст скрыт. Услышанное пригодится в ответе.',
 };
 
+const plural = (n: number, one: string, few: string, many: string) => {
+  const ten = n % 10, hundred = n % 100;
+  return ten === 1 && hundred !== 11 ? one : ten >= 2 && ten <= 4 && (hundred < 12 || hundred > 14) ? few : many;
+};
+/** The catalog row shows only the first sentence (the situation); the sheet has the whole description. */
+const firstSentence = (text: string) => text.match(/^.+?[.!?](?=\s|$)/u)?.[0] ?? text;
+const textActivity = (family: CatalogFamily) => family.activity === 'reading' || family.activity === 'writing';
+
 function fixedMode(family: CatalogFamily | null): { mode: Mode; label: string; reason: string } | null {
   if (!family) return null;
   if (family.activity === 'writing') return { mode: 'learning', label: 'Письменное задание', reason: 'Пишешь в своём темпе, подсказки доступны.' };
@@ -32,7 +40,7 @@ function fixedMode(family: CatalogFamily | null): { mode: Mode; label: string; r
   return null;
 }
 
-/** Detail sheet: goal, skills, mode with a one-line explanation, optional topic → «Начать». */
+/** Detail sheet: what happens, what it trains, how to run it, optional topic → «Начать». */
 export function FamilySheet({ family, freeTopic, open, onClose }: { family: CatalogFamily | null; freeTopic: boolean; open: boolean; onClose: () => void }) {
   const app = useApp();
   const fixed = fixedMode(family);
@@ -40,30 +48,29 @@ export function FamilySheet({ family, freeTopic, open, onClose }: { family: Cata
   const [topic, setTopic] = useState('');
   useEffect(() => { if (open) { setMode(family?.preferredMode ?? 'learning'); setTopic(''); } }, [open, family?.id, family?.preferredMode]);
   const busy = !!app.lesson.starting || !!app.lesson.busy;
-  const title = family?.title ?? 'Своя тема';
+  const section = family ? app.catalog?.find(item => item.id === family.category)?.title : null;
   const begin = () => {
     app.start({ familyId: family?.id, context: family?.context, mode: fixed?.mode ?? mode, topic, from: 'practice' });
     onClose();
   };
-  return <Sheet open={open} onClose={onClose} title={title} eyebrow={family ? app.catalog?.find(section => section.id === family.category)?.title : 'Свободный разговор'} testId="family-sheet"
+  return <Sheet open={open} onClose={onClose} title={family?.title ?? 'Своя тема'} testId="family-sheet"
+    subtitle={family ? [section, `~${family.minutes} мин`].filter(Boolean).join(' · ') : 'Свободный разговор'}
     actions={<>
       <button type="button" className="button primary large block" onClick={begin} disabled={busy} data-testid="family-start">
         Начать<ArrowRightIcon size={18} />
       </button>
       {busy && <span className="disabled-reason"><WarningCircleIcon size={15} />{app.lesson.starting ? 'Уже готовлю другое занятие.' : 'Подожди, идёт действие.'}</span>}
     </>}>
-    {family ? <>
-      <div className={styles.sheetLead}><span className={styles.sheetIcon}><CatalogIcon name={family.icon.phosphor} size={28} /></span><p>{family.description}</p></div>
+    {family ? <div className={styles.sheetAbout}>
+      <p className={styles.sheetLead}>{family.description}</p>
       <p className="caption">{FORMAT_NOTE[family.format] ?? FORMAT_NOTE.conversation}</p>
-      {family.skills.length > 0 && <div className={styles.sheetBlock}><span className="eyebrow">Что потренируем</span>
-        <div className={styles.chips}>{family.skills.map(skill => <span key={skill} className="chip violet">{skillLabel(skill)}</span>)}</div></div>}
-      <div className={styles.chips}><span className="chip glassy"><ClockCounterClockwiseIcon size={14} />~{family.minutes} мин</span></div>
-    </> : <p className="muted">О чём угодно: проект, игра, спорт, переезд. Собеседник подстроится, разбор покажет, что усилить.</p>}
-    <div className={styles.sheetBlock}>
-      <span className="eyebrow">Режим</span>
-      {fixed ? <><span className="chip glassy" style={{ justifySelf: 'start' }}>{fixed.label}</span><small>{fixed.reason}</small></>
+      {family.skills.length > 0 && <p className={styles.sheetSkills}><strong>Что потренируем:</strong> {family.skills.map(skillLabel).join(' · ')}</p>}
+    </div> : <p className={styles.sheetLead}>О чём угодно: проект, игра, спорт, переезд. Собеседник подстроится, разбор покажет, что усилить.</p>}
+    <fieldset className={styles.sheetBlock}>
+      <legend>Как пройти</legend>
+      {fixed ? <p className={styles.sheetFixed}><strong>{fixed.label}.</strong> {fixed.reason}</p>
         : <><Segmented block label="Режим занятия" value={mode} onChange={setMode} options={[{ id: 'learning', label: MODE_LABEL.learning }, { id: 'call', label: MODE_LABEL.call }]} /><small>{MODE_HINT[mode]}</small></>}
-    </div>
+    </fieldset>
     <label className={styles.sheetBlock}>{family ? 'Своя тема (необязательно)' : 'Тема разговора'}
       <input value={topic} onChange={event => setTopic(event.target.value)} maxLength={300} placeholder={family ? 'Например: мой новый проект' : 'AI-видео, игра, спорт, идея проекта…'}
         onKeyDown={event => { if (event.key === 'Enter' && !busy) { event.preventDefault(); begin(); } }} />
@@ -72,16 +79,42 @@ export function FamilySheet({ family, freeTopic, open, onClose }: { family: Cata
   </Sheet>;
 }
 
-function FamilyTile({ family, index, onOpen }: { family: CatalogFamily; index: number; onOpen: () => void }) {
-  return <button type="button" className={`glass interactive press reveal ${styles.tile}`} style={{ '--i': index } as CSSProperties} onClick={onOpen} data-testid={`family-${family.id}`}>
-    <span className={styles.tileTop}>
-      <span className={styles.tileIcon} data-category={family.category}><CatalogIcon name={family.icon.phosphor} size={24} /></span>
-      {family.isNew && <span className="chip new">Новое</span>}
+/** One list row: stroke icon, title, one line of purpose, time and mode on the right. */
+function Row({ icon, title, note, meta, isNew, onClick, testId }: {
+  icon?: ReactNode; title: string; note: ReactNode; meta?: ReactNode; isNew?: boolean; onClick: () => void; testId?: string;
+}) {
+  return <li><button type="button" className={styles.row} onClick={onClick} data-testid={testId}>
+    {icon && <span className={styles.rowIcon} aria-hidden="true">{icon}</span>}
+    <span className={styles.rowCopy}>
+      <strong>{title}{isNew && <span className={styles.newDot} title="Новое"><span className="visually-hidden">, новое</span></span>}</strong>
+      <small>{note}</small>
     </span>
-    <strong className={styles.tileTitle}>{family.title}</strong>
-    <span className={styles.tileText}>{family.description}</span>
-    <span className={styles.tileMeta}><span className="tabular">~{family.minutes} мин</span><span aria-hidden="true">·</span><span>{['reading', 'writing'].includes(family.activity) ? 'Текст' : MODE_LABEL[family.preferredMode]}</span></span>
-  </button>;
+    {meta && <span className={styles.rowMeta}>{meta}</span>}
+    <CaretRightIcon size={16} className={styles.chevron} aria-hidden="true" />
+  </button></li>;
+}
+
+function familyMeta(family: CatalogFamily) {
+  return <><span className="tabular">~{family.minutes} мин</span><span>{textActivity(family) ? 'Текст' : MODE_LABEL[family.preferredMode]}</span></>;
+}
+
+function CatalogGroup({ section, onOpen }: { section: CatalogSection; onOpen: (family: CatalogFamily) => void }) {
+  const total = section.families.length;
+  const fresh = section.families.filter(family => family.isNew).length;
+  // When every item of a group is new, say it once in the group head instead of marking each row.
+  const allNew = fresh === total;
+  const count = `${total} ${plural(total, 'ситуация', 'ситуации', 'ситуаций')}${allNew ? ' · все новые' : fresh ? ` · ${fresh} ${plural(fresh, 'новая', 'новые', 'новых')}` : ''}`;
+  return <section id={`practice-section-${section.id}`} className={styles.group} aria-labelledby={`section-${section.id}`}>
+    <div className={styles.groupHead}>
+      <h3 id={`section-${section.id}`}>{section.title}</h3>
+      <p className="caption">{section.description}</p>
+      <p className={styles.count}>{count}</p>
+    </div>
+    <ul className={`surface ${styles.list}`}>
+      {section.families.map(family => <Row key={family.id} testId={`family-${family.id}`} icon={<CatalogIcon name={family.icon.phosphor} size={20} />}
+        title={family.title} note={firstSentence(family.description)} meta={familyMeta(family)} isNew={!allNew && family.isNew} onClick={() => onOpen(family)} />)}
+    </ul>
+  </section>;
 }
 
 export function PracticeScreen() {
@@ -111,43 +144,58 @@ export function PracticeScreen() {
   }, [drills, families, state.patterns]);
   const recommendation = state.progression?.recommendation;
   const recommended = recommendation && !recommendation.drillId ? families.find(item => item.id === recommendation.familyId) : undefined;
-  const forYou = drills.length > 0 || suggestions.length > 0 || later.length > 0 || !!recommended;
+  const open = (family: CatalogFamily | null, freeTopic = false) => setSheet({ family, freeTopic, open: true });
+  const planned = !!recommended || suggestions.length > 0;
 
-  return <div className="screen" data-screen="practice">
-    <header className="screen-header">
-      <div><h1 tabIndex={-1} data-screen-heading style={{ outline: 'none' }}>Практика</h1>
+  return <div className={`screen ${styles.practice}`} data-screen="practice">
+    <header className={styles.header}>
+      <div className={styles.headerCopy}><h1 tabIndex={-1} data-screen-heading>Практика</h1>
         <p className="lede">Выбери ситуацию — задачу и сложность подберёт Sol по твоим последним попыткам.</p></div>
-      <button type="button" className="button secondary" onClick={() => setSheet({ family: null, freeTopic: true, open: true })}><SparkleIcon size={18} />Своя тема</button>
+      <button type="button" className="button secondary" onClick={() => open(null, true)}><SparkleIcon size={18} />Своя тема</button>
     </header>
 
-    {forYou && <section className={styles.section} aria-labelledby="practice-for-you">
-      <div className="section-title"><h2 id="practice-for-you">Для тебя</h2></div>
-      {recommended && <button type="button" className={`glass interactive press ${styles.recommended}`} onClick={() => setSheet({ family: recommended, freeTopic: false, open: true })}>
-        <span className={styles.tileIcon} data-category={recommended.category}><TargetIcon size={24} weight="duotone" /></span>
-        <span className={styles.recommendedCopy}><span className="eyebrow">План на сегодня</span><strong>{recommended.title}</strong><small>{recommendation?.why}</small></span>
-        <CaretRightIcon size={18} />
-      </button>}
-      {drills.length > 0 && <DrillsList drills={drills} onStartDrill={app.startDrill} limit={3} />}
-      {suggestions.length > 0 && <div className={styles.grid}>{suggestions.map((item, index) => <button key={item.family.id} type="button" className={`glass interactive press reveal ${styles.tile}`} style={{ '--i': index } as CSSProperties} onClick={() => setSheet({ family: item.family, freeTopic: false, open: true })}>
-        <span className={styles.tileTop}><span className={styles.tileIcon} data-category="pattern"><LightbulbIcon size={24} weight="duotone" /></span><span className="chip lime">Паттерн</span></span>
-        <strong className={styles.tileTitle}>{item.family.title}</strong>
-        <span className={styles.tileText}>Против «{item.patternTitle}»</span>
-      </button>)}</div>}
-      {later.length > 0 && <div className={`glass flat ${styles.panel}`}>
-        <span className="eyebrow">Попытки на потом · {later.length}</span>
-        <ul className={styles.rows}>{later.slice(0, 5).map(session => <li key={session.id}><button type="button" onClick={() => app.lesson.open(session, 'practice')}>
-          <span className={styles.rowCopy}><strong>{session.lesson.title}</strong><small>{sessionStatusLabel(session)} · {shortDate(session.updatedAt)}</small></span><CaretRightIcon size={16} />
-        </button></li>)}</ul>
-      </div>}
+    {(planned || drills.length > 0) && <section className={styles.group} aria-labelledby="practice-for-you">
+      <div className={styles.groupHead}>
+        <h2 id="practice-for-you">Для тебя</h2>
+        <p className="caption">По твоим созвонам и последним разборам.</p>
+        {drills.length > 3 && <p className={styles.count}>Тренировки: 3 из {drills.length} · <button type="button" className="text-button" onClick={() => app.go('calls')}>все в «Созвонах»</button></p>}
+      </div>
+      <div className={styles.groupBody}>
+        {planned && <ul className={`surface ${styles.list}`}>
+          {recommended && <Row icon={<TargetIcon size={20} />} title={recommended.title} meta={familyMeta(recommended)} onClick={() => open(recommended)}
+            note={recommendation?.why ? `План на сегодня: ${recommendation.why}` : 'План на сегодня'} />}
+          {suggestions.map(item => <Row key={item.family.id} icon={<LightbulbIcon size={20} />} title={item.family.title} meta={familyMeta(item.family)}
+            note={`Против паттерна «${item.patternTitle}»`} onClick={() => open(item.family)} />)}
+        </ul>}
+        {drills.length > 0 && (planned ? <div className={styles.drills}>
+          <h3 className={styles.subhead}>Личные тренировки</h3>
+          <DrillsList drills={drills} onStartDrill={app.startDrill} limit={3} />
+        </div> : <DrillsList drills={drills} onStartDrill={app.startDrill} limit={3} />)}
+      </div>
     </section>}
 
-    {app.catalogError && <div className="banner error" role="alert"><WarningCircleIcon size={18} weight="fill" /><span className="banner-copy"><span>{app.catalogError}</span>
-      <span className="banner-actions"><button type="button" className="button small secondary" onClick={app.reloadCatalog}>Повторить</button></span></span></div>}
-    {!app.catalog && !app.catalogError && <div className={styles.grid} aria-busy="true">{Array.from({ length: 6 }, (_, index) => <div key={index} className="skeleton" style={{ height: 150 }} />)}</div>}
-    {app.catalog?.map(section => <section key={section.id} id={`practice-section-${section.id}`} className={styles.section} aria-labelledby={`section-${section.id}`}>
-      <div className={styles.sectionHead}><h2 id={`section-${section.id}`}>{section.title}</h2><p className="caption">{section.description}</p></div>
-      <div className={styles.grid}>{section.families.map((family, index) => <FamilyTile key={family.id} family={family} index={index} onOpen={() => setSheet({ family, freeTopic: false, open: true })} />)}</div>
-    </section>)}
+    {later.length > 0 && <section className={styles.group} aria-labelledby="practice-later">
+      <div className={styles.groupHead}>
+        <h2 id="practice-later">Незаконченные занятия</h2>
+        <p className="caption">{later.length > 5 ? `5 последних из ${later.length}` : 'Можно вернуться в любой момент.'}</p>
+      </div>
+      <ul className={`surface flat ${styles.list}`}>{later.slice(0, 5).map(session => {
+        const tone = sessionTone(session);
+        return <Row key={session.id} title={session.lesson.title} onClick={() => app.lesson.open(session, 'practice')}
+          note={<><span className={styles.status} data-tone={tone}>{sessionStatusLabel(session)}</span> · {shortDate(session.updatedAt)}</>} />;
+      })}</ul>
+    </section>}
+
+    <div className={styles.catalog}>
+      <h2 className={styles.catalogTitle}>Все ситуации</h2>
+      {app.catalogError && <div className="banner error" role="alert"><WarningCircleIcon size={18} weight="fill" /><span className="banner-copy"><span>{app.catalogError}</span>
+        <span className="banner-actions"><button type="button" className="button small secondary" onClick={app.reloadCatalog}>Повторить</button></span></span></div>}
+      {!app.catalog && !app.catalogError && <div className={styles.group} aria-busy="true">
+        <div className={styles.groupHead}><div className="skeleton" style={{ height: 22, width: 170, borderRadius: 8 }} /></div>
+        <div className="skeleton" style={{ height: 320 }} />
+      </div>}
+      {app.catalog?.map(section => <CatalogGroup key={section.id} section={section} onOpen={family => open(family)} />)}
+    </div>
 
     <FamilySheet family={sheet.family} freeTopic={sheet.freeTopic} open={sheet.open} onClose={() => setSheet(previous => ({ ...previous, open: false }))} />
   </div>;

@@ -61,7 +61,6 @@ export interface MascotFrame {
   x: number; y: number;
   rotation: number; scaleX: number; scaleY: number;
   hop: number; squash: number;
-  shadowScale: number; shadowOpacity: number;
   gazeX: number; gazeY: number;
   eyes: [EyeFrame, EyeFrame];
   mouth: MouthFrame;
@@ -191,7 +190,7 @@ export class MascotPhysics {
     for (const slot of [TINT_R, TINT_G, TINT_B, TINT_A]) { this.fk[slot] = TINT_K; this.fc[slot] = 2 * Math.sqrt(TINT_K); }
     this.frame = {
       time: 0, emotion: 'calm', sleeping: false, displacement: new Float32Array(N), x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1,
-      hop: 0, squash: 0, shadowScale: 1, shadowOpacity: 1, gazeX: 0, gazeY: 0, eyes: [eyeFrame(), eyeFrame()],
+      hop: 0, squash: 0, gazeX: 0, gazeY: 0, eyes: [eyeFrame(), eyeFrame()],
       mouth: { w: 0.07, o: 0, s: 0.35, r: 0, x: 0, interior: 0, tongue: 0 }, blush: 0, tint: new Float32Array(TINT_RGB.cyan),
       tintAmount: 0, energy: 0, speech: 0, zzz: -1, active: false,
     };
@@ -698,9 +697,6 @@ export class MascotPhysics {
     frame.rotation = this.phi; frame.hop = this.h; frame.squash = this.q;
     frame.scaleX = (1 + 0.5 * this.q) * (1 + this.puff);
     frame.scaleY = (1 - this.q) * (1 + this.puff) * (1 + this.sag);
-    const air = clamp(-this.h / (0.2 * S), 0, 1);
-    frame.shadowScale = 1 - 0.25 * air;
-    frame.shadowOpacity = 1 - 0.35 * air;
     frame.gazeX = this.fv[GAZE_X]; frame.gazeY = this.fv[GAZE_Y];
     for (let e = 0; e < 2; e++) {
       const eye = frame.eyes[e], base = e * EYE_STRIDE, shape = this.shapeShown[e];

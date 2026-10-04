@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect } from 'react';
-import { CaretLeftIcon } from '@phosphor-icons/react';
+import { CaretLeftIcon, CaretRightIcon } from '@phosphor-icons/react';
 import { useApp } from '../app/app-context';
 import { MODE_LABEL, sessionStatusLabel, sessionTone, TAB_NAMES } from '../app/labels';
-import { ConversationView } from './conversation';
+import { ConversationView, Turns } from './conversation';
 import { AnalysisWaiting, ErrorBanner, ProcessingNote, ReviewView } from './review';
 import styles from './session.module.css';
 
@@ -19,23 +19,32 @@ export function SessionScreen() {
   if (!s) return null;
   const conversation = s.status === 'active';
   const failedWithoutReview = s.status === 'error' && !s.analysis;
-  const ieltsTitle = s.lesson.track === 'ielts-foundation' ? 'Основа для IELTS' : null;
+  const tone = sessionTone(s);
+  const mode = (s.baseline ? 'Старая стартовая проба' : MODE_LABEL[s.mode]) + (s.lesson.track === 'ielts-foundation' ? ' · Основа для IELTS' : '');
+  const avoid = conversation ? (s.lesson.mustAvoid ?? []).slice(0, 6) : [];
   return <div className={`screen ${styles.session}`} data-screen="session">
     <header className={styles.header}>
-      <button type="button" className="button small secondary" onClick={() => { lesson.voice.stop(); app.nav.closeSession(); }}>
+      <button type="button" className={`text-button ${styles.back}`} onClick={() => { lesson.voice.stop(); app.nav.closeSession(); }}>
         <CaretLeftIcon size={16} weight="bold" />{TAB_NAMES[app.nav.returnTab]}</button>
-      <div className={styles.headerCopy}>
-        <div className={styles.headerChips}><span className="chip glassy">{s.baseline ? 'Старая стартовая проба' : MODE_LABEL[s.mode]}</span>
-          <span className={`chip ${sessionTone(s) === 'neutral' ? '' : sessionTone(s)}`}>{sessionStatusLabel(s)}</span>{ieltsTitle && <span className="chip">{ieltsTitle}</span>}</div>
-        <h1 tabIndex={-1} data-screen-heading className={styles.title}>{s.lesson.title}</h1>
-        <details className={styles.task}><summary>Твоя задача</summary><p>{s.lesson.goal}</p>{s.lesson.why && <p className="caption">{s.lesson.why}</p>}</details>
+      <h1 tabIndex={-1} data-screen-heading className={styles.title}>{s.lesson.title}</h1>
+      {/* A failed review already has its banner below: the line then names only the mode. */}
+      <p className={styles.meta}>
+        {s.status === 'error' ? <span>{mode}</span> : tone !== 'neutral' ? <><span className={`chip ${tone}`}>{sessionStatusLabel(s)}</span><span>{mode}</span></>
+          : <span>{sessionStatusLabel(s)} · {mode}</span>}
+      </p>
+      <div className={styles.brief}>
+        <p><strong>Задача:</strong> {s.lesson.goal}</p>
+        {avoid.length > 0 && <p className={styles.avoid}><strong>Не говори:</strong> {avoid.map((item, index) => <span key={item}>{index > 0 && ', '}<q lang="en">{item}</q></span>)}</p>}
+        {s.lesson.why && <details className={styles.why}><summary>Зачем это<CaretRightIcon size={14} weight="bold" className={styles.caret} /></summary><p>{s.lesson.why}</p></details>}
       </div>
     </header>
     <ErrorBanner />
     <ProcessingNote />
     {conversation && <ConversationView />}
-    {failedWithoutReview && <section className={`glass flat ${styles.failedTranscript}`}><span className="eyebrow">Твои ответы сохранены</span>
-      <ol className={styles.turns}>{s.turns.map(turn => <li key={turn.id} data-role={turn.role}><span className="eyebrow">{turn.role === 'user' ? 'Ты' : 'Собеседник'}</span><p lang="en">{turn.text}</p></li>)}</ol></section>}
+    {failedWithoutReview && <section className={`surface ${styles.failedTranscript}`} aria-labelledby="saved-turns">
+      <h2 id="saved-turns" className={styles.blockTitle}>Твои ответы сохранены</h2>
+      <Turns turns={s.turns} />
+    </section>}
     {s.status === 'analysing' && <AnalysisWaiting />}
     {!!s.analysis && s.status !== 'analysing' && <ReviewView />}
   </div>;

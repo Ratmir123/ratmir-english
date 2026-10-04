@@ -1,7 +1,7 @@
 'use client';
 
 /** Small shared UI primitives for the W3 features (placement + calls). */
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { CheckIcon, CopyIcon, PauseIcon, SpeakerHighIcon, XIcon } from '@phosphor-icons/react';
 import { api, mediaUrl } from '@/lib/client/api';
 import type { Tone } from './format';
@@ -40,14 +40,14 @@ export function ProgressBar({ value, label, tone }: { value: number; label?: str
   const percent = Math.round(Math.max(0, Math.min(1, value)) * 100);
   return (
     <div className={kit.bar} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
-      <span className={kit.barFill} style={{ width: `${percent}%`, background: tone }} />
+      <span className={kit.barFill} style={{ '--fill': percent / 100, background: tone } as CSSProperties} />
     </div>
   );
 }
 
 export interface SegmentOption<T extends string> { id: T; label: string; badge?: number | null }
 
-/** Tablist with a spring "liquid lens" that stretches while it travels. */
+/** Tablist with a lens that glides to the selected segment. */
 export function Segmented<T extends string>({ value, options, onChange, label, block, idPrefix }: {
   value: T; options: readonly SegmentOption<T>[]; onChange: (next: T) => void; label: string; block?: boolean; idPrefix?: string;
 }) {
@@ -65,14 +65,12 @@ export function Segmented<T extends string>({ value, options, onChange, label, b
     pill.style.transform = `translateX(${x}px)`;
     const before = previous.current; previous.current = { x, width };
     const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (animate && before && before.x !== x && !reduced && typeof pill.animate === 'function') {
-      // Liquid stretch mid-travel, spring back on arrival.
-      const mid = (before.x + x) / 2;
+    if (animate && before && before.x !== x && width > 0 && !reduced && typeof pill.animate === 'function') {
+      // FLIP: the final width is already set; only transform animates (no layout work per frame).
       pill.animate([
-        { transform: `translateX(${before.x}px) scaleX(1)`, width: `${before.width}px` },
-        { transform: `translateX(${mid}px) scaleX(1.12)`, width: `${(before.width + width) / 2}px`, offset: 0.45 },
-        { transform: `translateX(${x}px) scaleX(1)`, width: `${width}px` },
-      ], { duration: 420, easing: 'cubic-bezier(.3,1.35,.5,1)' });
+        { transform: `translateX(${before.x}px) scaleX(${before.width / width})` },
+        { transform: `translateX(${x}px) scaleX(1)` },
+      ], { duration: 260, easing: 'cubic-bezier(.23,1,.32,1)' });
     }
   }, []);
   useLayoutEffect(() => { place(true); }, [value, options.length, place]);

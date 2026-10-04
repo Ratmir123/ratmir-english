@@ -1,23 +1,67 @@
-.grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-.column { display: grid; gap: 16px; min-width: 0; }
-.card { display: grid; gap: 12px; padding: 22px; border-radius: var(--radius-card); }
+.profile { container: profile / inline-size; }
+/* Two columns only when the content area (not the window) has room for the form and the settings column. */
+.grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+@container profile (min-width: 760px) { .grid { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); } }
+.column { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
+.card { display: grid; gap: 12px; padding: 22px; min-width: 0; }
 .card h2 { font-size: 20px; }
-.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 14px; }
+.head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; min-height: 32px; }
+.head h2 { margin: 0; }
+.body { font-size: var(--text-15); line-height: 1.5; }
+
+/* Form */
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.fields > label { min-width: 0; }
 .wide { grid-column: 1 / -1; }
-.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.inline { display: flex; gap: 8px; }
-.inline input { flex: 1; min-width: 0; }
-.usage { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--surface-glass-hairline); font-size: var(--text-13); color: var(--text-secondary); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: var(--touch); }
+.saved { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-13); font-weight: 600; color: var(--text-secondary); }
+.saved svg { color: var(--accent-lime-ink); }
+
+/* Voice key */
+.inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.keyField { flex: 1 1 200px; min-width: 0; }
+.inline :global(.button) { flex-shrink: 0; }
+.usage { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-top: 12px; border-top: 1px solid var(--hairline); font-size: var(--text-13); color: var(--text-secondary); }
 .usage strong { font-size: var(--text-17); color: var(--text-primary); }
-.danger { display: grid; gap: 10px; padding: 12px 14px; border-radius: 18px; background: var(--status-error-soft); }
-.danger summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 650; color: var(--status-error-ink); list-style: none; min-height: 32px; }
-.danger summary::-webkit-details-marker { display: none; }
-.danger :global(.button) { justify-self: start; }
+
+/* Model: a human reason first, the technical one on demand. */
+.problem { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius-small); background: var(--status-warning-soft); }
+.problem > svg { flex-shrink: 0; margin-top: 2px; color: var(--status-warning-ink); }
+.problemCopy { display: grid; gap: 4px; min-width: 0; font-size: var(--text-13); line-height: 1.5; color: var(--text-secondary); }
+.problemCopy strong { font-size: var(--text-15); color: var(--text-primary); }
+.detail summary { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; cursor: pointer; list-style: none; font-weight: 650; color: var(--text-secondary); }
+.detail summary::-webkit-details-marker { display: none; }
+.detail summary svg { transition: transform 200ms var(--ease-out); }
+.detail[open] summary svg { transform: rotate(90deg); }
+.detail code { display: block; margin-top: 2px; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 12px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
+.check { justify-self: start; }
+.divider { height: 1px; margin: 4px 0; background: var(--hairline); }
+
+/* Data: plain rows; the destructive one reads as a row in error ink, details only on demand. */
+.dataCard { padding-bottom: 8px; }
+.dataCard :global(.rows) { margin: 0 -22px; border-top: 1px solid var(--hairline); }
+.row {
+  display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 12px 22px; font-weight: 650; color: var(--text-primary);
+  cursor: pointer; transition: background-color 160ms var(--ease-out);
+}
+.row > span { flex: 1; min-width: 0; }
+.row > svg { flex-shrink: 0; }
+@media (hover: hover) and (pointer: fine) { .row:hover { background: var(--surface-hover); } }
+.danger > summary { list-style: none; color: var(--status-error-ink); }
+.danger > summary::-webkit-details-marker { display: none; }
+.caret { color: var(--text-tertiary); transition: transform 200ms var(--ease-out); }
+.danger[open] .caret { transform: rotate(90deg); }
+.dangerBody { display: grid; gap: 12px; padding: 4px 22px 16px; }
+.dangerBody :global(.button) { justify-self: start; }
+
 .version { text-align: center; font-size: var(--text-12); color: var(--text-tertiary); padding: 4px 0 8px; }
 
-@media (max-width: 1100px) { .grid { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 560px) {
+@container profile (max-width: 560px) {
   .fields { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
   .card { padding: 18px; }
-  .inline { flex-direction: column; }
+  .dataCard :global(.rows) { margin: 0 -18px; }
+  .row { padding-inline: 18px; }
+  .dangerBody { padding-inline: 18px; }
 }

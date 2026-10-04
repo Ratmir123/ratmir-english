@@ -163,7 +163,7 @@ export function ChoiceTaskView({ task, busy, onAnswer }: {
           {question}
         </>
       )}
-      <div className={cx(kit.glass, styles.answerBar)}>
+      <div className={cx(kit.chrome, styles.answerBar)}>
         <span className={styles.hint}>
           {needsListening ? 'Сначала послушай запись' : <><span className={styles.kbd}>1</span>–<span className={styles.kbd}>{Math.min(9, task.options.length)}</span> выбрать · <span className={styles.kbd}>Enter</span> ответить</>}
         </span>

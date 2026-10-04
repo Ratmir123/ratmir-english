@@ -127,22 +127,30 @@ private struct CallsScreenContent: View {
     }
 
     @ViewBuilder private var callsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            FeatureSectionTitle(title: "Звонки")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Звонки").font(TypeScale.title3).accessibilityAddTraits(.isHeader)
+                Spacer()
+                if !store.calls.isEmpty {
+                    Text(FeatureFormat.count(store.calls.count, "звонок", "звонка", "звонков")).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
             if store.calls.isEmpty {
                 FeatureEmptyState(icon: "phone.bubble", title: "Пока пусто",
                                   text: "Загрузи запись или транскрипт звонка — или опиши его по памяти. Разберу, что сработало, что стоило денег, и соберу тренировки из твоих моментов.")
                     .featureGlass(radius: 24)
             } else {
-                ForEach(Array(store.calls.enumerated()), id: \.element.id) { entry in
-                    NavigationLink(value: CallsRoute.call(entry.element.id)) {
-                        CallRow(call: entry.element)
+                GroupedRows {
+                    ForEach(Array(store.calls.enumerated()), id: \.element.id) { entry in
+                        if entry.offset > 0 { RowDivider() }
+                        NavigationLink(value: CallsRoute.call(entry.element.id)) {
+                            CallRow(call: entry.element)
+                        }
+                        .buttonStyle(RowButtonStyle())
+                        .contextMenu {
+                            Button("Удалить звонок", systemImage: "trash", role: .destructive) { pendingDelete = entry.element }
+                        }
                     }
-                    .buttonStyle(FeatureTileButtonStyle())
-                    .contextMenu {
-                        Button("Удалить звонок", systemImage: "trash", role: .destructive) { pendingDelete = entry.element }
-                    }
-                    .featureReveal(entry.offset)
                 }
             }
         }
@@ -160,8 +168,9 @@ private struct CallsScreenContent: View {
     }
 }
 
-// MARK: - Insights row
+// MARK: - Insights
 
+/// «Мои паттерны» and «Факты о тебе» as two rows of one surface.
 struct CallsInsightsRow: View {
     let patterns: [CommunicationPattern]
     let facts: [ProfileFact]
@@ -176,68 +185,67 @@ struct CallsInsightsRow: View {
 
     var body: some View {
         if !patterns.isEmpty || !facts.isEmpty {
-            VStack(spacing: 12) {
-                if !patterns.isEmpty { patternsTile }
-                if !facts.isEmpty { factsTile }
+            GroupedRows {
+                if !patterns.isEmpty { patternsRow }
+                if !patterns.isEmpty && !facts.isEmpty { RowDivider(inset: 56) }
+                if !facts.isEmpty { factsRow }
             }
         }
     }
 
-    private var patternsTile: some View {
+    private var patternsRow: some View {
         Button { open(.patterns) } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Label("Мои паттерны", systemImage: "point.3.connected.trianglepath.dotted").font(.headline)
-                    Spacer()
-                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
-                }
-                if activePatterns.isEmpty {
-                    Text("Сейчас нет активных паттернов. Новые появятся после разбора звонков.")
-                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.leading)
-                } else {
-                    ForEach(activePatterns.prefix(2)) { pattern in
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Text(pattern.title).font(.subheadline).lineLimit(1)
-                            Spacer(minLength: 8)
-                            PatternHistoryDots(history: pattern.history, limit: 6)
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "point.3.connected.trianglepath.dotted").font(.body.weight(.medium))
+                    .frame(width: 26).padding(.top, 1).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Мои паттерны").font(.subheadline.weight(.semibold))
+                    if activePatterns.isEmpty {
+                        Text("Сейчас нет активных паттернов. Новые появятся после разбора звонков.")
+                            .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        ForEach(activePatterns.prefix(2)) { pattern in
+                            HStack(alignment: .center, spacing: 10) {
+                                Text(pattern.title).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                Spacer(minLength: 8)
+                                PatternHistoryDots(history: pattern.history, limit: 5)
+                            }
                         }
                     }
                 }
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary).padding(.top, 2)
             }
             .foregroundStyle(Color.primary)
-            .padding(16)
+            .padding(.horizontal, 16).padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .featureGlass(radius: 24, interactive: true)
         }
-        .buttonStyle(FeatureTileButtonStyle())
+        .buttonStyle(RowButtonStyle())
         .accessibilityHint("Открывает все паттерны")
     }
 
-    private var factsTile: some View {
+    private var factsRow: some View {
         Button { open(.facts) } label: {
-            HStack(spacing: 12) {
-                Label("Факты о тебе", systemImage: "person.text.rectangle").font(.headline)
-                Spacer()
+            ListRowLabel(icon: "person.text.rectangle", title: "Факты о тебе",
+                         detail: suggestedFacts > 0
+                            ? FeatureFormat.count(suggestedFacts, "новое предложение", "новых предложения", "новых предложений") + " — проверь"
+                            : FeatureFormat.count(acceptedFacts, "факт", "факта", "фактов") + " в плейбуке") {
                 if suggestedFacts > 0 {
-                    FeatureChip(text: FeatureFormat.count(suggestedFacts, "новый", "новых", "новых"), tint: FeaturePalette.lime)
-                } else {
-                    Text(FeatureFormat.count(acceptedFacts, "факт", "факта", "фактов")).font(.subheadline).foregroundStyle(.secondary)
+                    Circle().fill(FeaturePalette.lime).overlay { Circle().strokeBorder(FeaturePalette.success, lineWidth: 1) }
+                        .frame(width: 9, height: 9).accessibilityHidden(true)
                 }
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
             }
-            .foregroundStyle(Color.primary)
-            .padding(16)
-            .contentShape(Rectangle())
-            .featureGlass(radius: 24, interactive: true)
         }
-        .buttonStyle(FeatureTileButtonStyle())
+        .buttonStyle(RowButtonStyle())
         .accessibilityHint("Открывает плейбук: ставки, кейсы и факты")
     }
 }
 
 // MARK: - Row and status
 
+/// One call as a row of the calls surface: title, status, who/when, then the one line that matters.
 struct CallRow: View {
     let call: CallSummary
 
@@ -250,41 +258,39 @@ struct CallRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: FeatureLabels.callSourceIcon(call.source))
-                .font(.body.weight(.semibold))
-                .foregroundStyle(FeaturePalette.violet)
-                .frame(width: 42, height: 42)
-                .background(FeaturePalette.lavender.opacity(0.35), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .accessibilityHidden(true)
+        HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(call.title).font(.headline).lineLimit(2).multilineTextAlignment(.leading)
-                    Spacer(minLength: 6)
-                    CallStatusChip(call: call)
-                }
+                Text(call.title).font(.headline).lineLimit(3).multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                CallStatusChip(call: call)
                 if !subtitle.isEmpty {
-                    Text(subtitle).font(.footnote).foregroundStyle(.secondary)
+                    Text(subtitle).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 detailLine
             }
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary).padding(.top, 4)
         }
         .foregroundStyle(Color.primary)
-        .padding(16)
+        .padding(.horizontal, 16).padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .featureGlass(radius: 24, interactive: true)
         .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder private var detailLine: some View {
         switch call.kind {
         case .queued, .processing, .analysing:
-            HStack(spacing: 10) {
-                CallProgressRing(percent: call.progress?.percent ?? 0)
-                Text(call.progress.map { $0.stage.isEmpty ? FeatureLabels.callStatus(call.status) : $0.stage } ?? FeatureLabels.callStatus(call.status))
+            VStack(alignment: .leading, spacing: 6) {
+                Text((call.progress.map { $0.stage.isEmpty ? FeatureLabels.callStatus(call.status) : $0.stage } ?? FeatureLabels.callStatus(call.status))
+                     + (call.progress.map { " · \(Int($0.percent.rounded()))%" } ?? ""))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                if let percent = call.progress?.percent, percent > 0 {
+                    FeatureProgressBar(value: percent / 100, tint: FeaturePalette.violet, height: 6,
+                                       accessibilityText: "Обработано \(Int(percent.rounded())) процентов")
+                } else {
+                    ProgressView().controlSize(.small)
+                }
             }
         case .needsSpeaker:
             Label("Подтверди, кто из собеседников ты", systemImage: "person.2.wave.2")

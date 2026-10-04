@@ -41,20 +41,16 @@
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
+/* Floor shadow layers (ambient, contact). Box, floor line and both theme fills are inline from lib/mascot/shadow.ts;
+   the loop writes only transform, opacity and filter. */
 .shadow {
   position: absolute;
   left: 50%;
-  top: 89%;
-  width: 60%;
-  height: 10%;
-  border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(58, 70, 140, 0.34), rgba(58, 70, 140, 0.13) 58%, transparent);
+  background: var(--shadow-light);
   transform: translate(-50%, -50%);
-  will-change: transform, opacity;
+  will-change: transform, opacity, filter;
 }
-.root[data-dark='true'] .shadow {
-  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.62), rgba(31, 181, 201, 0.12) 62%, transparent);
-}
+.root[data-dark='true'] .shadow { background: var(--shadow-dark); }
 .body {
   position: absolute;
   inset: 0;
@@ -62,7 +58,7 @@
   will-change: transform;
 }
 .canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-/* Same silhouette without WebGL (unsupported or context lost): CSS glass + the same SVG face. */
+/* Same silhouette without WebGL (unsupported or context lost): CSS glass (palette fill, inline) + the same SVG face. */
 .fallback {
   position: absolute;
   left: 11%;
@@ -70,10 +66,6 @@
   width: 78%;
   height: 78%;
   border-radius: 45%;
-  background:
-    radial-gradient(ellipse at 26% 20%, rgba(244, 252, 255, 0.85), transparent 32%),
-    linear-gradient(135deg, #55dbe8, #7060e7 56%, #82d7e8);
-  box-shadow: inset 1px 2px 3px rgba(255, 255, 255, 0.63), inset -4px -7px 13px rgba(66, 58, 150, 0.37), inset 8px 8px 25px rgba(168, 245, 255, 0.44);
 }
 .root[data-lens='live'] .fallback, .root[data-lens='still'] .fallback { visibility: hidden; }
 .root[data-lens='none'] .canvas { visibility: hidden; }

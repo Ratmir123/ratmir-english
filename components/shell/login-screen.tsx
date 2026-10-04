@@ -19,7 +19,7 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: () => Promise<void> })
     finally { setBusy(false); }
   };
   return <main className="boot" style={{ padding: 16 }}>
-    <form className="glass card" onSubmit={submit} style={{ width: 'min(420px, 100%)', display: 'grid', gap: 14, justifyItems: 'stretch' }}>
+    <form className="surface card" onSubmit={submit} style={{ width: 'min(420px, 100%)', display: 'grid', gap: 14, justifyItems: 'stretch' }}>
       <div style={{ width: 96, height: 96, justifySelf: 'center' }}><Companion state="idle" emotion="happy" size={96} status="Ждёт тебя" /></div>
       <span className="eyebrow" style={{ justifySelf: 'center' }}>{APP_NAME}</span>
       <h1 style={{ textAlign: 'center', fontSize: 28 }}>Твоя практика общения</h1>

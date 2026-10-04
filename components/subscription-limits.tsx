@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState } from 'react';
 import {
-  ArrowUpRightIcon, ArrowsClockwiseIcon, CircleNotchIcon, ClockIcon, GaugeIcon, WarningCircleIcon,
+  ArrowUpRightIcon, ArrowsClockwiseIcon, CircleNotchIcon, ClockIcon, WarningCircleIcon,
 } from '@phosphor-icons/react';
 import type { SubscriptionUsage } from '@/lib/types';
 import { subscriptionView, type SubscriptionWindowView } from '@/lib/subscription-view';
@@ -15,6 +15,8 @@ export interface SubscriptionLimitsProps {
   loading: boolean;
   onRefresh: () => void;
   compact?: boolean;
+  /** Inside a host card (Profile → «Учебная модель»): no surface of its own, a sub-heading. */
+  embedded?: boolean;
 }
 
 function WindowLimit({ window }: { window: SubscriptionWindowView }) {
@@ -46,7 +48,7 @@ function WindowLimit({ window }: { window: SubscriptionWindowView }) {
   </div>;
 }
 
-export function SubscriptionLimits({ usage, loading, onRefresh, compact = false }: SubscriptionLimitsProps) {
+export function SubscriptionLimits({ usage, loading, onRefresh, compact = false, embedded = false }: SubscriptionLimitsProps) {
   const headingId = useId();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -67,10 +69,9 @@ export function SubscriptionLimits({ usage, loading, onRefresh, compact = false 
     } catch { return USAGE_URL; }
   })();
 
-  return <section className={`${styles.card} ${compact ? styles.compact : ''}`} aria-labelledby={headingId} aria-busy={loading}>
+  return <section className={`${embedded ? styles.embedded : styles.card} ${compact ? styles.compact : ''}`} aria-labelledby={headingId} aria-busy={loading}>
     <div className={styles.header}>
       <div className={styles.heading}>
-        <span className={styles.symbol}><GaugeIcon size={19} aria-hidden="true" /></span>
         <h3 id={headingId}>Лимиты подписки</h3>
       </div>
       <button type="button" className={styles.refresh} onClick={onRefresh} disabled={loading}

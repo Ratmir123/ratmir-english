@@ -238,7 +238,7 @@ export function splitPlaceholders(text: string): TextPart[] {
 /* ───────────── patterns ───────────── */
 
 export const PATTERN_STATUS: Record<CommunicationPattern['status'], { label: string; tone: Tone; hint: string }> = {
-  watch: { label: 'Замечено', tone: 'neutral', hint: 'Видели один раз. Подтверди, если это про тебя.' },
+  watch: { label: 'Замечено', tone: 'neutral', hint: 'Видели один раз. Это про тебя?' },
   active: { label: 'В работе', tone: 'warning', hint: 'Повторяется. Тренируем.' },
   improving: { label: 'Лучше', tone: 'violet', hint: 'Получается всё чаще.' },
   resolved: { label: 'Закрыто', tone: 'lime', hint: 'Три реальных звонка подряд без повтора.' },
@@ -252,13 +252,26 @@ export const OUTCOME_GLYPH: Record<PatternOutcome, { glyph: string; label: strin
   'no-opportunity': { glyph: '·', label: 'не было повода', tone: 'neutral' },
 };
 
-/** "Реальные 0–1 · Тренировки 3–1": avoided–repeated on real calls, independent successes–other attempts in practice. */
+/** Cost rank (1 = most expensive) in words, in the same vocabulary as a review's cost impact. */
+export function costRankLabel(rank: number): { label: string; tone: Tone } {
+  if (rank <= 2) return { label: 'Стоит дорого', tone: 'error' };
+  if (rank === 3) return { label: 'Стоит заметно', tone: 'warning' };
+  return { label: 'Стоит немного', tone: 'neutral' };
+}
+
+const times = (count: number) => `${count} ${plural(count, ['раз', 'раза', 'раз'])}`;
+
+/** Plain totals per pattern: real calls (avoided / repeated) and practice (attempts, independent successes).
+ *  {0 avoided, 1 repeated} → "В звонках: повторилось 1 раз"; no attempts → "В тренировках: ещё не было". */
 export function roundsLabel(pattern: Pick<CommunicationPattern, 'real' | 'practice'>): { real: string; practice: string } {
   const avoided = Math.max(0, pattern.real.avoided | 0);
   const repeated = Math.max(0, pattern.real.repeated | 0);
   const attempts = Math.max(0, pattern.practice.attempts | 0);
   const successes = Math.min(attempts, Math.max(0, pattern.practice.independentSuccesses | 0));
-  return { real: `Реальные ${avoided}–${repeated}`, practice: `Тренировки ${successes}–${attempts - successes}` };
+  const real = [avoided ? `справился ${times(avoided)}` : '', repeated ? `повторилось ${times(repeated)}` : ''].filter(Boolean).join(', ');
+  const practice = !attempts ? 'ещё не было'
+    : `${attempts} ${plural(attempts, ['попытка', 'попытки', 'попыток'])}, ${successes ? `без опор справился ${times(successes)}` : 'без опор пока не получилось'}`;
+  return { real: `В звонках: ${real || 'повода ещё не было'}`, practice: `В тренировках: ${practice}` };
 }
 
 /** Weaknesses first (by cost, then recency), then strengths; dismissed ones go to a separate list. */

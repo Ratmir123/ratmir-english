@@ -244,13 +244,14 @@ export function PlacementFlow({ state, onState, onClose, onDone }: {
   }
 
   return (
-    <div ref={root} className={cx(kit.scope, styles.flow)} role="dialog" aria-modal="true" aria-label="Тест уровня">
-      <div className={styles.ambient} aria-hidden="true"><i /><i /><i /></div>
+    <div ref={root} className={cx(kit.scope, styles.flow)} data-wide={wide || undefined} role="dialog" aria-modal="true" aria-label="Тест уровня">
+      <div className={styles.ambient} aria-hidden="true"><i /><i /></div>
       <header className={styles.header}>
-        <div className={cx(kit.glass, styles.headerBar)}>
+        <div className={cx(kit.chrome, styles.headerBar)}>
           <div className={styles.headerTitle}>
             <strong>Тест уровня</strong>
-            <span>{showProgress && progress.sectionTitle ? `${progress.sectionTitle}${progress.position && screen.kind === 'task' ? ` · ${progress.position}` : ''}` : screen.kind === 'result' ? 'Результат' : '≈ 25 минут · два подхода'}</span>
+            <span>{showProgress && progress.sectionTitle ? `${progress.sectionTitle}${progress.position && screen.kind === 'task' ? ` · ${progress.position}` : ''}`
+              : screen.kind === 'result' ? 'Результат' : screen.kind === 'scoring' || screen.kind === 'error' ? 'Подсчёт результата' : '≈ 25 минут · два подхода'}</span>
           </div>
           {showProgress ? <ProgressDots view={state} /> : null}
           <div className={styles.headerEnd}>
@@ -312,7 +313,7 @@ function SectionList({ view, compact, neutral }: { view: PlacementView; compact?
               const SectionIcon = SECTION_ICON[section.id];
               return (
                 <div key={section.id} className={styles.sectionLine} data-status={section.status}>
-                  <span className={styles.sectionIcon}>{section.status === 'completed' ? <CheckIcon size={18} weight="bold" /> : <SectionIcon size={18} weight="bold" />}</span>
+                  <span className={styles.sectionIcon} aria-hidden="true">{section.status === 'completed' ? <CheckIcon size={20} weight="bold" /> : <SectionIcon size={20} />}</span>
                   <span>
                     <strong>{section.title}</strong>
                     {compact ? null : <small>{section.status === 'skipped' ? section.note || 'Пропущен' : section.description}</small>}
@@ -334,7 +335,6 @@ function IntroScreen({ view, retake, busy, backToResult, onStart, onLater }: { v
     <div className={styles.intro}>
       <div className={styles.introText}>
         <div className={styles.mascotWrap}><FeatureMascot size={128} emotion="determined" /></div>
-        <span className={kit.eyebrow}>{retake ? 'Пересдача' : 'Тест уровня · ≈ 25 минут'}</span>
         <h1 className={styles.heroTitle} tabIndex={-1} data-autofocus>{retake ? 'Проверим, что изменилось' : 'Узнаем твой настоящий уровень'}</h1>
         <p className={styles.lead}>
           {retake
@@ -373,12 +373,11 @@ function ResumeScreen({ view, busy, onContinue, onLater, onRestart }: { view: Pl
     <div className={styles.intro}>
       <div className={styles.introText}>
         <div className={styles.mascotWrap}><FeatureMascot size={120} emotion="happy" /></div>
-        <span className={kit.eyebrow}>С возвращением</span>
         <h1 className={styles.heroTitle} tabIndex={-1} data-autofocus>{atBreak ? 'Часть 1 готова. Дальше — голос' : 'Продолжим с того же места'}</h1>
         <p className={styles.lead}>
           {atBreak
-            ? `Осталась речь и короткий рабочий созвон, ${remainingLabel(view.remainingMinutes)}. Нужны микрофон и тихое место.`
-            : `Следующее: ${progress.sectionTitle ?? 'задание'}${progress.position ? `, ${progress.position.toLowerCase()}` : ''}. Осталось ${remainingLabel(view.remainingMinutes)}.`}
+            ? `С возвращением! Осталась речь и короткий рабочий созвон, ${remainingLabel(view.remainingMinutes)}. Нужны микрофон и тихое место.`
+            : `С возвращением! Следующее: ${progress.sectionTitle ?? 'задание'}${progress.position ? `, ${progress.position.toLowerCase()}` : ''}. Осталось ${remainingLabel(view.remainingMinutes)}.`}
         </p>
         <div className={styles.actions}>
           <button type="button" className={cx(kit.btn, kit.primary)} disabled={busy} onClick={onContinue}>
@@ -417,15 +416,17 @@ function SectionIntro({ view, section, busy, onBegin, onSkip }: {
     <div className={cx(styles.screen, styles.screenCentered)}>
       <div className={cx(kit.glass, styles.sectionCard)}>
         <span className={styles.sectionBadge}><SectionIcon size={30} weight="bold" /></span>
-        <span className={kit.eyebrow}>Часть {section.sitting} · раздел {index + 1} из {view.sections.length}</span>
-        <h1 className={styles.title} tabIndex={-1} data-autofocus>{section.title}</h1>
-        {section.description ? <p className={styles.lead}>{section.description}</p> : null}
-        <p className={kit.muted} style={{ margin: 0, fontSize: 14 }}>{SECTION_TIPS[section.id]}</p>
-        <div className={styles.meta}>
-          <span className={kit.chip}><ClockIcon size={14} weight="bold" />≈ {Math.round(section.minutes)} мин</span>
-          {section.planned ? <span className={kit.chip}>{section.id === 'interaction' ? `${section.planned} реплики` : section.id === 'speaking' ? `${section.planned} задания` : `до ${section.planned} вопросов`}</span> : null}
-          {voice ? <span className={kit.chip}><MicrophoneIcon size={14} weight="bold" />Нужен микрофон</span> : null}
+        <div className={styles.sectionHead}>
+          <h1 className={styles.title} tabIndex={-1} data-autofocus>{section.title}</h1>
+          <p className={styles.sectionPlace}>Часть {section.sitting}, раздел {index + 1} из {view.sections.length}</p>
         </div>
+        {section.description ? <p className={styles.lead}>{section.description}</p> : null}
+        <p className={styles.tip}>{SECTION_TIPS[section.id]}</p>
+        <ul className={styles.meta}>
+          <li><ClockIcon size={16} weight="bold" aria-hidden="true" />≈ {Math.round(section.minutes)} мин</li>
+          {section.planned ? <li>{section.id === 'interaction' ? `${section.planned} реплики` : section.id === 'speaking' ? `${section.planned} задания` : `до ${section.planned} вопросов`}</li> : null}
+          {voice ? <li><MicrophoneIcon size={16} weight="bold" aria-hidden="true" />Нужен микрофон</li> : null}
+        </ul>
         <div className={styles.actions}>
           <button type="button" className={cx(kit.btn, kit.primary)} disabled={busy || starting}
             onClick={async () => { setStarting(true); try { await onBegin(); } finally { setStarting(false); } }}>

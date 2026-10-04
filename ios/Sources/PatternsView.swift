@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// «Мои паттерны»: weaknesses first by cost, history dots per call (● повторилось ○ удержал ·
-/// не было повода ◐ лучше), rounds «Реальные 0–1 · Тренировки 3–1», evidence and related drills.
-/// `embedded: true` renders without its own scroll view and backdrop (for a host screen).
+/// «Мои паттерны»: weaknesses first by cost, one card per pattern with plain sections (web:
+/// components/calls/patterns-panel.tsx): history in words («В звонках: … · В тренировках: …»), the
+/// latest outcomes, an inline confirmation question, attached drills as rows, description and quotes
+/// on demand. `embedded: true` renders without its own scroll view and backdrop (for a host screen).
 struct PatternsView: View {
     let patterns: [CommunicationPattern]
     let drills: [PersonalDrill]
@@ -46,48 +47,67 @@ struct PatternsView: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 18) {
             if !embedded {
-                Text("Что повторяется в твоих звонках и что уже получается. Точки — по звонкам, старые слева.")
+                Text("Что повторяется от звонка к звонку и сколько это стоит. Закрывается только реальными звонками — тренировки готовят к ним.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                PatternLegend()
             }
             if let error {
                 FeatureBanner(message: error, onDismiss: { self.error = nil })
             }
             if weaknesses.isEmpty && strengths.isEmpty {
                 FeatureEmptyState(icon: "point.3.connected.trianglepath.dotted", title: "Паттернов пока нет",
-                                  text: "Они появятся после разбора звонков: что стоило денег и повторяется.")
+                                  text: "Они появятся после первого разобранного звонка: например, «называешь чужой гонорар» или «соглашаешься на первую цифру».")
                     .featureGlass(radius: 24)
             }
-            ForEach(Array(weaknesses.enumerated()), id: \.element.id) { entry in
-                PatternCard(pattern: entry.element, drills: related(entry.element), busy: busy.contains(entry.element.id),
-                            onConfirm: { update(entry.element, confirm: true) },
-                            onDismiss: { update(entry.element, dismiss: true) },
+            ForEach(weaknesses) { pattern in
+                PatternCard(pattern: pattern, drills: related(pattern), busy: busy.contains(pattern.id),
+                            onConfirm: { update(pattern, confirm: true) },
+                            onDismiss: { update(pattern, dismiss: true) },
                             onRestore: nil)
-                    .featureReveal(entry.offset)
             }
             if !strengths.isEmpty {
-                FeatureSectionTitle(title: "Сильные стороны", subtitle: "То, что стоит повторять в каждом звонке.")
-                ForEach(strengths) { pattern in
-                    PatternCard(pattern: pattern, drills: [], busy: busy.contains(pattern.id),
-                                onConfirm: { update(pattern, confirm: true) },
-                                onDismiss: { update(pattern, dismiss: true) },
-                                onRestore: nil)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Сильные стороны").font(TypeScale.title3).accessibilityAddTraits(.isHeader)
+                    GroupedRows {
+                        ForEach(Array(strengths.enumerated()), id: \.element.id) { index, pattern in
+                            if index > 0 { RowDivider(inset: 50) }
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: "checkmark.seal.fill").foregroundStyle(FeaturePalette.success)
+                                    .frame(width: 22).accessibilityHidden(true)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(pattern.title).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                                    if !pattern.description.isEmpty {
+                                        Text(pattern.description).font(.footnote).foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
                 }
             }
             if !hidden.isEmpty {
                 DisclosureGroup {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(hidden) { pattern in
-                            PatternCard(pattern: pattern, drills: [], busy: busy.contains(pattern.id),
-                                        onConfirm: nil, onDismiss: nil,
-                                        onRestore: { update(pattern, dismiss: false) })
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(hidden.enumerated()), id: \.element.id) { index, pattern in
+                            if index > 0 { RowDivider(inset: 0) }
+                            HStack(spacing: 12) {
+                                Text(pattern.title).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 8)
+                                Button("Вернуть") { update(pattern, dismiss: false) }
+                                    .buttonStyle(QuietButton())
+                                    .disabled(busy.contains(pattern.id))
+                            }
+                            .padding(.vertical, 6)
                         }
                     }
                     .padding(.top, 8)
                 } label: {
-                    Text("Скрытые · \(hidden.count)").font(.subheadline.weight(.semibold))
+                    Text("Скрытые паттерны (\(hidden.count))").font(.subheadline.weight(.semibold))
                 }
                 .padding(16)
                 .featureGlass(radius: 22)
@@ -133,23 +153,75 @@ struct PatternsView: View {
     }
 }
 
+/// Plain-language copy shared with the web (components/calls/format.ts).
+@MainActor enum PatternCopy {
+    private static func times(_ count: Int) -> String { "\(count) " + FeatureFormat.plural(count, "раз", "раза", "раз") }
+
+    /// «В звонках: справился 1 раз, повторилось 2 раза» / «В тренировках: ещё не было».
+    static func rounds(_ pattern: CommunicationPattern) -> (real: String, practice: String) {
+        let avoided = max(0, pattern.real.avoided)
+        let repeated = max(0, pattern.real.repeated)
+        let attempts = max(0, pattern.practice.attempts)
+        let successes = min(attempts, max(0, pattern.practice.independentSuccesses))
+        let real = [avoided > 0 ? "справился " + times(avoided) : "", repeated > 0 ? "повторилось " + times(repeated) : ""]
+            .filter { !$0.isEmpty }.joined(separator: ", ")
+        let practice = attempts == 0 ? "ещё не было"
+            : FeatureFormat.count(attempts, "попытка", "попытки", "попыток") + ", "
+                + (successes > 0 ? "без опор справился " + times(successes) : "без опор пока не получилось")
+        return ("В звонках: " + (real.isEmpty ? "повода ещё не было" : real), "В тренировках: " + practice)
+    }
+
+    /// Cost rank (1 = most expensive) in words.
+    static func cost(_ rank: Int) -> (label: String, color: Color) {
+        if rank <= 2 { return ("Стоит дорого", FeaturePalette.error) }
+        if rank == 3 { return ("Стоит заметно", FeaturePalette.warning) }
+        return ("Стоит немного", Color.secondary)
+    }
+
+    static func hint(_ status: String) -> String {
+        switch status {
+        case "watch": return "Видели один раз. Это про тебя?"
+        case "active": return "Повторяется. Тренируем."
+        case "improving": return "Получается всё чаще."
+        case "resolved": return "Три реальных звонка подряд без повтора."
+        default: return ""
+        }
+    }
+
+    static func source(_ value: String) -> String {
+        switch value {
+        case "practice": return "тренировка"
+        case "placement": return "тест"
+        default: return "звонок"
+        }
+    }
+
+    static func upperFirst(_ text: String) -> String { text.prefix(1).uppercased() + text.dropFirst() }
+}
+
+/// Legend of the outcome marks (drawn symbols, same as the history rows).
 struct PatternLegend: View {
     var body: some View {
-        HStack(spacing: 14) {
-            item("●", "повторилось", "repeated")
-            item("○", "удержал", "avoided")
-            item("◐", "лучше", "improved")
-            item("·", "не было повода", "no-opportunity")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) { items }
+            VStack(alignment: .leading, spacing: 6) { items }
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .combine)
     }
 
-    private func item(_ symbol: String, _ title: String, _ status: String) -> some View {
+    @ViewBuilder private var items: some View {
+        item("repeated")
+        item("avoided")
+        item("improved")
+        item("no-opportunity")
+    }
+
+    private func item(_ status: String) -> some View {
         HStack(spacing: 4) {
-            Text(symbol).font(.body.weight(.bold)).foregroundStyle(PatternHistoryDots.color(status))
-            Text(title).lineLimit(1)
+            OutcomeMark(status: status)
+            Text(FeatureLabels.patternOutcome(status)).lineLimit(1)
         }
     }
 }
@@ -161,150 +233,170 @@ struct PatternCard: View {
     let onConfirm: (() -> Void)?
     let onDismiss: (() -> Void)?
     let onRestore: (() -> Void)?
+    @State private var expanded = false
 
     private var statusTint: Color {
         switch pattern.status {
         case "active": return FeaturePalette.warning
-        case "improving": return FeaturePalette.cyan
+        case "improving": return FeaturePalette.violet
         case "resolved": return FeaturePalette.lime
         default: return FeaturePalette.lavender
         }
     }
-    private var roundsText: String {
-        let practiceLost = max(0, pattern.practice.attempts - pattern.practice.independentSuccesses)
-        return "Реальные \(pattern.real.avoided)–\(pattern.real.repeated) · Тренировки \(pattern.practice.independentSuccesses)–\(practiceLost)"
-    }
-    private var callHistory: [PatternHistoryEntry] { pattern.history.filter { $0.source != "practice" } }
+    private var ask: Bool { pattern.status == "watch" && !pattern.userConfirmed && onConfirm != nil }
+    private var openDrills: [PersonalDrill] { Array(drills.filter { !$0.isDone }.prefix(2)) }
+    private var latest: [PatternHistoryEntry] { Array(pattern.history.suffix(4)) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             header
-            if !pattern.description.isEmpty {
-                Text(pattern.description).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-            }
-            if !callHistory.isEmpty || pattern.real.opportunities > 0 || pattern.practice.attempts > 0 {
-                VStack(alignment: .leading, spacing: 6) {
-                    if !callHistory.isEmpty { PatternHistoryDots(history: callHistory) }
-                    if pattern.isWeakness {
-                        Text(roundsText).font(.footnote.weight(.semibold)).monospacedDigit()
-                            .accessibilityLabel("Раунды: в реальных звонках удержал \(pattern.real.avoided), повторилось \(pattern.real.repeated). В тренировках самостоятельно \(pattern.practice.independentSuccesses)")
-                    }
+            if pattern.isWeakness { history }
+            if ask { askBlock }
+            if !openDrills.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(openDrills.count > 1 ? "Тренировки" : "Тренировка").font(.subheadline.weight(.semibold))
+                    DrillsList(drills: openDrills, grouped: false, inPattern: true)
                 }
             }
-            if !pattern.drillHint.isEmpty {
-                Label(pattern.drillHint, systemImage: "figure.run").font(.subheadline).fixedSize(horizontal: false, vertical: true)
-            }
-            if !pattern.evidence.isEmpty {
-                evidence
-            }
-            actions
-            if !drills.isEmpty {
-                DrillsList(drills: drills, limit: 2)
+            details
+            if let onRestore {
+                Button("Вернуть в работу", action: onRestore).buttonStyle(QuietButton()).disabled(busy)
             }
         }
-        .padding(16)
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .featureGlass(radius: 26)
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(pattern.title).font(.headline).fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 6) {
-                    FeatureChip(text: FeatureLabels.patternStatus(pattern.status), tint: statusTint)
-                    FeatureChip(text: FeatureLabels.costCategory(pattern.category), tint: FeaturePalette.lavender)
-                }
+                    .accessibilityAddTraits(.isHeader)
+                metaLine
             }
             Spacer(minLength: 6)
-            if pattern.isWeakness {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("#\(pattern.costRank)").font(.title3.weight(.bold)).fontDesign(.rounded)
-                    Text("по цене").font(.caption2).foregroundStyle(.secondary)
+            StatusPill(title: FeatureLabels.patternStatus(pattern.status), color: statusTint)
+        }
+    }
+
+    private var metaLine: some View {
+        var parts: [Text] = []
+        if pattern.isWeakness {
+            let cost = PatternCopy.cost(pattern.costRank)
+            parts.append(Text(cost.label).foregroundColor(cost.color).fontWeight(.semibold))
+        }
+        parts.append(Text(FeatureLabels.costCategory(pattern.category)).foregroundColor(.secondary))
+        if pattern.userConfirmed { parts.append(Text("подтверждено тобой").foregroundColor(.secondary)) }
+        let joined = parts.dropFirst().reduce(parts[0]) { line, part in line + Text(" · ").foregroundColor(.secondary) + part }
+        return joined.font(.footnote).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var history: some View {
+        let rounds = PatternCopy.rounds(pattern)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("История").font(.subheadline.weight(.semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(rounds.real)
+                Text(rounds.practice)
+            }
+            .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if !latest.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(latest.enumerated()), id: \.offset) { _, item in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            OutcomeMark(status: item.status, filled: item.source != "practice")
+                            (Text(PatternCopy.upperFirst(FeatureLabels.patternOutcome(item.status)))
+                             + Text(" — " + [FeatureFormat.longDate(item.date), PatternCopy.source(item.source)].compactMap { $0 }.joined(separator: ", "))
+                                .foregroundColor(.secondary))
+                                .font(.subheadline)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Место по цене: \(pattern.costRank) из 5")
+                if pattern.history.count > latest.count {
+                    let older = pattern.history.count - latest.count
+                    Text("и ещё \(older) " + FeatureFormat.plural(older, "отметка", "отметки", "отметок") + " раньше")
+                        .font(.caption).foregroundStyle(.tertiary)
+                }
             }
         }
     }
 
-    private var evidence: some View {
-        DisclosureGroup {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(FeatureIndexed.list(pattern.evidence)) { item in
-                    VStack(alignment: .leading, spacing: 4) {
-                        FeatureQuote(text: item.value.quote, timestamp: evidenceMeta(item.value))
-                        Text(FeatureLabels.patternOutcome(item.value.status)).font(.caption).foregroundStyle(.secondary)
+    private var askBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(PatternCopy.hint(pattern.status)).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                if let onConfirm {
+                    Button(action: onConfirm) {
+                        HStack(spacing: 6) {
+                            if busy { ProgressView() } else { Image(systemName: "checkmark") }
+                            Text("Да, это про меня")
+                        }
                     }
+                    .buttonStyle(SecondaryButton()).fixedSize().disabled(busy)
+                }
+                if let onDismiss {
+                    Button("Не про меня", action: onDismiss).buttonStyle(QuietButton()).disabled(busy)
                 }
             }
-            .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var details: some View {
+        let quotes = Array(pattern.evidence.prefix(5))
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 12) {
+                if !pattern.description.isEmpty {
+                    Text(pattern.description).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(Array(quotes.enumerated()), id: \.offset) { _, item in
+                    FeatureQuote(text: item.quote, timestamp: evidenceMeta(item))
+                }
+                if !pattern.drillHint.isEmpty {
+                    (Text("Что тренировать: ").fontWeight(.semibold) + Text(pattern.drillHint))
+                        .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                }
+                if let note = pattern.userNote, !note.isEmpty {
+                    (Text("Твоя заметка: ").fontWeight(.semibold) + Text(note))
+                        .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                }
+                if !ask, onRestore == nil, let onDismiss, pattern.status != "resolved" {
+                    Button(action: onDismiss) { Label("Скрыть паттерн", systemImage: "eye.slash") }
+                        .buttonStyle(QuietButton()).disabled(busy)
+                }
+            }
+            .padding(.top, 8)
         } label: {
-            Text("Цитаты · \(pattern.evidence.count)").font(.footnote.weight(.semibold))
+            Text(quotes.isEmpty ? "Описание" : "Описание и цитаты (\(quotes.count))").font(.subheadline.weight(.semibold))
         }
     }
 
     private func evidenceMeta(_ item: PatternEvidence) -> String {
-        var parts: [String] = []
-        switch item.source {
-        case "practice": parts.append("тренировка")
-        case "placement": parts.append("тест уровня")
-        default: parts.append("звонок")
-        }
+        var parts: [String] = [PatternCopy.upperFirst(PatternCopy.source(item.source))]
         if let date = FeatureFormat.shortDate(item.date) { parts.append(date) }
         if let at = item.at { parts.append(FeatureFormat.clock(at)) }
+        parts.append(FeatureLabels.patternOutcome(item.status))
         return parts.joined(separator: " · ")
-    }
-
-    @ViewBuilder private var actions: some View {
-        if let onRestore {
-            Button("Вернуть в работу", action: onRestore).buttonStyle(QuietButton()).disabled(busy)
-        } else if pattern.status == "watch" && !pattern.userConfirmed {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Замечено один раз. Это про тебя?").font(.footnote).foregroundStyle(.secondary)
-                HStack(spacing: 10) {
-                    if let onConfirm {
-                        Button("Да, про меня", action: onConfirm).buttonStyle(SecondaryButton()).disabled(busy)
-                    }
-                    if let onDismiss {
-                        Button("Не про меня", action: onDismiss).buttonStyle(QuietButton()).disabled(busy)
-                    }
-                }
-            }
-        } else if let onDismiss, pattern.status != "resolved" {
-            Menu {
-                Button("Скрыть паттерн", systemImage: "eye.slash", action: onDismiss)
-            } label: {
-                Label("Ещё", systemImage: "ellipsis.circle").font(.footnote)
-            }
-            .disabled(busy)
-        }
     }
 }
 
-/// Per-source outcome dots, oldest first: ● repeated ○ avoided · no-opportunity ◐ improved.
+/// Per-source outcome marks, oldest first (drawn symbols: ✕ repeated, ✓ handled, ↗ better, – no opportunity).
 struct PatternHistoryDots: View {
     let history: [PatternHistoryEntry]
     var limit: Int = 12
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             ForEach(FeatureIndexed.list(Array(history.suffix(max(1, limit))))) { item in
-                Text(FeatureLabels.patternOutcomeSymbol(item.value.status))
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(Self.color(item.value.status))
+                OutcomeMark(status: item.value.status, filled: item.value.source != "practice")
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("История: " + history.suffix(max(1, limit)).map { FeatureLabels.patternOutcome($0.status) }.joined(separator: ", "))
     }
 
-    static func color(_ status: String) -> Color {
-        switch status {
-        case "repeated", "new": return FeaturePalette.error
-        case "avoided": return FeaturePalette.success
-        case "improved": return FeaturePalette.violet
-        default: return Color.secondary
-        }
-    }
+    static func color(_ status: String) -> Color { OutcomeMark.color(status) }
 }

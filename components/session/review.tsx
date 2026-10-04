@@ -1,7 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { ArrowRightIcon, CheckIcon, CircleNotchIcon, PencilSimpleIcon, SpeakerHighIcon, SquareIcon, TargetIcon } from '@phosphor-icons/react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  ArrowRightIcon, ArrowsClockwiseIcon, CaretRightIcon, CheckCircleIcon, CheckIcon, CircleHalfIcon, CircleNotchIcon, PencilSimpleIcon,
+  SpeakerHighIcon, SquareIcon, TargetIcon, WarningCircleIcon, XIcon,
+} from '@phosphor-icons/react';
 import type { Analysis, Session } from '@/lib/types';
 import { STRATEGY_MOVES } from '@/lib/strategy-moves';
 import { mediaUrl } from '@/lib/client/api';
@@ -14,7 +17,7 @@ import { SpeechTimingPanel } from '../speech-timing';
 import { ElapsedTime } from '../ui/elapsed';
 import { Dock } from './dock';
 import { EditConfirmDialog, FinishDialog, type FinishIntent } from './dialogs';
-import { LessonMaterial } from './conversation';
+import { LessonMaterial, Turns } from './conversation';
 import { PushbackRound } from './pushback';
 import { UnuploadedRecording } from './recording-panels';
 import styles from './session.module.css';
@@ -51,8 +54,9 @@ function PatternHits({ analysis }: { analysis: Analysis }) {
   const hits = (analysis.patternHits ?? []).filter(hit => hit.outcome !== 'no-opportunity');
   if (!hits.length) return null;
   const title = (id: string) => data.state?.patterns?.find(pattern => pattern.id === id)?.title ?? id;
-  return <div className={styles.hits} aria-label="Паттерны в этом занятии">{hits.map((hit, index) => <span key={index} className={`chip ${hit.outcome === 'repeated' ? 'warning' : 'lime'}`} title={hit.quote}>
-    {HIT_LABEL[hit.outcome]}: {title(hit.patternId)}</span>)}</div>;
+  return <ul className={styles.hits} aria-label="Паттерны в этом занятии">{hits.map((hit, index) => <li key={index} data-outcome={hit.outcome} title={hit.quote}>
+    {hit.outcome === 'repeated' ? <WarningCircleIcon size={17} weight="fill" /> : <CheckCircleIcon size={17} weight="fill" />}
+    <span><strong>{HIT_LABEL[hit.outcome]}:</strong> {title(hit.patternId)}</span></li>)}</ul>;
 }
 
 /** v0.5 analysis extras: strategy moves (lib/strategy-moves labels), language errors that matter, debatable moments. */
@@ -61,32 +65,32 @@ function AnalysisDetails({ analysis }: { analysis: Analysis }) {
   const errors = (analysis.languageErrors ?? []).filter(error => error.impact !== 'minor');
   const debatable = (analysis.debatable ?? []).slice(0, 2);
   return <>
-    {moves.length > 0 && <section className={`card solid ${styles.details}`} aria-labelledby="review-moves">
+    {moves.length > 0 && <section className={`surface ${styles.details}`} aria-labelledby="review-moves">
       <h3 id="review-moves">Ходы разговора</h3>
       <ul className={styles.moves}>{moves.map(move => {
         const meta = STRATEGY_MOVES.find(item => item.id === move.id);
         const score = move.score ?? 0;
         return <li key={move.id} data-score={score}>
-          <span className={styles.moveMark} aria-hidden="true">{score >= 2 ? '✓' : score === 1 ? '◐' : '✕'}</span>
+          <span className={styles.moveMark} aria-hidden="true">{score >= 2 ? <CheckIcon size={14} weight="bold" /> : score === 1 ? <CircleHalfIcon size={14} weight="fill" /> : <XIcon size={13} weight="bold" />}</span>
           <span className={styles.moveCopy}><strong>{meta?.title ?? move.id}</strong><small>{score >= 2 ? meta?.good : score === 1 ? 'Частично' : meta?.bad}</small>
             {move.quote && <q lang="en">{move.quote}</q>}</span>
           <span className="visually-hidden">{score >= 2 ? 'получилось' : score === 1 ? 'частично' : 'не получилось'}</span>
         </li>;
       })}</ul>
     </section>}
-    {(errors.length > 0 || !!analysis.minorErrorsIgnored) && <section className={`card solid ${styles.details}`} aria-labelledby="review-language">
+    {(errors.length > 0 || !!analysis.minorErrorsIgnored) && <section className={`surface ${styles.details}`} aria-labelledby="review-language">
       <h3 id="review-language">Английский</h3>
       {errors.length > 0 && <ul className={styles.errors}>{errors.map((error, index) => <li key={index}>
-        <span className={styles.errorPair}><s lang="en">{error.quote}</s><span aria-hidden="true">→</span><strong lang="en">{error.correction}</strong></span>
-        <span className={`chip ${error.impact === 'meaning' ? 'warning' : 'violet'}`}>{IMPACT_LABEL[error.impact]}</span>
+        <span className={styles.errorPair}><s lang="en">{error.quote}</s><ArrowRightIcon size={14} aria-hidden="true" /><span className="visually-hidden">лучше:</span><strong lang="en">{error.correction}</strong></span>
+        <span className={styles.impact} data-impact={error.impact}>{IMPACT_LABEL[error.impact]}</span>
       </li>)}</ul>}
       {!!analysis.minorErrorsIgnored && <p className="caption">Мелких неточностей не трогаем: {analysis.minorErrorsIgnored}. Они не мешают смыслу.</p>}
     </section>}
-    {debatable.length > 0 && <section className={`card solid ${styles.details}`} aria-labelledby="review-debatable">
+    {debatable.length > 0 && <section className={`surface ${styles.details}`} aria-labelledby="review-debatable">
       <h3 id="review-debatable">Спорные моменты</h3>
       {debatable.map((item, index) => <div key={index} className={styles.debatable}>
         <strong>{item.title}</strong>{item.quote && <blockquote lang="en" className={styles.quote}>{item.quote}</blockquote>}
-        <p><span className="chip lime">За</span> {item.forSide}</p><p><span className="chip warning">Против</span> {item.againstSide}</p>
+        <p><strong className={styles.forSide}>За:</strong> {item.forSide}</p><p><strong className={styles.againstSide}>Против:</strong> {item.againstSide}</p>
         <p className={styles.verdict}>{item.verdict}</p>
       </div>)}
     </section>}
@@ -103,12 +107,12 @@ export function AnalysisWaiting() {
   const text = stage === 'queued' ? 'Разбор в очереди. Твои ответы сохранены.' : stage === 'evaluating' ? 'Сравниваю реплики и выбираю ближайшую правку.'
     : stage === 'waiting-retry' ? 'Сервис задержал разбор — попробую ещё раз сам.' : 'Проверяю смысл, английский и то, как ты использовал слова собеседника.';
   const started = Date.parse(s.processing?.startedAt || s.updatedAt);
-  return <section className={`glass ${styles.waiting}`} aria-labelledby="analysis-title">
+  return <section className={`surface ${styles.waiting}`} aria-labelledby="analysis-title">
     <div className={styles.waitingMascot}><Companion state="thinking" status="Готовлю разбор" /></div>
     <h2 id="analysis-title">Разбираю твою попытку</h2>
     <p aria-live="polite" className="muted">{text}</p>
     <ElapsedTime startedAt={Number.isFinite(started) ? started : null} className="caption" />
-    {!textActivity && lastPartner && <div className={`glass flat ${styles.recall}`}>
+    {!textActivity && lastPartner && <div className={styles.recall}>
       <strong>Пока ждём</strong><p className="caption">Что было важно собеседнику? Вспомни одну конкретную деталь.</p>
       <button type="button" className="button small secondary" onClick={() => setReveal(value => !value)}>{reveal ? 'Скрыть' : 'Проверить себя'}</button>
       {reveal && <p lang="en">{lastPartner.text}</p>}
@@ -123,16 +127,16 @@ function Outcome({ session }: { session: Session }) {
   const result = app.data.state?.progression?.recentResults.find(item => item.sessionId === session.id) ?? practiceResult(session);
   const fresh = app.lesson.lastCompletedId === session.id && !session.retryDeferred;
   const [celebrate] = useState(() => fresh ? 1 : 0);
-  return <section className={`glass ${styles.outcome}`} data-testid="session-outcome" aria-labelledby={`outcome-${session.id}`}>
+  return <section className={`surface ${styles.outcome}`} data-testid="session-outcome" aria-labelledby={`outcome-${session.id}`}>
     <div className={styles.outcomeMascot}><Companion emotion={fresh ? 'love' : 'proud'} celebrate={celebrate} celebrateEmotion="love" status="Занятие сохранено" /></div>
     <div className={styles.outcomeCopy}>
-      <span className="eyebrow">{session.retryDeferred ? 'Сохранено на потом' : 'Занятие завершено'}</span>
       <h2 id={`outcome-${session.id}`}>{session.retryDeferred ? 'Новую попытку сделаешь позже.' : result?.improvedRetry ? 'Твоя мысль стала сильнее.' : 'Ещё одна практика за плечами.'}</h2>
-      {result && <div className={styles.outcomeFacts}>
-        <span className="chip lime">+{result.xp} XP</span>
-        <span className="chip glassy">Навыков с наблюдениями: {Math.min(result.quality.observedTargets, result.quality.targetCount)} из {result.quality.targetCount}</span>
-        {result.quality.independentSuccesses > 0 && <span className="chip glassy">Самостоятельно: {result.quality.independentSuccesses}</span>}
-      </div>}
+      <p className={styles.outcomeFacts}>
+        <span>{session.retryDeferred ? 'Сохранено на потом' : 'Занятие завершено'}</span>
+        {result && <><span className={styles.xp}>+{result.xp} XP</span>
+          <span>Навыков с наблюдениями: {Math.min(result.quality.observedTargets, result.quality.targetCount)} из {result.quality.targetCount}</span>
+          {result.quality.independentSuccesses > 0 && <span>Самостоятельно: {result.quality.independentSuccesses}</span>}</>}
+      </p>
       <div className={styles.outcomeActions}>
         <button type="button" className="button primary" onClick={() => app.go('practice')}>Выбрать следующую практику<ArrowRightIcon size={17} /></button>
         <button type="button" className="text-button muted" onClick={() => app.go('today')}>На сегодня всё</button>
@@ -167,31 +171,31 @@ function TurnEditor({ session, turnId, original, onDone }: { session: Session; t
   </div>;
 }
 
+/** Review details as one surface with hairline-separated blocks (no card per block). */
 function Aside({ session }: { session: Session }) {
   const { lesson, data } = useApp();
   const a = session.analysis!;
   const [editing, setEditing] = useState<string | null>(null);
   const busy = !!lesson.busy || lesson.voice.state === 'listening' || lesson.voice.state === 'transcribing';
-  return <aside className={styles.aside} aria-label="Детали разбора">
-    <section className={`card solid ${styles.asideCard}`}><h3>Следующий шаг</h3><p>{a.nextFocus}</p><span className="caption">{shortDate(a.createdAt)}</span></section>
-    {a.evidence.length > 0 && <details className={`card solid ${styles.asideCard}`}><summary>Наблюдения по навыкам · {a.evidence.length}</summary>
+  const caret = <CaretRightIcon size={14} weight="bold" className={styles.caret} />;
+  return <aside className={`surface ${styles.aside}`} aria-label="Детали разбора">
+    <section className={styles.asideBlock}><h3>Над чем работать дальше</h3><p>{a.nextFocus}</p><span className="caption">{shortDate(a.createdAt)}</span></section>
+    {a.evidence.length > 0 && <details className={styles.asideBlock}><summary>Наблюдения по навыкам · {a.evidence.length}{caret}</summary>
       <ul className={styles.observations}>{a.evidence.map((item, index) => <li key={index}><strong>{skillLabel(item.skill)}</strong>
-        <span className={`chip ${item.result === 'success' ? 'lime' : item.result === 'difficulty' ? 'warning' : ''}`}>{item.result === 'success' ? 'Получилось' : item.result === 'partial' ? 'Частично' : item.result === 'difficulty' ? 'Есть трудность' : item.result === 'disputed' ? 'Спорно' : 'Не проверено'}</span>
+        <span className={styles.observation} data-result={item.result}>{item.result === 'success' ? 'Получилось' : item.result === 'partial' ? 'Частично' : item.result === 'difficulty' ? 'Есть трудность' : item.result === 'disputed' ? 'Спорно' : 'Не проверено'}</span>
         <p className="caption">{item.reason}</p></li>)}</ul></details>}
-    <details className={`card solid ${styles.asideCard}`}><summary>Ограничения оценки</summary>
+    <details className={styles.asideBlock}><summary>Ограничения оценки{caret}</summary>
       {a.limitations.map((value, index) => <p key={index} className="caption">{value}</p>)}
       <p className="caption">Произношение и акцент по тексту не оцениваются.</p>
       {!!a.dropped && <p className="caption">Неточных пунктов отброшено при проверке: {a.dropped}.</p>}
     </details>
-    <details className={`card solid ${styles.asideCard}`}><summary>{session.lesson.material ? 'Задание и ответы' : 'Исходный разговор'}</summary>
-      {session.lesson.material && <LessonMaterial material={session.lesson.material} />}
-      <ol className={styles.turns}>{session.turns.map(turn => <li key={turn.id} data-role={turn.role}>
-        <span className="eyebrow">{turn.role === 'user' ? 'Ты' : 'Собеседник'}{turn.disputed ? ' · исключено' : turn.transcriptEdited ? ' · исправлено' : ''}</span>
-        <p lang="en">{turn.text}</p>
+    <details className={styles.asideBlock}><summary>{session.lesson.material ? 'Задание и ответы' : 'Исходный разговор'}{caret}</summary>
+      {session.lesson.material && <LessonMaterial material={session.lesson.material} embedded />}
+      <Turns turns={session.turns} note={turn => turn.disputed ? ' · исключено' : turn.transcriptEdited ? ' · исправлено' : ''} extra={turn => <>
         {turn.audioFile && <audio controls preload="none" src={mediaUrl('audio/' + encodeURIComponent(turn.audioFile))} />}
         {turn.role === 'user' && editing !== turn.id && <button type="button" className="text-button" disabled={busy || !!editing || data.state === null} onClick={() => setEditing(turn.id)}><PencilSimpleIcon size={15} />Исправить расшифровку</button>}
         {editing === turn.id && <TurnEditor session={session} turnId={turn.id} original={turn.text} onDone={() => setEditing(null)} />}
-      </li>)}</ol>
+      </>} />
     </details>
   </aside>;
 }
@@ -221,6 +225,7 @@ export function ReviewView() {
   const emotion: MascotEmotion = hasImprovedRetry || s.status === 'completed' ? 'proud' : a.priorities.length ? 'curious' : 'happy';
   const headline = hasImprovedRetry ? 'Вот, уже сильнее.' : s.retryDeferred ? 'Осталась одна попытка.' : !a.priorities.length ? 'Разбор готов.' : textActivity ? 'Сделаем твой ответ сильнее.' : 'Сделаем одну реплику сильнее.';
   const doComplete = (defer: boolean) => void lesson.sessionAction('complete', { ...(lesson.comfort ? { comfort: lesson.comfort } : {}), ...(defer ? { deferRetry: true } : {}) });
+  const patternTitle = (id?: string | null) => id ? app.data.state?.patterns?.find(pattern => pattern.id === id)?.title : undefined;
 
   return <div className={styles.reviewLayout}>
     <FinishDialog intent={finishIntent} textActivity={textActivity} hasDraft={!!retryDraft?.text.trim()}
@@ -230,38 +235,48 @@ export function ReviewView() {
       onDiscardAndConfirm={() => { const intent = finishIntent; setFinishIntent(null); lesson.discardDraft(); doComplete(intent === 'defer'); }} />
     <div className={styles.reviewMain}>
       {s.status === 'completed' && <Outcome session={s} />}
-      <section className={`glass ${styles.intro}`} aria-labelledby="review-title">
+      <section className={`surface ${styles.intro}`} aria-labelledby="review-title">
         {/* A completed lesson already has its outcome card with the mascot: no second headline or mascot (audit U-30). */}
-        {s.status === 'completed' ? <h2 id="review-title" className="eyebrow">Разбор</h2> : <div className={styles.introHead}>
+        {s.status === 'completed' ? <h2 id="review-title" className={styles.blockTitle}>Разбор</h2> : <div className={styles.introHead}>
           <div className={styles.introMascot}><Companion emotion={emotion} celebrate={celebrate} celebrateEmotion="joy" confetti={false} status={hasImprovedRetry ? 'Улучшение подтверждено' : 'Разбор готов'} /></div>
-          <div><span className="eyebrow">{s.retryDeferred ? 'Попытка на потом' : hasImprovedRetry ? 'Есть улучшение' : 'Твой разбор'}</span><h2 id="review-title" className="title-28">{headline}</h2></div>
+          <h2 id="review-title" className="title-28">{headline}</h2>
         </div>}
-        {a.outcome && a.outcome.achieved !== 'n/a' && <div className={styles.outcomeLine} data-achieved={a.outcome.achieved}>
-          <span className={`chip ${a.outcome.achieved === 'yes' ? 'lime' : a.outcome.achieved === 'partly' ? 'violet' : 'warning'}`}>{OUTCOME_LABEL[a.outcome.achieved]}</span><span>{a.outcome.what}</span></div>}
+        {a.outcome && a.outcome.achieved !== 'n/a' && <p className={styles.outcomeLine} data-achieved={a.outcome.achieved}>
+          <span className={`chip ${a.outcome.achieved === 'yes' ? 'lime' : a.outcome.achieved === 'partly' ? 'violet' : 'warning'}`}>{OUTCOME_LABEL[a.outcome.achieved]}</span><span>{a.outcome.what}</span></p>}
         <p className={styles.summary}>{a.summary}</p>
         {a.strengths.length > 0 && <ul className={styles.strengths}>{a.strengths.map((value, index) => <li key={index}><CheckIcon size={16} weight="bold" />{value}</li>)}</ul>}
         <PatternHits analysis={a} />
       </section>
 
-      {a.priorities.map((priority, index) => <section key={index} className={`card solid reveal ${styles.priority}`} style={{ '--i': index } as CSSProperties}>
-        <div className={styles.priorityHead}><span className={styles.priorityNumber}>{index + 1}</span><span className="chip violet">{priority.type === 'language' ? 'Английский' : 'Разговор'}</span>
-          {priority.patternId && app.data.state?.patterns?.find(pattern => pattern.id === priority.patternId) && <span className="chip lime">Паттерн: {app.data.state.patterns.find(pattern => pattern.id === priority.patternId)!.title}</span>}</div>
-        <h3>{priority.title}</h3>
-        <blockquote lang="en" className={styles.quote}>{priority.quote}</blockquote>
-        <p>{priority.explanation}</p>
-        <details className={styles.example}><summary>Возможная формулировка</summary>
-          <div className={styles.exampleBody}><p lang="en">{priority.example}</p>
-            {audioReady && <button type="button" className="icon-button" onClick={() => void audio.play(`p${index}`, priority.example, message => lesson.setSessionError(message))} aria-label="Послушать формулировку">
-              {audio.state.key === `p${index}` ? audio.state.status === 'loading' ? <CircleNotchIcon size={18} className={styles.spin} /> : <SquareIcon size={15} weight="fill" /> : <SpeakerHighIcon size={18} weight="fill" />}</button>}</div>
-          <small>Один из вариантов. Свою попытку формулируй своими словами.</small></details>
-        <div className={styles.nextTry}><TargetIcon size={17} /><span><strong>Твоя следующая попытка:</strong> {priority.retryInstruction}</span></div>
-      </section>)}
+      {a.priorities.map((priority, index) => {
+        const pattern = patternTitle(priority.patternId);
+        return <section key={index} className={`surface ${styles.priority}`} aria-labelledby={`priority-${index}`}>
+          <div className={styles.priorityHead}>
+            <span className={styles.priorityNumber} aria-hidden="true">{index + 1}</span>
+            <div className={styles.priorityTitle}><h3 id={`priority-${index}`}>{priority.title}</h3>
+              <p className="caption">{priority.type === 'language' ? 'Английский' : 'Разговор'}{pattern ? ` · паттерн «${pattern}»` : ''}</p></div>
+          </div>
+          <blockquote lang="en" className={styles.quote}>{priority.quote}</blockquote>
+          <p>{priority.explanation}</p>
+          <details className={styles.example}><summary>Возможная формулировка<CaretRightIcon size={14} weight="bold" className={styles.caret} /></summary>
+            <div className={styles.exampleBody}><p lang="en">{priority.example}</p>
+              {audioReady && <button type="button" className="icon-button" onClick={() => void audio.play(`p${index}`, priority.example, message => lesson.setSessionError(message))} aria-label="Послушать формулировку">
+                {audio.state.key === `p${index}` ? audio.state.status === 'loading' ? <CircleNotchIcon size={18} className={styles.spin} /> : <SquareIcon size={15} weight="fill" /> : <SpeakerHighIcon size={18} weight="fill" />}</button>}</div>
+            <small>Один из вариантов. Свою попытку формулируй своими словами.</small></details>
+          <p className={styles.nextTry}><TargetIcon size={18} /><span><strong>Твоя следующая попытка:</strong> {priority.retryInstruction}</span></p>
+        </section>;
+      })}
 
       {s.retries.map((retry, index) => {
         const id = retry.id ?? String(index);
-        const pushbackOpen = retry.improved === true && retry.pushback;
-        return <section key={id} className={`card solid ${styles.retry}`} data-improved={retry.improved === true} data-glow={lesson.glowRetryId === id}>
-          <span className="eyebrow">Попытка {index + 1} · {retry.improved === true ? 'есть улучшение' : 'продолжаем'}</span>
+        const improved = retry.improved === true;
+        const pushbackOpen = improved && retry.pushback;
+        return <section key={id} className={`surface ${styles.retry}`} data-improved={improved} data-glow={lesson.glowRetryId === id} aria-labelledby={`retry-${id}`}>
+          <div className={styles.retryHead}>
+            {improved ? <CheckCircleIcon size={20} weight="fill" /> : <ArrowsClockwiseIcon size={19} />}
+            <h3 id={`retry-${id}`}>Попытка {index + 1}</h3>
+            <span className="caption">{improved ? 'есть улучшение' : 'пока без улучшения'}</span>
+          </div>
           <blockquote lang="en" className={styles.quote}>{retry.text}</blockquote>
           {retry.audioFile && <audio controls preload="none" src={mediaUrl('audio/' + encodeURIComponent(retry.audioFile))} />}
           <p className={styles.feedback}>{retry.feedback}</p>
@@ -269,18 +284,20 @@ export function ReviewView() {
         </section>;
       })}
 
-      {showDock && <section className={`glass flat ${styles.retryPrompt}`}>
-        <span className="eyebrow">{needsRetry ? 'Следующий шаг' : 'По желанию'}</span>
-        <h3>Теперь твоя версия</h3>
+      {showDock && <div className={styles.retryPrompt}>
+        <h3>Теперь твоя версия{needsRetry ? '' : <span> · по желанию</span>}</h3>
         <p className="caption">{textActivity ? 'Вырази мысль заново — сравню с исходной попыткой.' : 'Скажи важный момент своими словами — сравню с исходной попыткой.'}</p>
-      </section>}
+      </div>}
       <UnuploadedRecording />
 
-      {s.status === 'review' && <section className={`glass flat ${styles.finish}`} aria-label="Завершение">
+      {s.status === 'review' && <section className={`surface ${styles.finish}`} aria-label="Завершение">
         <div className={styles.comfort} role="radiogroup" aria-label="Как ощущалось занятие: от 1 (сложно) до 5 (комфортно)">
-          <span className="caption">Как ощущалось?</span>
-          {[1, 2, 3, 4, 5].map(value => <button key={value} type="button" role="radio" aria-checked={lesson.comfort === value} className={styles.comfortItem} onClick={() => lesson.setComfort(value)}>{value}</button>)}
-          <span className="caption">сложно → комфортно</span>
+          <span className={styles.comfortLabel} aria-hidden="true">Как ощущалось занятие?</span>
+          <div className={styles.comfortScale}>
+            <span className="caption" aria-hidden="true">сложно</span>
+            {[1, 2, 3, 4, 5].map(value => <button key={value} type="button" role="radio" aria-checked={lesson.comfort === value} className={styles.comfortItem} onClick={() => lesson.setComfort(value)}>{value}</button>)}
+            <span className="caption" aria-hidden="true">комфортно</span>
+          </div>
         </div>
         {completion.canComplete && <div className={styles.finishActions}>
           <button type="button" className="button primary large" data-testid="request-complete" disabled={!!blockedReason} onClick={() => setFinishIntent('complete')}>{CTA.complete}<CheckIcon size={18} /></button>
@@ -314,6 +331,7 @@ export function ErrorBanner() {
   if (s.status !== 'error') return null;
   const retryCount = s.retries.length;
   return <div className="banner error" role="alert">
+    <WarningCircleIcon size={18} weight="fill" />
     <span className="banner-copy">
       <strong>{s.analysis ? 'Пересчитать разбор не получилось' : 'Разбор не получился'}</strong>
       <span>{s.error || 'Ответы сохранены. Попробуй ещё раз.'}</span>
@@ -332,5 +350,5 @@ export function ProcessingNote() {
   const { lesson } = useApp();
   const s = lesson.session!;
   if (!lesson.busy || s.status === 'active') return null;
-  return <p className="caption" role="status"><CircleNotchIcon size={14} className={styles.spin} /> {lesson.busy}… <ElapsedTime startedAt={lesson.busySince} /></p>;
+  return <p className={`caption ${styles.processing}`} role="status"><CircleNotchIcon size={14} className={styles.spin} /> {lesson.busy}… <ElapsedTime startedAt={lesson.busySince} /></p>;
 }

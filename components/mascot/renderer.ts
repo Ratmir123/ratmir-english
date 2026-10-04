@@ -2,12 +2,14 @@
 // (MASCOT-SPEC §1–2). One quad, no textures. GLSL ES 1.0: constant loop bound, uniform array
 // indexed by the loop counter only.
 import { BODY_RADIUS, DARK, KERNEL_K, NODE_COUNT, SUPERELLIPSE_N } from '@/lib/mascot/constants';
+import { MASCOT_PALETTE, type GlassRGB, type MascotMaterial, type MascotPaletteSpec } from '@/lib/mascot/palette';
 
 const VERTEX = `attribute vec2 a_position; varying vec2 v_uv;
 void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }`;
 
 const f = (value: number) => value.toFixed(6);
-const FRAGMENT = `#ifdef GL_FRAGMENT_PRECISION_HIGH
+const v3 = (c: GlassRGB) => `vec3(${f(c[0])}, ${f(c[1])}, ${f(c[2])})`;
+const HEAD = `#ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
 #else
 precision mediump float;
@@ -52,22 +54,55 @@ void main() {
   vec2 refracted = b * (0.67 + z * 0.28) + normal.xy * 0.19;
   float flow = sin(refracted.x * 3.0 + refracted.y * 2.1 + u_time * 0.48);
   float pool = sin(refracted.y * 3.7 - refracted.x * 1.3 - u_time * 0.37);
-  vec3 tint = mix(vec3(0.24, 0.86, 0.96), vec3(0.42, 0.34, 0.94), smoothstep(-0.85, 0.9, flow + b.x * 0.35));
-  tint = mix(tint, vec3(0.83, 0.91, 0.99), smoothstep(0.32, 1.22, pool + b.y * 0.38) * 0.48);
-  tint = mix(tint, u_moodTint, u_moodAmount);
-  tint *= 1.0 + ${f(DARK.tint)} * u_dark;
-  float fresnel = pow(1.0 - z, 2.0);
   vec3 light = normalize(vec3(-0.52 + u_gaze.x * 0.15, -0.69 + u_gaze.y * 0.12, 0.7));
-  float specular = pow(max(0.0, dot(normal, light)), 25.0) * (1.0 + ${f(DARK.specular)} * u_dark);
-  vec3 reflection = mix(vec3(0.72, 0.92, 1.0), vec3(0.91, 0.86, 1.0), 0.5 + 0.5 * sin(u_time * 0.32 + b.y * 2.0));
+  float fresnel = pow(1.0 - z, 2.0);
   float edge = exp(-abs(dist - 0.969) * 108.0) * (1.0 + ${f(DARK.rim)} * u_dark);
   float upper = smoothstep(0.30, 0.95, -b.y - b.x * 0.35);
-  vec3 result = mix(tint * (0.70 + z * 0.28), reflection, fresnel * 0.47);
-  result += vec3(specular * 0.64 + upper * edge * 0.44);
-  result += vec3(0.18, 0.24, 0.32) * edge * smoothstep(-0.25, 0.7, b.x + b.y) * 0.55;
-  result += tint * clamp(u_energy, 0.0, 1.0) * 0.06; // live microphone glow (same term as LiquidCompanion.metal)
+`;
+// «Black opal» (lib/mascot/palette): thick dark glass with a deep core under the face, opal flecks and veins in the
+// outer body, light through coloured glass along the inner bottom, a crisp Fresnel rim, thin-film iridescence on the
+// edge and a crisp key specular. The mood tint shifts the core's hue at constant luminance (the face contrast never
+// drops) and shows at full strength in the rim. LiquidCompanion.metal is the same shader with the same constants.
+function materialFragment(m: MascotMaterial) {
+  const film = (w: string) => `(${v3(m.film[0])} * ${w}.x + ${v3(m.film[1])} * ${w}.y + ${v3(m.film[2])} * ${w}.z) / (${w}.x + ${w}.y + ${w}.z)`;
+  return `${HEAD}
+  vec3 body = mix(${v3(m.coreTop)}, ${v3(m.coreBottom)}, smoothstep(-1.0, 1.0, b.x * 0.45 + b.y * 0.85 + flow * ${f(m.coreFlow)}));
+  float mood = clamp(u_moodAmount, 0.0, 0.35);
+  vec3 luma = vec3(0.2126, 0.7152, 0.0722);
+  body = mix(body, u_moodTint * (dot(body, luma) / max(0.04, dot(u_moodTint, luma))), mood * ${f(m.moodCore)});
+  body *= ${f(m.shade)} + z * ${f(1 - m.shade)};
+  float facing = max(0.0, dot(normal, light));
+  float vein = (1.0 - smoothstep(0.0, 0.3, abs(sin(refracted.x * 4.6 - refracted.y * 2.7 + pool * 1.3 + u_time * 0.11)))) * smoothstep(0.1, 0.8, pool);
+  float speck = smoothstep(0.7, 0.97, sin(refracted.x * 9.0 + u_time * 0.07) * sin(refracted.y * 8.0 - u_time * 0.05 + flow));
+  float fleckMask = smoothstep(0.62, 0.76, dist) * (1.0 - smoothstep(0.9, 0.97, dist));
+  vec3 opalW = 0.5 + 0.5 * cos(6.2831853 * (refracted.x * 0.35 - refracted.y * 0.25 + flow * 0.2 + u_time * 0.02 + u_gaze.x * 0.15 - vec3(0.0, 0.333333, 0.666667)));
+  body = mix(body, ${film('opalW')}, clamp((vein * 0.45 + speck) * fleckMask * (0.35 + 0.65 * facing) * ${f(m.fleck)}, 0.0, 1.0));
+  float glow = exp(-b.x * b.x * 2.0) * smoothstep(0.45, 0.92, b.y) * (1.0 - smoothstep(0.94, 0.995, dist));
+  vec3 glowColor = mix(mix(${v3(m.glowOuter)}, ${v3(m.glowInner)}, smoothstep(0.35, 0.95, glow)), u_moodTint, clamp(mood * ${f(m.moodRim * 0.5)}, 0.0, 1.0));
+  body = mix(body, glowColor, glow * ${f(m.glowAmount)});
+  vec3 rim = mix(${v3(m.rim)}, u_moodTint, clamp(mood * ${f(m.moodRim)}, 0.0, 1.0));
+  body = mix(body, rim, pow(smoothstep(${f(m.rimStart)}, 0.99, dist), ${f(m.rimPower)}) * ${f(m.rimAmount)});
+  body *= 1.0 + ${f(DARK.tint)} * u_dark;
+  vec3 filmW = 0.5 + 0.5 * cos(6.2831853 * (fresnel * 1.4 + b.y * 0.3 - b.x * 0.2 + u_time * 0.05 + u_gaze.x * 0.2 - vec3(0.0, 0.333333, 0.666667)));
+  vec3 result = mix(body, ${film('filmW')}, clamp(fresnel * ${f(m.filmAmount)} * (1.0 + ${f(m.filmDark)} * u_dark), 0.0, 1.0));
+  result += ${v3(m.specular)} * (pow(facing, ${f(m.specularPower)}) * ${f(m.specularAmount)} * (1.0 + ${f(DARK.specular)} * u_dark) + pow(facing, 6.0) * ${f(m.bloom)});
+  result += ${v3(m.edgeLight)} * upper * edge;
+  result += ${v3(m.rimLight)} * edge * smoothstep(-0.25, 0.7, b.x + b.y);
+  result = mix(result, ${v3(m.outline)}, smoothstep(0.968, 1.0, dist) * ${f(m.outlineAmount)} * (1.0 - u_dark));
+  result += body * clamp(u_energy, 0.0, 1.0) * 0.06; // live microphone glow (same term as LiquidCompanion.metal)
   gl_FragColor = vec4(clamp(result, 0.0, 1.0) * alpha, alpha);
 }`;
+}
+const fragments = new WeakMap<MascotPaletteSpec, string>();
+/** Fragment shader source for a palette (built once per palette; exported for tests). */
+export function fragmentFor(palette: MascotPaletteSpec) {
+  let source = fragments.get(palette);
+  if (!source) {
+    source = palette.shaderTail !== undefined ? HEAD + palette.shaderTail : materialFragment(palette.material);
+    fragments.set(palette, source);
+  }
+  return source;
+}
 
 export interface MascotRenderInput {
   displacement: Float32Array;
@@ -87,7 +122,7 @@ export interface MascotRenderer {
   readonly canvas: HTMLCanvasElement;
 }
 
-export function createMascotRenderer(canvas: HTMLCanvasElement, maxDpr = 2): MascotRenderer | null {
+export function createMascotRenderer(canvas: HTMLCanvasElement, maxDpr = 2, palette: MascotPaletteSpec = MASCOT_PALETTE): MascotRenderer | null {
   let gl: WebGLRenderingContext | null = null;
   try {
     gl = canvas.getContext('webgl', { alpha: true, antialias: false, depth: false, stencil: false, premultipliedAlpha: true, powerPreference: 'low-power' });
@@ -116,7 +151,7 @@ export function createMascotRenderer(canvas: HTMLCanvasElement, maxDpr = 2): Mas
     program = context.createProgram();
     if (!program) throw new Error('No program');
     context.attachShader(program, compile(context.VERTEX_SHADER, VERTEX));
-    context.attachShader(program, compile(context.FRAGMENT_SHADER, FRAGMENT));
+    context.attachShader(program, compile(context.FRAGMENT_SHADER, fragmentFor(palette)));
     context.linkProgram(program);
     if (!context.getProgramParameter(program, context.LINK_STATUS)) throw new Error('Mascot shader unavailable');
     context.useProgram(program);
@@ -164,17 +199,19 @@ export function createMascotRenderer(canvas: HTMLCanvasElement, maxDpr = 2): Mas
 }
 
 /**
- * Still poses (thumbnails, Reduced Motion galleries) share ONE hidden WebGL context and are copied
+ * Still poses (thumbnails, Reduced Motion galleries) share ONE hidden WebGL context per palette and are copied
  * into each mascot's 2D canvas, so many static mascots never exhaust the browser's context limit.
  */
-let stillCanvas: HTMLCanvasElement | null = null;
-let stillRenderer: MascotRenderer | null | undefined;
-export function renderStill(target: HTMLCanvasElement, cssSize: number, input: MascotRenderInput, maxDpr = 2): boolean {
-  if (stillRenderer === undefined || (stillRenderer && (stillCanvas?.getContext('webgl')?.isContextLost() ?? true))) {
-    stillCanvas = document.createElement('canvas');
-    stillRenderer = createMascotRenderer(stillCanvas, maxDpr);
+const stills = new Map<MascotPaletteSpec, { canvas: HTMLCanvasElement; renderer: MascotRenderer | null }>();
+export function renderStill(target: HTMLCanvasElement, cssSize: number, input: MascotRenderInput, maxDpr = 2, palette: MascotPaletteSpec = MASCOT_PALETTE): boolean {
+  let still = stills.get(palette);
+  if (!still || (still.renderer && (still.canvas.getContext('webgl')?.isContextLost() ?? true))) {
+    const canvas = document.createElement('canvas');
+    still = { canvas, renderer: createMascotRenderer(canvas, maxDpr, palette) };
+    stills.set(palette, still);
   }
-  if (!stillRenderer || !stillCanvas) return false;
+  const { canvas: stillCanvas, renderer: stillRenderer } = still;
+  if (!stillRenderer) return false;
   const context = target.getContext('2d');
   if (!context) return false;
   stillRenderer.resize(cssSize);

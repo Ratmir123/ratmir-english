@@ -34,9 +34,10 @@ enum FeaturePalette {
     })
 }
 
+/// Same curves as `NativeMotion`: no overshoot on ordinary controls; `bouncy` only for reward moments.
 enum FeatureMotion {
-    static let press = Animation.spring(response: 0.22, dampingFraction: 0.7)
-    static let standard = Animation.spring(response: 0.38, dampingFraction: 0.82)
+    static let press = NativeMotion.press
+    static let standard = NativeMotion.standard
     static let bouncy = Animation.bouncy(duration: 0.5, extraBounce: 0.1)
     static let reveal = Animation.easeOut(duration: 0.32)
     static func stagger(_ index: Int) -> Animation { standard.delay(Double(min(max(index, 0), 6)) * 0.04) }
@@ -44,15 +45,21 @@ enum FeatureMotion {
 
 // MARK: - Materials
 
-/// Glass for floating chrome and interactive tiles — the shell's `LiquidChrome` (Liquid Glass on
-/// iOS 26+, material fallback earlier, solid with Reduce Transparency / Increase Contrast).
+/// Card surface of the feature screens. Content sits on the shell's solid `ContentSurface`
+/// (DESIGN-PASS 0.5.1); only floating chrome (`chrome: true`: toasts, pinned bars) uses the shell's
+/// `LiquidChrome` (Liquid Glass on iOS 26+, material fallback earlier, solid with Reduce Transparency).
 struct FeatureGlass: ViewModifier {
     var radius: CGFloat = 22
     var tint: Color? = nil
     var interactive = false
+    var chrome = false
 
-    func body(content: Content) -> some View {
-        content.modifier(LiquidChrome(radius: radius, tint: tint, interactive: interactive))
+    @ViewBuilder func body(content: Content) -> some View {
+        if chrome {
+            content.modifier(LiquidChrome(radius: radius, tint: tint, interactive: interactive))
+        } else {
+            content.contentSurface(radius: radius, tint: tint)
+        }
     }
 }
 
@@ -64,17 +71,13 @@ struct FeatureSurface: ViewModifier {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(FeaturePalette.solid, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(FeaturePalette.hairline, lineWidth: 1).allowsHitTesting(false)
-            }
+            .contentSurface(radius: radius)
     }
 }
 
 extension View {
-    func featureGlass(radius: CGFloat = 22, tint: Color? = nil, interactive: Bool = false) -> some View {
-        modifier(FeatureGlass(radius: radius, tint: tint, interactive: interactive))
+    func featureGlass(radius: CGFloat = 22, tint: Color? = nil, interactive: Bool = false, chrome: Bool = false) -> some View {
+        modifier(FeatureGlass(radius: radius, tint: tint, interactive: interactive, chrome: chrome))
     }
     func featureSurface(radius: CGFloat = 28, padding: CGFloat = 18) -> some View {
         modifier(FeatureSurface(radius: radius, padding: padding))
@@ -99,7 +102,7 @@ struct FeatureReveal: ViewModifier {
     }
 }
 
-/// The shell's ambient aurora (slow drift, static with Reduce Motion, solid with Reduce Transparency).
+/// The shell's quiet background (one tone with barely visible depth; solid with Reduce Transparency).
 struct FeatureBackdrop: View {
     var body: some View {
         AmbientBackdrop()
@@ -112,7 +115,7 @@ struct FeatureTileButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : FeatureMotion.press, value: configuration.isPressed)
     }
 }
@@ -143,7 +146,7 @@ struct FeatureSectionTitle: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                if let icon { Image(systemName: icon).foregroundStyle(FeaturePalette.violet) }
+                if let icon { Image(systemName: icon).foregroundStyle(Color.primary).accessibilityHidden(true) }
                 Text(title).font(.title3.weight(.semibold)).fontDesign(.rounded)
             }
             if let subtitle, !subtitle.isEmpty {
@@ -161,16 +164,19 @@ struct FeatureQuote: View {
     var timestamp: String? = nil
     var strike = false
     var body: some View {
+        // Web kit.quote: a sunken well with quote marks, no coloured side stripe.
         VStack(alignment: .leading, spacing: 4) {
-            Text("“" + text + "”").font(.subheadline).italic().strikethrough(strike, color: .secondary)
-                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            (Text("“").foregroundColor(.secondary) + Text(text) + Text("”").foregroundColor(.secondary))
+                .font(.subheadline).strikethrough(strike, color: .secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             if let timestamp {
-                Text(timestamp).font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+                Text(timestamp).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
         }
-        .padding(.leading, 12)
-        .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(FeaturePalette.lavender).frame(width: 3) }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Цитата: " + text + (timestamp.map { ", " + $0 } ?? ""))
     }
@@ -608,7 +614,8 @@ struct FeaturePlayButton: View {
                 }
             }
             .frame(width: 44, height: 44)
-            .featureGlass(radius: 22, tint: FeaturePalette.cyan.opacity(0.6), interactive: true)
+            .foregroundStyle(Theme.ink)
+            .background(FeaturePalette.cyan.opacity(0.32), in: Circle())
         }
         .buttonStyle(FeatureTileButtonStyle())
         .accessibilityLabel(isPlaying ? "Остановить" : label)

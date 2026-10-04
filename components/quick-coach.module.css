@@ -1,18 +1,18 @@
 .page { position: relative; z-index: 1; display: grid; gap: 14px; max-width: 680px; margin: 0 auto;
   padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
-.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.header h1 { margin-top: 4px; font-size: clamp(26px, 6vw, 32px); }
-.header :global(.eyebrow) { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-violet-ink); }
-.card { display: grid; gap: 10px; padding: 18px; border-radius: var(--radius-card); }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.header h1 { display: inline-flex; align-items: center; gap: 10px; min-width: 0; font-size: clamp(26px, 6vw, 32px); }
+.header h1 svg { flex-shrink: 0; color: var(--accent-violet-ink); }
+.card { display: grid; gap: 10px; padding: 20px; min-width: 0; }
 .labelRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .labelRow label { font-size: var(--text-15); color: var(--text-primary); }
 .card textarea { font-size: 16px; }
-.result { display: grid; gap: 10px; }
-.result h2 { font-size: 21px; }
-.result > p { white-space: pre-wrap; overflow-wrap: anywhere; }
-.examples { display: grid; gap: 12px; padding-top: 12px; border-top: 1px solid var(--surface-glass-hairline); }
+.resultHead { display: grid; gap: 2px; }
+.resultHead h2 { font-size: 21px; text-wrap: balance; }
+.explanation { white-space: pre-wrap; overflow-wrap: break-word; }
+.examples { display: grid; gap: 12px; padding-top: 12px; border-top: 1px solid var(--hairline); }
 .examples p { font-size: var(--text-17); }
-.feedback { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--surface-glass-hairline); }
+.feedback { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--hairline); }
 .feedback strong { display: flex; align-items: center; gap: 6px; }
 .better { padding: 10px 12px; border-radius: 14px; background: var(--accent-lime-soft); }
 .footer { display: grid; justify-items: center; gap: 4px; text-align: center; }
