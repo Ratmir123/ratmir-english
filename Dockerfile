@@ -35,6 +35,8 @@ COPY package.json tsconfig.json next.config.ts ./
 # dependency; no Codex binary, desktop token store or personal documents are copied.
 COPY lib ./lib
 COPY scripts/connect-chatgpt.ts ./scripts/connect-chatgpt.ts
+# Explicit call import (same leased queue as the server): node node_modules/tsx/dist/cli.mjs scripts/import-calls.ts --help
+COPY scripts/import-calls.ts ./scripts/import-calls.ts
 COPY scripts/host-server.mjs scripts/voice-relay.mjs ./scripts/
 COPY deploy/healthcheck.mjs ./deploy/healthcheck.mjs
 

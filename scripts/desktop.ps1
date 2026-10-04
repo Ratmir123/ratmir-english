@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 # Remove disables that launch; it does not uninstall or stop the local server.
 $projectPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $launcherPath = Join-Path $projectPath 'scripts\start.mjs'
-$installerPath = Join-Path $projectPath '.runtime\desktop-dist\Smooth English Setup.exe'
+$installerPath = Join-Path $projectPath '.runtime\desktop-dist\Smooth Talk Setup.exe'
 # NSIS oneClick per-user derives its directory from the desktop package name.
 $installDirectory = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\ratmir-english-desktop'
 $installedExe = Join-Path $installDirectory 'Ratmir English.exe'
@@ -245,7 +245,7 @@ try {
             Assert-DesktopNode $nodeInfo
             Assert-DesktopBuild
         }
-        if (-not (Test-DesktopExecutable $installerPath)) { throw 'Build the Windows desktop installer first; Smooth English Setup.exe is missing.' }
+        if (-not (Test-DesktopExecutable $installerPath)) { throw 'Build the Windows desktop installer first; Smooth Talk Setup.exe is missing.' }
         if ($PSCmdlet.ShouldProcess($installedExe, 'Install the per-user desktop application, configure it and enable current-user Startup')) {
             $installation = Start-Process -FilePath $installerPath -ArgumentList '/S' -WorkingDirectory $projectPath -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
             if ($installation.ExitCode -ne 0 -or -not (Test-DesktopExecutable $installedExe)) { throw 'The per-user desktop installer did not complete successfully.' }

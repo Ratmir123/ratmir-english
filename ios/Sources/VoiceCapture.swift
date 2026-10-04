@@ -240,7 +240,8 @@ struct LiveSpeechCredential: Decodable {
         guard buffers.isEmpty, nextSequence == expectedChunks, !failed else { close(); return nil }
         do { try await send(["type": "input_audio_buffer.commit"]) }
         catch { close(); return nil }
-        for _ in 0..<80 {
+        // At most ~2.5 s for the live final (C-08); the full recording is transcribed otherwise.
+        for _ in 0..<25 {
             if finalTranscript != nil || failed { break }
             try? await Task.sleep(for: .milliseconds(100))
         }

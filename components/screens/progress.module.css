@@ -1,0 +1,52 @@
+.top { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; align-items: stretch; }
+.card { display: grid; gap: 14px; padding: 22px; border-radius: var(--radius-card); align-content: start; }
+.card h2 { font-size: 20px; }
+.rankCard { grid-template-columns: auto 1fr; align-items: center; gap: 18px; }
+.level { display: grid; min-width: 0; }
+.level > * { height: 100%; }
+.rankCopy { display: grid; gap: 6px; min-width: 0; }
+.rankCopy h2 { font-size: 26px; }
+.panel { display: grid; gap: 16px; }
+.stack { display: grid; gap: 16px; }
+.totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.total { display: grid; gap: 2px; padding: 16px 18px; border-radius: var(--radius-tile); }
+.total strong { font-size: 30px; line-height: 1.1; }
+
+.skillList { list-style: none; display: grid; gap: 2px; }
+.skill { display: grid; gap: 6px; padding: 10px 2px; border-bottom: 1px solid var(--surface-glass-hairline); }
+.skill:last-child { border-bottom: 0; }
+.skillHead { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.skillCopy { display: grid; min-width: 0; }
+.skillCopy strong { font-weight: 650; }
+.steps { display: flex; gap: 5px; flex-shrink: 0; }
+.steps i { width: 22px; height: 8px; border-radius: 4px; background: var(--surface-sunken-2); transition: background-color 240ms var(--ease-out); }
+.steps i[data-lit='true'] { background: var(--accent-violet); }
+.steps i:nth-child(2)[data-lit='true'] { background: var(--accent-lime); box-shadow: var(--glow-lime); }
+.evidence summary { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; cursor: pointer; list-style: none; color: var(--accent-violet-ink); font-size: 13px; font-weight: 650; }
+.evidence summary::-webkit-details-marker { display: none; }
+.evidence[open] summary svg { transform: rotate(90deg); }
+.evidence ul { list-style: none; display: grid; gap: 10px; padding: 4px 0 6px; }
+.evidence li { display: grid; gap: 2px; padding: 10px 12px; border-radius: 14px; background: var(--surface-sunken); }
+.evidence q { font-size: 14px; }
+
+.historyTools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.search { position: relative; display: flex; align-items: center; flex: 1; min-width: 220px; color: var(--text-tertiary); }
+.search svg { position: absolute; left: 14px; pointer-events: none; }
+.search input { padding-left: 42px; border-radius: var(--radius-pill); }
+.history { list-style: none; display: grid; gap: 8px; }
+.history > li { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; border-radius: 20px; background: var(--surface-glass); box-shadow: inset 0 0 0 1px var(--surface-glass-hairline); }
+.historyOpen { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; min-height: 60px; padding: 8px 12px; border-radius: 16px; text-align: left; color: var(--text-secondary); }
+.historyOpen:hover { background: var(--surface-sunken); color: var(--text-primary); }
+.historyCopy { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.historyCopy strong { color: var(--text-primary); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.historyCopy small { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.confirm { display: flex; gap: 6px; flex-shrink: 0; }
+.empty { display: grid; gap: 8px; justify-items: start; padding: 22px; border-radius: var(--radius-card); }
+
+@media (max-width: 640px) {
+  .totals { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .total { padding: 12px; }
+  .total strong { font-size: 24px; }
+  .rankCard { gap: 12px; }
+  .card { padding: 18px; }
+}

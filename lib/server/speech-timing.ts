@@ -9,7 +9,7 @@ import { transcriptIntegrity } from './transcript-integrity';
 const SAMPLE_RATE = 16000;
 const FRAME_SAMPLES = 320;
 const MAX_OUTPUT_BYTES = SAMPLE_RATE * 2 * (MAX_TIMING_SECONDS + 1);
-const audioDir = resolve(process.cwd(), '.data/audio');
+const audioDir = process.env.TRAINING_DATA_DIR ? resolve(process.env.TRAINING_DATA_DIR, 'audio') : resolve(process.cwd(), '.data/audio');
 const validFile = (file: string) => file === basename(file) && /^[a-f0-9-]+\.(webm|mp4|ogg|wav|mp3)$/.test(file);
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 interface StoredTiming { version: 1; audioHash: string; timing?: SpeechTiming; transcript: string; transcriptSource: 'file' | 'live' }

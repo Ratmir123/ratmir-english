@@ -50,8 +50,8 @@ export function deriveOpeningGreeting(state: AppState, now = new Date(), timeZon
   const name = state.profile.name.trim();
   return {
     greeting: name && !['Ты', 'You', 'Learner'].includes(name) ? `Привет, ${name}.` : 'Привет.',
-    motivation: saved.resumable ? 'Разговор на месте. Давай дожмём мысль.'
-      : saved.completedToday ? 'Сегодня уже потренировался. Дальше в своём темпе.'
-        : 'Сначала одна мысль. Потом разговор пойдёт.',
+    motivation: saved.resumable ? 'Разговор ждёт — продолжим с того же места.'
+      : saved.completedToday ? 'Сегодня уже была практика. Дальше — в своём темпе.'
+        : 'Начнём с одного короткого шага.',
   };
 }

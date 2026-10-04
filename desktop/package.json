@@ -1,8 +1,8 @@
 {
   "name": "ratmir-english-desktop",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "private": true,
-  "description": "Desktop companion for personal English practice",
-  "author": "Smooth English",
+  "description": "Desktop companion for Smooth Talk: communication coaching practised in English",
+  "author": "Smooth Talk",
   "main": "main.cjs"
 }

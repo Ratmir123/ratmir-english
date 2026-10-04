@@ -6,7 +6,8 @@ import { addAudioUsage, getAppState } from './store';
 import { FILE_TRANSCRIPTION_MODEL, LIVE_TRANSCRIPTION_MODEL, MAX_RECORDING_MINUTES, TRANSCRIPTION_MINUTE_USD, LIVE_TRANSCRIPTION_MINUTE_USD, VERBATIM_TRANSCRIPTION_PROMPT, liveTranscriptionConfiguration } from './audio-transcription';
 import { bindRecordingTranscript, deleteRecordingTiming, measureSavedRecording } from './speech-timing';
 
-const dataDir = resolve(process.cwd(), '.data');
+// TRAINING_DATA_DIR isolates previews/tests from the real key and recordings (production leaves it unset).
+const dataDir = process.env.TRAINING_DATA_DIR ? resolve(process.env.TRAINING_DATA_DIR) : resolve(process.cwd(), '.data');
 const audioDir = join(dataDir, 'audio');
 const keyFile = join(dataDir, 'audio-key.json');
 function key() {
@@ -34,6 +35,10 @@ function clearExpiredLiveReservations() {
     audioGlobals.trainingLiveReservations!.delete(id);
   }
 }
+/** Server-side OpenAI audio key (env first, then the key saved from Settings). Never send it to clients. */
+export function openAiAudioKey(): string { return key(); }
+/** Reserve part of the monthly audio budget for an in-flight request. Call the returned release() in finally. */
+export function reserveAudioBudget(estimatedUsd: number): () => void { return reserveBudget(estimatedUsd); }
 function reserveBudget(reserve: number) {
   clearExpiredLiveReservations();
   const usage = getAppState().audioUsage;
@@ -152,21 +157,25 @@ export async function transcribe(file: File, minutes: number, live?: { text: str
   return { text: result.text.trim(), audioFile, model, transcriptSource: 'file', speechTiming: await timing(result.text.trim(), 'file') };
   } finally { releaseBudget(); }
 }
-export async function synthesize(text: string) {
+export async function synthesize(text: string, options: { voice?: string; instructions?: string } = {}) {
+  return saveAudio(await synthesizeSpeech(text, options), 'mp3');
+}
+
+/** TTS bytes (mp3) with an optional voice and delivery instruction; budget-checked and logged. */
+export async function synthesizeSpeech(text: string, options: { voice?: string; instructions?: string } = {}): Promise<Uint8Array> {
   if (!text.trim() || text.length > 4096) throw new ApiError('Реплика слишком длинная для озвучки.');
   const estimatedCost = text.length * 0.00003; // conservative estimate, clearly labelled in UI
   if (!audioConfigured()) throw new ApiError('Добавь OpenAI API-ключ в настройках, чтобы включить голос.', 412);
   const releaseBudget = reserveBudget(estimatedCost);
   try {
-  const response = await audioRequest('speech', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
-      voice: process.env.OPENAI_VOICE || 'marin', input: text, response_format: 'mp3',
-      instructions: 'Speak in natural conversational English. Clear, relaxed pace, adult conversation. Do not add words.' }),
-  });
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const file = saveAudio(bytes, 'mp3');
-  addAudioUsage('speech', text.length, estimatedCost);
-  return file;
+    const response = await audioRequest('speech', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
+        voice: options.voice || process.env.OPENAI_VOICE || 'marin', input: text, response_format: 'mp3',
+        instructions: options.instructions || 'Speak in natural conversational English. Clear, relaxed pace, adult conversation. Do not add words.' }),
+    });
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    addAudioUsage('speech', text.length, estimatedCost);
+    return bytes;
   } finally { releaseBudget(); }
 }

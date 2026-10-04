@@ -1,83 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import type { AppState, LessonPlan, Mode, Profile, Session } from '../types';
 import { deriveReviews, deriveSkillStates } from './adaptation';
 import { deriveProgression, nextRecommendedFamily } from '../progression';
-import { initialProfile } from './profile';
 import { baselineReportFingerprint, emptyOnboardingRecord, presentOnboarding, type OnboardingRecord } from './onboarding-data';
 import type { BaselineReport } from '../types';
 import { unassistedSpokenTurns } from '../onboarding';
+import { connection, transaction } from './db';
+import { clearPlacement, placementProgressionInputs, presentPlacement } from './placement/state';
+import { callProgressionInputs, clearCalls, listCallSummaries, listDrills, listPatterns, listProfileFacts } from './calls/state';
+import { APP_NAME, APP_VERSION } from '../app-info';
 
 const MAX_JOB_ATTEMPTS = 3;
 const JOB_LEASE_MS = 5 * 60_000;
 type JsonRow = { data: string };
 type JobRow = { session_id: string; attempts: number; token: string | null };
-type Connection = { db: DatabaseSync; claims: Map<string, string> };
-const connectionCache = globalThis as typeof globalThis & { __ratmirTrainingConnections?: Map<string, Connection> };
-
-function connection(): Connection {
-  const filename = resolve(/* turbopackIgnore: true */ process.env.TRAINING_DB_PATH || resolve(process.cwd(), '.data', 'training.sqlite'));
-  const cache = connectionCache.__ratmirTrainingConnections ??= new Map();
-  const existing = cache.get(filename);
-  if (existing) return existing;
-  mkdirSync(dirname(filename), { recursive: true });
-  const db = new DatabaseSync(filename);
-  db.exec(`
-    PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = 5000;
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, data TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-      status TEXT NOT NULL, data TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS analysis_jobs (
-      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-      state TEXT NOT NULL CHECK(state IN ('pending','running','completed','failed')),
-      attempts INTEGER NOT NULL DEFAULT 0,
-      available_at INTEGER NOT NULL,
-      lease_until INTEGER,
-      token TEXT,
-      last_error TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS analysis_jobs_ready ON analysis_jobs(state, available_at);
-    CREATE TABLE IF NOT EXISTS audio_usage (
-      id INTEGER PRIMARY KEY,
-      kind TEXT NOT NULL CHECK(kind IN ('transcription','speech')),
-      amount REAL NOT NULL CHECK(amount >= 0),
-      cost_usd REAL NOT NULL CHECK(cost_usd >= 0),
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS audio_usage_time ON audio_usage(created_at);
-    CREATE TABLE IF NOT EXISTS brain_activity (
-      id INTEGER PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('success','failed','limit')),
-      latency_ms INTEGER NOT NULL, retry_at TEXT, created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS brain_activity_time ON brain_activity(created_at);
-  `);
-  if (!db.prepare('SELECT 1 FROM settings WHERE key = ?').get('profile')) {
-    db.prepare('INSERT INTO settings(key,data) VALUES (?,?)').run('profile', JSON.stringify(initialProfile(dirname(filename))));
-  }
-  const value = { db, claims: new Map<string, string>() };
-  cache.set(filename, value);
-  return value;
-}
-
-function transaction<T>(db: DatabaseSync, operation: () => T): T {
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    db.exec('COMMIT');
-    return result;
-  } catch (error) {
-    db.exec('ROLLBACK');
-    throw error;
-  }
-}
 
 function readSession(db: DatabaseSync, id: string): Session | null {
   const row = db.prepare('SELECT data FROM sessions WHERE id = ?').get(id) as JsonRow | undefined;
@@ -249,17 +186,23 @@ export function deleteSession(id: string): void {
   claims.delete(id);
 }
 
-/** Training deletion keeps financial usage and profile: deleting history must not bypass the API budget. */
+/** Training deletion keeps financial usage and profile: deleting history must not bypass the API budget.
+ * It removes practice sessions, the legacy baseline, placement attempts, calls, patterns, drills and suggested facts. */
 export function deleteAllTraining(): void {
   const { db, claims } = connection();
   transaction(db, () => {
     const nextGeneration = readLearningGeneration(db) + 1;
     db.exec("DELETE FROM sessions; DELETE FROM settings WHERE key='onboarding';");
+    clearPlacement(db);
+    clearCalls(db);
     db.prepare('INSERT INTO settings(key,data) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data')
       .run('learning-generation', JSON.stringify(nextGeneration));
   });
   claims.clear();
 }
+
+/** Shared database handle for feature modules (placement, calls). */
+export function trainingDatabase(): DatabaseSync { return connection().db; }
 
 export function enqueueAnalysis(id: string): void {
   const { db } = connection();
@@ -392,10 +335,20 @@ export function getAppState(): AppState {
       .filter((row) => moscowMonth(new Date(row.created_at)) === month);
     const completed = sessions.filter((session) => session.status === 'completed' && session.turns.some((turn) => turn.role === 'user' && turn.text.trim()));
     const onboarding = presentOnboarding(readOnboardingRecord(db), sessions, profile);
-    const progression = deriveProgression(sessions);
+    // Placement sections/results and reviewed real calls also earn XP and unlock real-world achievements.
+    const placementInputs = placementProgressionInputs(db);
+    const callInputs = callProgressionInputs(db, sessions);
+    const progression = deriveProgression(sessions, Date.now(), { placementSections: placementInputs.sections,
+      placementResults: placementInputs.results, calls: callInputs.calls, patternImprovements: callInputs.patternImprovements });
     const state: AppState = {
+      app: { name: APP_NAME, version: APP_VERSION },
       profile, sessions, skills: deriveSkillStates(sessions), reviews: deriveReviews(sessions), xp: progression.xp, progression,
       onboarding,
+      placement: presentPlacement(db),
+      calls: listCallSummaries(db),
+      patterns: listPatterns(db, sessions),
+      drills: listDrills(db, sessions),
+      profileFacts: listProfileFacts(db),
       completed: progression.completedPractice,
       calibrationCompleted: onboarding.introCompletedAt ? onboarding.completedStages
         : completed.filter((session) => session.lesson.kind === 'calibration').length,

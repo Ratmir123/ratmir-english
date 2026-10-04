@@ -1,0 +1,22 @@
+.xp {
+  position: fixed; left: 0; top: 0; z-index: 70; pointer-events: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-radius: var(--radius-pill); background: var(--accent-lime); color: var(--on-lime);
+  font-family: var(--font-display); font-size: 17px; font-weight: 900; box-shadow: 0 10px 28px -8px rgb(130 160 20 / .6), var(--glow-lime);
+  will-change: transform, opacity;
+}
+.level { margin-left: 4px; padding: 2px 8px; border-radius: var(--radius-pill); background: rgb(32 37 10 / .12); font-size: 12px; font-weight: 800; }
+.achievement {
+  position: fixed; z-index: 65; top: calc(16px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; width: min(480px, calc(100vw - 24px)); padding: 12px 14px; border-radius: 26px;
+  --glass-fill: var(--surface-glass-strong);
+  animation: drop-in var(--spring-bouncy-ms) var(--spring-bouncy) both;
+}
+.achievementMedal { flex-shrink: 0; }
+.achievementCopy { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.achievementCopy strong { font-family: var(--font-display); font-size: 17px; font-weight: 850; }
+.achievementCopy small { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@keyframes drop-in { from { opacity: 0; transform: translate(-50%, -24px) scale(.94); } }
+.rankSheet { text-align: center; }
+.rankStage { position: relative; display: grid; place-items: center; min-height: 200px; }
+.rankMascot { position: absolute; right: 4%; bottom: -6px; width: 84px; height: 84px; }
+@media (prefers-reduced-motion: reduce) { .achievement { animation: none; } }

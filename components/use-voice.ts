@@ -15,6 +15,8 @@ type RetryAction =
   | { kind: 'played'; sessionId: string; turnId: string };
 type ActiveCapture = { capture: BrowserVoiceCapture; live: BrowserLiveTranscriber; contextKey?: string; credential?: LiveCredential; operation: number; ending: boolean };
 
+// Playback elements already routed through an analyser (Web Audio allows one source node per element).
+const meteredElements = new WeakSet<HTMLMediaElement>();
 const RETRY_LABELS: Record<RetryAction['kind'], string> = {
   transcribe: 'Повторить распознавание записи', send: 'Вернуть текст записи',
   speech: 'Повторить озвучку', played: 'Подтвердить прослушивание',
@@ -42,6 +44,8 @@ export function useVoice(onText: (text: string, audioFile: string, draft: Record
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [autoplayMessage, setAutoplayMessage] = useState<string | null>(null);
   const meter = useRef(createVoiceMeter());
+  // Partner playback amplitude for the mascot's lip-sync: clamp(rms·4, 0, 1) every frame (MASCOT-SPEC §7).
+  const speechMeter = useRef(createVoiceMeter());
   const mounted = useRef(true); const stateRef = useRef<VoiceState>('idle');
   const operation = useRef(0); const cancelled = useRef(false);
   const requests = useRef(new Set<AbortController>()); const retryAction = useRef<RetryAction | null>(null);
@@ -64,7 +68,7 @@ export function useVoice(onText: (text: string, audioFile: string, draft: Record
     cancelAnimationFrame(frame.current); frame.current = 0;
     const context = playbackContext.current; playbackContext.current = null;
     if (context && context.state !== 'closed') void context.close().catch(() => undefined);
-    meter.current.setLevel(0);
+    meter.current.setLevel(0); speechMeter.current.setLevel(0);
   }, []);
   const discardPlayback = useCallback(() => {
     const audio = playback.current; playback.current = null; clearPlaybackMeter();
@@ -91,6 +95,9 @@ export function useVoice(onText: (text: string, audioFile: string, draft: Record
     if (mounted.current) setHasUnuploadedRecording(true);
   }
   const stop = useCallback(() => {
+    // 'paused' only when something was actually interrupted; a plain navigation stop stays calm ('idle').
+    const interrupted = !!activeCapture.current || !!playback.current || requests.current.size > 0 || captureFinishing.current
+      || ['listening', 'transcribing', 'thinking', 'speaking'].includes(stateRef.current);
     cancelled.current = true; operation.current += 1; abortRequests(); discardPlayback();
     const active = activeCapture.current; activeCapture.current = null;
     if (active) {
@@ -108,7 +115,7 @@ export function useVoice(onText: (text: string, audioFile: string, draft: Record
         if (mounted.current) latestError.current('Запись остановилась с ошибкой. Уже записанную часть не удалось открыть.');
       }).finally(() => { captureFinishing.current = false; meter.current.setLevel(0); });
     } else { releaseMic(); if (pendingRecording.current) rememberRetry({ kind: 'transcribe', recording: pendingRecording.current }); }
-    setState('paused');
+    setState(interrupted ? 'paused' : 'idle');
   }, [abortRequests, discardPlayback, releaseMic, setState]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; stop(); releaseObjectURL(); }; }, [stop]);
 
@@ -219,20 +226,23 @@ export function useVoice(onText: (text: string, audioFile: string, draft: Record
 
   async function attachPlaybackMeter(audio: HTMLAudioElement, ticket: number) {
     const Constructor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Constructor) return;
+    if (!Constructor || meteredElements.has(audio)) return;
     let context: AudioContext | null = null;
     try {
       context = new Constructor(); await context.resume();
-      if (!isCurrent(ticket) || playback.current !== audio || context.state !== 'running') { await context.close(); return; }
+      if (!isCurrent(ticket) || playback.current !== audio || context.state !== 'running' || meteredElements.has(audio)) { await context.close(); return; }
       playbackContext.current = context;
       const analyser = context.createAnalyser(); analyser.fftSize = 512;
-      const source = context.createMediaElementSource(audio); source.connect(analyser); analyser.connect(context.destination);
+      // ONE MediaElementAudioSourceNode per playback element (a second one would throw).
+      const source = context.createMediaElementSource(audio); meteredElements.add(audio); source.connect(analyser); analyser.connect(context.destination);
       const samples = new Uint8Array(analyser.fftSize); let lastRead = -Infinity;
       const monitor = (now: number) => {
         if (!isCurrent(ticket) || playback.current !== audio) return;
+        analyser.getByteTimeDomainData(samples);
+        const rms = Math.sqrt(samples.reduce((sum, value) => sum + ((value - 128) / 128) ** 2, 0) / samples.length);
+        speechMeter.current.setLevel(rms * 4); // every frame for crisp lip-sync; the store clamps to 0–1
         if (now - lastRead >= 40) {
-          lastRead = now; analyser.getByteTimeDomainData(samples);
-          const rms = Math.sqrt(samples.reduce((sum, value) => sum + ((value - 128) / 128) ** 2, 0) / samples.length);
+          lastRead = now;
           meter.current.setLevel(rms > 0 ? (20 * Math.log10(rms) + 55) / 55 : 0);
         }
         frame.current = requestAnimationFrame(monitor);
@@ -309,7 +319,7 @@ export function useVoice(onText: (text: string, audioFile: string, draft: Record
     else await confirmPlayed(action, ticket);
   }
 
-  return { state, get volume() { return meter.current.getSnapshot(); }, meterStore: meter.current,
+  return { state, get volume() { return meter.current.getSnapshot(); }, meterStore: meter.current, speechLevelStore: speechMeter.current,
     record, speak, stop, setState, retry, liveTranscript, liveTranscriptStatus, recordingDraft, hasUnuploadedRecording,
     playingLearnerRecording, autoplayBlocked, autoplayMessage, playRecording, discardRecording, markSubmitted,
     canRetry: retryKind !== null, retryLabel: retryKind ? RETRY_LABELS[retryKind] : null };

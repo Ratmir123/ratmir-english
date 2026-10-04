@@ -66,10 +66,11 @@ export function subscriptionPercentLabel(value: number): string {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(value);
 }
 
-function moscowDate(value: number): string {
+/** One time zone for the whole client: the device's own (audit U-25). Tests pass an explicit zone. */
+function localDate(value: number, timeZone?: string): string {
   return new Intl.DateTimeFormat('ru-RU', {
-    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow',
-  }).format(new Date(value)) + ' МСК';
+    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', ...(timeZone ? { timeZone } : {}),
+  }).format(new Date(value));
 }
 
 function relativeReset(resetsAt: number, now: number): string {
@@ -104,7 +105,7 @@ function sameWindow(left: SubscriptionWindow, right: SubscriptionWindow): boolea
 }
 
 /** Keeps historical values visibly historical. A passed reset never invents a renewed allowance. */
-export function subscriptionView(usage: SubscriptionUsage | null, now = Date.now()): SubscriptionView {
+export function subscriptionView(usage: SubscriptionUsage | null, now = Date.now(), timeZone?: string): SubscriptionView {
   const checked = timestamp(usage?.checkedAt);
   const baseFresh = !!usage?.available && !usage.stale && !usage.error && checked !== null
     && checked <= now + MAX_CLOCK_SKEW_MS && now - checked <= MAX_SNAPSHOT_AGE_MS;
@@ -140,7 +141,7 @@ export function subscriptionView(usage: SubscriptionUsage | null, now = Date.now
       fresh, low: fresh && remaining !== null && remaining <= 20,
       exhausted: fresh && remaining === 0,
       resetAt: reset === null ? null : new Date(reset).toISOString(),
-      resetLabel: reset === null ? null : moscowDate(reset),
+      resetLabel: reset === null ? null : localDate(reset, timeZone),
       resetRelative: reset === null ? null : relativeReset(reset, now),
       resetExpired, duplicateConflict: conflict,
     };
@@ -154,7 +155,7 @@ export function subscriptionView(usage: SubscriptionUsage | null, now = Date.now
   else if (available && !fresh) notice = 'Это данные прошлой проверки. Обнови их перед занятием.';
   return {
     available, fresh, checkedAt: checked === null ? null : new Date(checked).toISOString(),
-    checkedLabel: checked === null ? null : moscowDate(checked), planLabel: planLabel(usage?.plan),
+    checkedLabel: checked === null ? null : localDate(checked, timeZone), planLabel: planLabel(usage?.plan),
     scopeLabel, notice, unavailableText, windows,
   };
 }

@@ -2,6 +2,7 @@ name: iPhone IPA
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths: ['ios/**', '.github/workflows/ios.yml']
 permissions:
   contents: read
@@ -56,14 +57,14 @@ jobs:
           xcrun simctl launch "$device" app.ratmirenglish.personal
           sleep 3
           xcrun simctl io "$device" screenshot iPhone11-login.png
-          for screen in intro baseline baseline-report home practice dictation-preview listening analysing review preview-timing celebrate completed saved-deferred progress curriculum achievements ranks ranks-bottom history reminder-editor reminder-denied ielts-track ielts-reading ielts-writing settings; do
+          for screen in today today-plan pending-recording placement placement-intro placement-listening placement-reading placement-break placement-speaking placement-roleplay placement-scoring placement-result practice-catalog practice-detail conversation listening dictation-preview analysing analysis-error review review-retry pushback celebrate completed rank-up saved-deferred preview-timing ielts-reading ielts-writing calls call-review call-transcript call-speakers patterns facts progress skills history achievements ranks ranks-bottom profile reminder-editor reminder-denied; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3
             xcrun simctl io "$device" screenshot "iPhone11-$screen.png"
           done
           xcrun simctl ui "$device" appearance dark
-          for screen in home practice dictation-preview review achievements ranks history settings; do
+          for screen in today practice-catalog conversation dictation-preview review pushback calls call-review placement-result progress achievements history profile; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3
@@ -83,7 +84,7 @@ jobs:
           done
           xcrun simctl ui "$device" appearance light
           xcrun simctl terminate "$device" app.ratmirenglish.personal || true
-          xcrun simctl launch "$device" app.ratmirenglish.personal --preview=practice
+          xcrun simctl launch "$device" app.ratmirenglish.personal --preview=conversation
           xcrun simctl io "$device" recordVideo --codec=h264 iPhone11-companion-motion.mp4 &
           recorder=$!
           sleep 8
@@ -96,7 +97,7 @@ jobs:
           sleep 8
           kill -INT "$recorder"
           wait "$recorder" || true
-          # Capture the complete longer greeting, soft handoff and Home cascade.
+          # Capture the complete greeting, soft handoff and Today cascade.
           xcrun simctl terminate "$device" app.ratmirenglish.personal || true
           xcrun simctl io "$device" recordVideo --codec=h264 iPhone11-opening-motion.mp4 &
           recorder=$!
@@ -106,24 +107,12 @@ jobs:
           kill -INT "$recorder"
           wait "$recorder" || true
           xcrun simctl io "$device" screenshot iPhone11-opening.png
-          for appearance in light dark; do
-            xcrun simctl ui "$device" appearance "$appearance"
+          for screen in achievements ranks completed rank-up; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
-            xcrun simctl io "$device" recordVideo --codec=h264 "iPhone11-selector-$appearance-motion.mp4" &
-            recorder=$!
-            sleep 0.2
-            xcrun simctl launch "$device" app.ratmirenglish.personal --preview=selector-rapid
-            sleep 5
-            kill -INT "$recorder"
-            wait "$recorder" || true
-            xcrun simctl io "$device" screenshot "iPhone11-selector-rapid-$appearance.png"
-          done
-          xcrun simctl ui "$device" appearance light
-          for screen in achievements ranks; do
-            xcrun simctl terminate "$device" app.ratmirenglish.personal || true
-            xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             xcrun simctl io "$device" recordVideo --codec=h264 "iPhone11-$screen-motion.mp4" &
             recorder=$!
+            sleep 0.2
+            xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 6
             kill -INT "$recorder"
             wait "$recorder" || true
@@ -137,16 +126,16 @@ jobs:
           python3 - <<'PY'
           import json
           summary = json.load(open('native-tests-summary.json'))
-          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 39, summary
-          assert type(summary['passedTests']) is int and summary['passedTests'] == 39, summary
+          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 58, summary
+          assert type(summary['passedTests']) is int and summary['passedTests'] == 58, summary
           assert summary['failedTests'] == 0 and summary['skippedTests'] == 0, summary
           assert not summary['testFailures'] and summary.get('expectedFailures', 0) == 0, summary
-          print('Verified native tests: 39 passed, none failed or skipped')
+          print('Verified native tests: 58 passed, none failed or skipped')
           PY
-          for screen in achievements ranks ranks-bottom reminder-editor completed review preview-timing dictation-preview selector-rapid; do
+          for screen in today achievements ranks-bottom reminder-editor review preview-timing dictation-preview conversation practice-detail; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen" --large-type
-            if [ "$screen" = "selector-rapid" ]; then sleep 5; else sleep 3; fi
+            sleep 3
             xcrun simctl io "$device" screenshot "iPhone11-$screen-large.png"
           done
       - name: Verify preview capture inventory
@@ -155,10 +144,10 @@ jobs:
           from pathlib import Path
           images = list(Path('.').glob('iPhone11-*.png'))
           movies = list(Path('.').glob('iPhone11-*-motion.mp4'))
-          assert len(images) == 48, [p.name for p in images]
+          assert len(images) == 70, [p.name for p in images]
           assert len(movies) == 9, [p.name for p in movies]
           assert all(p.stat().st_size > 1024 for p in images + movies), 'A preview capture is empty or incomplete'
-          print('Verified previews: 48 PNG screenshots and 9 motion recordings')
+          print('Verified previews: 70 PNG screenshots and 9 motion recordings')
           PY
       - uses: actions/upload-artifact@v4
         if: always()

@@ -1,10 +1,17 @@
 import SwiftUI
 
 enum VoiceOrbMode { case ready, listening, speaking, thinking }
-enum VoiceOrbMood { case calm, attentive, curious, friendly, pleased, supportive }
 
-/// A launch-only body pose. Its floor remains anchored in CompanionStage, and
-/// ordinary conversation callers retain the neutral pose without extra work.
+/// Legacy moods (calm…supportive) keep working; the rest are the shared spec emotions.
+/// attentive → listening face, friendly → happy, pleased → proud, supportive → sad.
+enum VoiceOrbMood: CaseIterable {
+    case calm, attentive, curious, friendly, pleased, supportive
+    case happy, joy, laugh, excited, love, proud, surprised, thinking, listening, speaking
+    case sad, sleepy, dizzy, shy, annoyed, determined, wink, squeeze
+}
+
+/// A launch-only body pose. Its floor remains anchored, and ordinary conversation
+/// callers retain the neutral pose. Applied as spring targets of the jelly body.
 struct VoiceOrbGreetingPose: Equatable {
     let scaleX: Double
     let scaleY: Double
@@ -16,230 +23,306 @@ struct VoiceOrbGreetingPose: Equatable {
     static let landing = VoiceOrbGreetingPose(scaleX: 1.04, scaleY: 0.965, lift: 0.012, tilt: -1.2)
 }
 
-/// Actual audio updates invalidate this leaf, never the transcript or composer.
+/// Reads the meter once per animation frame instead of observing it, so audio updates
+/// never re-render the transcript, the composer or even this wrapper.
+/// While `mode == .speaking` the meter (TTS playback level) drives lip-sync;
+/// while `mode == .listening` it drives the microphone pulse.
 struct MeasuredVoiceOrb: View {
-    @ObservedObject var meter: VoiceMeter
+    let meter: VoiceMeter
     let mode: VoiceOrbMode
     var mood: VoiceOrbMood? = nil
     var statusDescription: String? = nil
-    var body: some View { VoiceOrb(mode: mode, level: meter.level, mood: mood, statusDescription: statusDescription) }
+    var speechLevel: Double = 0
+    var celebrate: Int = 0
+    var interactive: Bool = true
+
+    init(meter: VoiceMeter, mode: VoiceOrbMode, mood: VoiceOrbMood? = nil, statusDescription: String? = nil,
+         speechLevel: Double = 0, celebrate: Int = 0, interactive: Bool = true) {
+        self.meter = meter
+        self.mode = mode
+        self.mood = mood
+        self.statusDescription = statusDescription
+        self.speechLevel = speechLevel
+        self.celebrate = celebrate
+        self.interactive = interactive
+    }
+
+    var body: some View {
+        MascotView(mode: mode, level: 0, mood: mood, statusDescription: statusDescription, greetingPose: .neutral,
+                   speechLevel: speechLevel, celebrate: celebrate, interactive: interactive, meter: meter)
+    }
 }
 
-/// A breathing glass lens, with one geometrically morphing shape for each eye.
+/// Compatibility entry point used across the app. `level` is the meter value (0–1):
+/// microphone level while listening, playback level while speaking.
 struct VoiceOrb: View {
     let mode: VoiceOrbMode
     let level: Double
     var mood: VoiceOrbMood? = nil
     var statusDescription: String? = nil
     var greetingPose: VoiceOrbGreetingPose = .neutral
-    @State private var winking = false
-    @State private var interaction = 0
+    var speechLevel: Double = 0
+    var celebrate: Int = 0
+    var interactive: Bool = true
+
+    init(mode: VoiceOrbMode, level: Double, mood: VoiceOrbMood? = nil, statusDescription: String? = nil,
+         greetingPose: VoiceOrbGreetingPose = .neutral, speechLevel: Double = 0, celebrate: Int = 0,
+         interactive: Bool = true) {
+        self.mode = mode
+        self.level = level
+        self.mood = mood
+        self.statusDescription = statusDescription
+        self.greetingPose = greetingPose
+        self.speechLevel = speechLevel
+        self.celebrate = celebrate
+        self.interactive = interactive
+    }
+
+    var body: some View {
+        MascotView(mode: mode, level: level, mood: mood, statusDescription: statusDescription, greetingPose: greetingPose,
+                   speechLevel: speechLevel, celebrate: celebrate, interactive: interactive, meter: nil)
+    }
+}
+
+/// The jelly mascot: Metal glass body on a 32-node ring, morphing face, small mouth with
+/// lip-sync, gestures, idle life and haptics (planning/v05/MASCOT-SPEC.md).
+/// - `speechLevel`: optional 0–1 voice level for lip-sync (already mapped). When 0 and
+///   `mode == .speaking`, the playback meter (`meter` or `level`) is used instead.
+/// - `celebrate`: increment to play `joy` with a success haptic (overlay `MascotConfetti`
+///   with the same counter for confetti).
+/// - `interactive`: false disables touch (VoiceOver activation still reacts).
+struct MascotView: View {
+    let mode: VoiceOrbMode
+    let level: Double
+    let mood: VoiceOrbMood?
+    let statusDescription: String?
+    let greetingPose: VoiceOrbGreetingPose
+    let speechLevel: Double
+    let celebrate: Int
+    let interactive: Bool
+    let meter: VoiceMeter?
+
+    @State private var engine = MascotEngineBox()
     @State private var isVisible = false
-    @State private var phaseOrigin = Date()
-    @GestureState private var touchOffset = CGSize.zero
+    @State private var onScreen = true
+    @State private var pressTick = 0
+    @State private var releaseTick = 0
+    @State private var successTick = 0
+    @State private var staticReaction: MascotEmotion? = nil
+    @State private var staticReactionTick = 0
+    @State private var staticCycle = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    private var animated: Bool { !reduceMotion && isVisible && scenePhase == .active }
-    private var measuredEnergy: Double {
-        guard (mode == .listening || mode == .speaking), level.isFinite else { return 0 }
-        return min(1, max(0, level))
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(mode: VoiceOrbMode, level: Double = 0, mood: VoiceOrbMood? = nil, statusDescription: String? = nil,
+         greetingPose: VoiceOrbGreetingPose = .neutral, speechLevel: Double = 0, celebrate: Int = 0,
+         interactive: Bool = true, meter: VoiceMeter? = nil) {
+        self.mode = mode
+        self.level = level
+        self.mood = mood
+        self.statusDescription = statusDescription
+        self.greetingPose = greetingPose
+        self.speechLevel = speechLevel
+        self.celebrate = celebrate
+        self.interactive = interactive
+        self.meter = meter
     }
-    private var expression: VoiceOrbMood {
-        if let mood { return mood }
-        switch mode { case .ready: return .calm; case .listening: return .attentive; case .speaking: return .friendly; case .thinking: return .curious }
-    }
+
     var body: some View {
-        Button(action: reactToTouch) {
-            CompanionStage(mode: mode, energy: measuredEnergy, expression: expression,
-                           winking: winking, interaction: interaction, touchOffset: touchOffset,
-                           animated: animated, phaseOrigin: phaseOrigin, greetingPose: greetingPose)
+        GeometryReader { proxy in
+            stage(size: proxy.size)
         }
-            .buttonStyle(CompanionPressStyle(reduceMotion: reduceMotion))
-            .contentShape(Circle())
-            .simultaneousGesture(orbTouch)
-            .accessibilityLabel("Твой собеседник")
-            .accessibilityValue(accessibilityText)
-            .accessibilityHint("Коснись, чтобы поздороваться. Можно слегка потянуть в сторону.")
-            .sensoryFeedback(.selection, trigger: interaction)
-            .onAppear { isVisible = true; phaseOrigin = Date() }
-            .onDisappear { isVisible = false; winking = false }
-            .task(id: interaction) {
-                guard interaction > 0 else { return }
-                do { try await Task.sleep(for: .milliseconds(740)) } catch { return }
-                winking = false
-            }
+        .modifier(MascotScrollVisibility(onScreen: $onScreen))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Твой собеседник")
+        .accessibilityValue(accessibilityStatus)
+        .accessibilityHint(accessibilityHintText)
+        .accessibilityAddTraits(accessibilityTraits)
+        .accessibilityAction(.default) { activateFromAccessibility() }
+        .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.8), trigger: pressTick)
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: releaseTick)
+        .sensoryFeedback(.success, trigger: successTick)
+        .sensoryFeedback(trigger: celebrate) { oldValue, newValue in
+            newValue > oldValue ? .success : nil
+        }
+        .onAppear { appear() }
+        .onDisappear { disappear() }
+        .task(id: staticReactionTick) {
+            guard staticReactionTick > 0 else { return }
+            do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }
+            staticReaction = nil
+        }
     }
-    private var orbTouch: some Gesture {
-        DragGesture(minimumDistance: 10)
-            .updating($touchOffset) { value, offset, _ in
-                // Horizontal play leaves the surrounding vertical scroll free.
-                guard !reduceMotion, abs(value.translation.width) > abs(value.translation.height) * 1.2 else { return }
-                offset = CGSize(width: max(-65, min(65, value.translation.width)), height: max(-30, min(30, value.translation.height)))
+
+    private func stage(size: CGSize) -> some View {
+        let side = max(1, min(size.width, size.height))
+        let live = isLive(side: side)
+        let touchable = interactive && side >= MascotMetrics.thumbnailSide
+        return ZStack {
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !live)) { context in
+                MascotRenderView(pose: renderFrame(date: context.date, side: side, live: live), side: side)
             }
-            .onEnded { value in
-                if abs(value.translation.width) > abs(value.translation.height) * 1.2 { reactToTouch() }
+            if touchable {
+                MascotTouchLayer(handler: { event in handleTouch(event) })
             }
+        }
+        .frame(width: size.width, height: size.height)
     }
-    private func reactToTouch() {
-        // Retarget one spring and cancellable task, including rapid taps.
-        winking = true
-        interaction += 1
+
+    // MARK: Frames
+
+    private var contextEmotion: MascotEmotion {
+        MascotEmotion.context(mode: mode, mood: mood)
     }
-    private var accessibilityText: String {
+
+    private var isStatic: Bool {
+        reduceMotion
+    }
+
+    private func isLive(side: CGFloat) -> Bool {
+        !reduceMotion && isVisible && onScreen && scenePhase == .active && side >= MascotMetrics.thumbnailSide
+    }
+
+    private func renderFrame(date: Date, side: CGFloat, live: Bool) -> MascotFrame {
+        if reduceMotion || side < MascotMetrics.thumbnailSide {
+            return MascotPhysics.restingFrame(emotion: staticReaction ?? contextEmotion, dark: colorScheme == .dark)
+        }
+        let physics = engine.physics
+        let frameInput = makeInput(side: side)
+        if live {
+            return physics.advance(to: date, input: frameInput)
+        }
+        return physics.snapshot(input: frameInput)
+    }
+
+    private func makeInput(side: CGFloat) -> MascotInput {
+        let emotion = contextEmotion
+        let measured = meter?.level ?? level
+        let safeLevel = measured.isFinite ? min(1, max(0, measured)) : 0
+        let lipSync = (mode == .speaking || emotion == .speaking) && emotion != .listening
+        var speech = speechLevel.isFinite ? min(1, max(0, speechLevel)) : 0
+        if speech <= 0 && mode == .speaking {
+            speech = MascotInput.mappedSpeech(fromMeter: safeLevel)
+        }
+        var input = MascotInput()
+        input.side = side
+        input.context = emotion
+        input.micLevel = mode == .listening ? safeLevel : 0
+        input.speechLevel = lipSync ? speech : 0
+        input.lipSync = lipSync
+        input.greetingScaleX = greetingPose.scaleX
+        input.greetingScaleY = greetingPose.scaleY
+        input.greetingLift = greetingPose.lift
+        input.greetingTilt = greetingPose.tilt
+        input.dark = colorScheme == .dark
+        input.celebrate = celebrate
+        return input
+    }
+
+    // MARK: Interaction
+
+    private func handleTouch(_ event: MascotTouchEvent) {
+        if isStatic {
+            if case .ended(_, _, let quick) = event, quick {
+                reactStatically()
+            }
+            return
+        }
+        let now = Date().timeIntervalSinceReferenceDate
+        let physics = engine.physics
+        switch event {
+        case .began(let point, let side):
+            physics.touchBegan(at: point, side: side, time: now)
+            armPressFeedback(physics)
+        case .moved(let point, let side):
+            physics.touchMoved(to: point, side: side, time: now)
+        case .ended:
+            switch physics.touchEnded(time: now) {
+            case .quiet:
+                break
+            case .tap:
+                if physics.takePressFeedback(force: true) { pressTick += 1 }
+            case .release:
+                releaseTick += 1
+            case .success:
+                successTick += 1
+            }
+        case .cancelled:
+            physics.touchCancelled()
+        }
+    }
+
+    /// The soft press haptic waits 70 ms so a finger that starts scrolling the page stays silent.
+    private func armPressFeedback(_ physics: MascotPhysics) {
+        Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(70)) } catch { return }
+            if physics.takePressFeedback(force: false) { pressTick += 1 }
+        }
+    }
+
+    private func activateFromAccessibility() {
+        if isStatic || engine.physics.side < Double(MascotMetrics.thumbnailSide) {
+            reactStatically()
+        } else {
+            engine.physics.accessibilityTap(time: Date().timeIntervalSinceReferenceDate)
+        }
+    }
+
+    private func reactStatically() {
+        let reaction = MascotEmotion.tapReaction(at: staticCycle)
+        staticCycle = (staticCycle + 1) % MascotEmotion.tapCycleLength
+        staticReaction = reaction.emotion
+        staticReactionTick += 1
+    }
+
+    private func appear() {
+        isVisible = true
+        let firstMascot = !MascotLaunchMemory.greeted
+        MascotLaunchMemory.greeted = true
+        if firstMascot && interactive && !reduceMotion && contextEmotion == .calm {
+            engine.physics.playLaunchGreeting(time: Date().timeIntervalSinceReferenceDate)
+        }
+    }
+
+    private func disappear() {
+        isVisible = false
+        engine.physics.touchCancelled()
+    }
+
+    // MARK: Accessibility
+
+    private var accessibilityStatus: String {
         if let statusDescription { return statusDescription }
-        switch mode { case .ready: return "Собеседник ждёт твоего ответа"; case .listening: return "Собеседник слушает, микрофон включён"; case .speaking: return "Собеседник говорит"; case .thinking: return "Собеседник готовит ответ" }
-    }
-}
-
-private struct CompanionPressedKey: EnvironmentKey { static let defaultValue = false }
-private extension EnvironmentValues {
-    var companionPressed: Bool {
-        get { self[CompanionPressedKey.self] }
-        set { self[CompanionPressedKey.self] = newValue }
-    }
-}
-
-/// Body and floor have separate transforms. Pressing or dragging never drags the ground shadow.
-private struct CompanionStage: View {
-    let mode: VoiceOrbMode
-    let energy: Double
-    let expression: VoiceOrbMood
-    let winking: Bool
-    let interaction: Int
-    let touchOffset: CGSize
-    let animated: Bool
-    let phaseOrigin: Date
-    let greetingPose: VoiceOrbGreetingPose
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.companionPressed) private var pressed
-    var body: some View {
-        TimelineView(.animation(minimumInterval: mode == .ready ? 1.0 / 30 : 1.0 / 60, paused: !animated)) { timeline in
-            GeometryReader { geometry in
-                let size = min(geometry.size.width, geometry.size.height)
-                let time = animated ? timeline.date.timeIntervalSince(phaseOrigin) : 0
-                let breath = animated ? sin(time * 1.45) : 0
-                let sway = animated ? sin(time * 0.91) : 0
-                let pressure = pressed && !reduceMotion ? 1.0 : 0.0
-                let floating = reduceMotion ? 0 : breath * 0.021 - energy * 0.014
-                let height = min(1, max(-1, -floating / 0.035 - (reduceMotion ? 0 : greetingPose.lift / 0.065)))
-                let blinkPhase = time.truncatingRemainder(dividingBy: 6.7)
-                let blink = animated ? 1 - exp(-pow((blinkPhase - 6.43) / 0.075, 2)) * 0.90 : 1
-                let gazeX = reduceMotion ? 0 : Double(touchOffset.width) / 65
-                let gazeY = reduceMotion ? 0 : Double(touchOffset.height) / 30
-                ZStack {
-                    Ellipse()
-                        .fill(RadialGradient(colors: [Color(red: 0.35, green: 0.45, blue: 0.77).opacity(0.21), .clear], center: .center, startRadius: 0, endRadius: size * 0.38))
-                        .frame(width: size * 0.76, height: size * 0.15)
-                        .scaleEffect(x: 1 + height * 0.07 + pressure * 0.04, y: 1 + height * 0.13 - pressure * 0.04)
-                        .opacity(reduceMotion ? 1 : 1 - height * 0.18 + pressure * 0.08)
-                        .offset(y: size * 0.36)
-                        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.28, dampingFraction: 0.85), value: pressed)
-                        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.70, dampingFraction: 0.76), value: greetingPose)
-                    lens(size: size, time: time, energy: energy, pressure: pressure, breath: breath, sway: sway, blink: blink, gazeX: gazeX, gazeY: gazeY)
-                }.frame(width: geometry.size.width, height: geometry.size.height)
-            }
-        }.accessibilityHidden(true)
-    }
-    private func lens(size: CGFloat, time: Double, energy: Double, pressure: Double, breath: Double, sway: Double, blink: Double, gazeX: Double, gazeY: Double) -> some View {
-        ZStack {
-            Rectangle().fill(Color.white)
-                .colorEffect(ShaderLibrary.liquidCompanion(.boundingRect, .float(Float(time)), .float(Float(reduceMotion ? 0 : energy)), .float(Float(gazeX)), .float(Float(gazeY))))
-            HStack(spacing: size * 0.175) {
-                CompanionEye(size: size, side: 0, mood: expression, blink: blink, time: time, mode: mode, reaction: winking ? interaction % 3 + 1 : 0)
-                CompanionEye(size: size, side: 1, mood: expression, blink: blink, time: time, mode: mode, reaction: winking ? interaction % 3 + 1 : 0)
-            }
-                .offset(x: size * 0.038 * gazeX + (mode == .thinking ? sway * size * 0.012 : 0), y: size * 0.024 * gazeY - size * 0.015)
-                .animation(reduceMotion ? nil : .interactiveSpring(response: 0.30, dampingFraction: 0.78), value: touchOffset)
+        switch mode {
+        case .ready: return "Собеседник ждёт твоего ответа"
+        case .listening: return "Собеседник слушает, микрофон включён"
+        case .speaking: return "Собеседник говорит"
+        case .thinking: return "Собеседник готовит ответ"
         }
-        .frame(width: size * 0.90, height: size * 0.90)
-        .scaleEffect(x: reduceMotion ? 1 : (1 + breath * 0.018 + energy * 0.055 + pressure * 0.055 + (winking ? 0.025 : 0)) * greetingPose.scaleX,
-                     y: reduceMotion ? 1 : (1 - breath * 0.016 + energy * 0.085 - pressure * 0.09 - (winking ? 0.012 : 0)) * greetingPose.scaleY)
-        .rotationEffect(.degrees(reduceMotion ? 0 : sway * (mode == .thinking ? 4.5 : 1.6) + Double(touchOffset.width) * 0.12 + greetingPose.tilt))
-        .offset(x: reduceMotion ? 0 : touchOffset.width * 0.24,
-                y: reduceMotion ? 0 : breath * size * 0.021 - energy * size * 0.014 + touchOffset.height * 0.10 + size * greetingPose.lift)
-        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.70, dampingFraction: 0.76), value: greetingPose)
-        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.20, dampingFraction: 0.78), value: energy)
-        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.32, dampingFraction: 0.67), value: winking)
-        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.34, dampingFraction: 0.72, blendDuration: 0.08), value: touchOffset)
-        .animation(reduceMotion ? nil : .interactiveSpring(response: pressed ? 0.17 : 0.34, dampingFraction: 0.72), value: pressed)
+    }
+
+    private var accessibilityTraits: AccessibilityTraits {
+        interactive ? .isButton : []
+    }
+
+    private var accessibilityHintText: String {
+        interactive ? "Коснись, чтобы поздороваться. Можно потянуть в сторону или подержать." : ""
     }
 }
 
-private struct CompanionPressStyle: ButtonStyle {
-    let reduceMotion: Bool
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .environment(\.companionPressed, !reduceMotion && configuration.isPressed)
-    }
-}
+/// Pauses the loop while a ScrollView keeps the mascot alive off screen (iOS 18+).
+/// iOS 17 relies on onDisappear and scene phase.
+private struct MascotScrollVisibility: ViewModifier {
+    @Binding var onScreen: Bool
 
-private struct CompanionEye: View {
-    let size: CGFloat
-    let side: Int
-    let mood: VoiceOrbMood
-    let blink: Double
-    let time: Double
-    let mode: VoiceOrbMode
-    let reaction: Int
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var baseOpenness: Double {
-        switch mood { case .attentive: return 1.1; case .curious: return side == 0 ? 1.02 : 0.64; case .supportive: return 0.78; default: return 1 }
-    }
-    private var baseTilt: Double {
-        switch mood { case .curious: return side == 0 ? -9 : 10; case .supportive: return side == 0 ? -10 : 10; case .friendly: return side == 0 ? -4 : 4; default: return 0 }
-    }
-    private func pulse(period: Double, centre: Double, radius: Double) -> Double {
-        guard !reduceMotion else { return 0 }
-        let phase = time.truncatingRemainder(dividingBy: period)
-        let distance = abs(phase - centre)
-        guard distance < radius else { return 0 }
-        return pow((1 + cos(distance / radius * .pi)) * 0.5, 2)
-    }
-    private var curiosity: Double {
-        let spontaneous = pulse(period: 17.4, centre: 8.2, radius: 1.8)
-        return reaction == 3 ? 1 : spontaneous * (mode == .listening || mode == .thinking ? 0.9 : 0.6)
-    }
-    private var joy: Double {
-        if reaction == 2 { return 1 }
-        if reaction == 1 { return side == 1 ? 1 : 0.18 }
-        if mood == .pleased { return 1 }
-        if mood == .supportive || mode == .thinking { return 0 }
-        return pulse(period: mode == .speaking ? 8.6 : 13.1, centre: mode == .speaking ? 2.4 : 4.4, radius: 1.1) * (mode == .listening ? 0.18 : 0.76)
-    }
-    private var openness: Double { baseOpenness + curiosity * (side == 0 ? 0.16 : -0.24) }
-    private var tilt: Double { baseTilt + curiosity * (side == 0 ? -13 : 12) }
-    var body: some View {
-        MorphingCompanionEye(open: openness * blink, joy: joy)
-            .fill(Color(red: 0.99, green: 0.995, blue: 1))
-            .frame(width: size * 0.078, height: size * 0.115)
-            .rotationEffect(.degrees(tilt))
-            .shadow(color: Color.white.opacity(0.68), radius: size * 0.014)
-            .animation(reduceMotion ? nil : .interactiveSpring(response: 0.29, dampingFraction: 0.82), value: mood)
-            .animation(reduceMotion ? nil : .interactiveSpring(response: 0.28, dampingFraction: 0.78), value: reaction)
-    }
-}
-
-/// Identical four-curve topology: a pill bends into a smile, without an opacity swap.
-private struct MorphingCompanionEye: Shape {
-    var open: Double
-    var joy: Double
-    var animatableData: AnimatablePair<Double, Double> {
-        get { AnimatablePair(open, joy) }
-        set { open = newValue.first; joy = newValue.second }
-    }
-    func path(in rect: CGRect) -> Path {
-        let j = min(1, max(0, joy)), o = max(0.08, open)
-        func point(_ px: Double, _ py: Double, _ sx: Double, _ sy: Double) -> CGPoint {
-            let x = px + (sx - px) * j, y = py + (sy - py) * j
-            return CGPoint(x: rect.width * x, y: rect.height * (0.5 + (y - 0.5) * o))
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollVisibilityChange(threshold: 0.05) { visible in
+                onScreen = visible
+            }
+        } else {
+            content
         }
-        var path = Path()
-        path.move(to: point(0.05, 0.5, 0.0, 0.68))
-        path.addCurve(to: point(0.5, 0.0, 0.5, 0.28), control1: point(0.05, 0.16, 0.08, 0.43), control2: point(0.20, 0.0, 0.28, 0.28))
-        path.addCurve(to: point(0.95, 0.5, 1.0, 0.68), control1: point(0.80, 0.0, 0.72, 0.28), control2: point(0.95, 0.16, 0.92, 0.43))
-        path.addCurve(to: point(0.5, 1.0, 0.5, 0.48), control1: point(0.95, 0.84, 0.96, 0.87), control2: point(0.80, 1.0, 0.72, 0.48))
-        path.addCurve(to: point(0.05, 0.5, 0.0, 0.68), control1: point(0.20, 1.0, 0.28, 0.48), control2: point(0.05, 0.84, 0.04, 0.87))
-        path.closeSubpath()
-        return path
     }
 }

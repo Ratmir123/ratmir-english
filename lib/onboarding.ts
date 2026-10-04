@@ -1,5 +1,10 @@
 import type { BaselineStepId, Evidence, OnboardingState, Session, SkillId, Turn } from './types';
 
+/**
+ * @deprecated v0.4 three-probe baseline. Smooth Talk 0.5 replaced it with the placement test (lib/placement):
+ * POST /api/sessions { baselineStepId } answers 410, the planner never schedules calibration lessons, and the
+ * recommendation waits for a placement result instead of these steps. Kept only so old records and clients stay readable.
+ */
 export const ONBOARDING_VERSION = 1 as const;
 export const RUSSIAN_CONTROL_PROMPT = 'Знакомый говорит: «Хочу снова тренироваться, но после работы почти нет сил. В выходные обычно получается выбраться на прогулку». Ответь ему как в обычном разговоре, в 2–4 предложениях по-русски. Здесь нет обязательного вопроса или единственно правильной реплики.';
 export const BASELINE_STEPS = [

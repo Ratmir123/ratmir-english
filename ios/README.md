@@ -1,10 +1,12 @@
-# iPhone client
+# iPhone client — Smooth Talk 0.5
 
-Native SwiftUI client, iOS 17+, sharing the existing HTTPS backend and private training history. Includes learning/call modes, microphone recording, transcription review before sending, voice playback, analysis and required improved retry, skill evidence, history and daily local notifications. No Apple password, OpenAI key or ChatGPT credentials are embedded in the app or CI.
+Native SwiftUI client, iOS 17+ (Liquid Glass on iOS 26+), sharing the private HTTPS backend with the PC app. Communication coaching practised in English; the interface is Russian. Light and dark themes follow the system.
 
-Version 0.2 adds automatic assistant playback, a voice-reactive gradient companion, manually committed live subtitles through the private VPS, and preservation of the original WAV and unedited transcript. Transcription is explicitly instructed to retain fillers, repeats and unfinished phrases; recognition can still be wrong, so the user reviews the text. New lessons and continuing a saved lesson are separate actions. A review may be closed with its improved attempt deferred, without claiming mastery.
+Five tabs, identical to the PC version: **Сегодня** (one next step chosen in a fixed order: unsent recording → placement test → unfinished lesson or review → call waiting for the speaker → personal drill → the server's plan; quick actions, level, patterns, weekly rhythm), **Практика** (personal drills and the scenario catalog from `GET /api/families`), **Созвоны** (call upload, reviews and patterns), **Прогресс** (placement level, rank and XP, skills, history, rewards) and **Профиль** (profile, playbook facts, voice, reminders, limits, data, version).
 
-CI also captures synthetic home, conversation, recording, waiting, review and settings screens on an iPhone 11 simulator. Preview fixtures are compiled only in Debug; the Release IPA has no sample profile. Simulator screenshots do not verify physical microphone capture, audio routing or local notification delivery. Notification permission and scheduled request readback are checked on the actual device.
+Lessons keep the v0.4 safeguards: microphone recording with live subtitles, review of the transcript before sending, the original WAV kept until it reaches the server (an unsent recording can always be played or deleted from Today), voice playback with lip-sync on the mascot, analysis, the required improved attempt and an optional pushback round. Starting a lesson, sending an answer or completing never waits for status or quota reads. No Apple password, OpenAI key or ChatGPT credentials are embedded in the app or CI.
+
+CI captures synthetic screens (`--preview=<screen>`) on an iPhone 11 simulator in light, dark and large type, and runs the native tests. Preview fixtures are compiled only in Debug; the Release IPA has no sample profile. Simulator screenshots do not verify physical microphone capture, audio routing or local notification delivery.
 
 The macOS GitHub Actions job builds an unsigned device IPA. AltStore Classic on Windows signs this IPA with the owner's free Apple Account. This is a personal installation, not App Store distribution. Build success is distinct from installation and a physical-device microphone test.
 

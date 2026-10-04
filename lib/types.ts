@@ -1,13 +1,27 @@
+import type { PlacementView } from './placement/types';
+import type { CallSummary, CommunicationPattern, CostCategory, PersonalDrill, ProfileFact } from './calls/types';
+import type { LessonPlanExtras } from './training';
+import type { StrategyMoveScore } from './strategy-moves';
+
+/** Canonical skill names for BOTH clients (iPhone mirrors these labels exactly). */
 export const SKILLS = [
-  { id: 'listening', label: 'Понимание на слух', group: 'language' },
-  { id: 'vocabulary', label: 'Активный английский', group: 'language' },
-  { id: 'grammar', label: 'Построение фраз', group: 'language' },
-  { id: 'clarity', label: 'Понятность речи', group: 'language' },
-  { id: 'coherence', label: 'Содержание и логика', group: 'dialogue' },
-  { id: 'reciprocity', label: 'Использование услышанного', group: 'dialogue' },
-  { id: 'initiative', label: 'Управление разговором', group: 'dialogue' },
-  { id: 'repair', label: 'Уточнение и восстановление', group: 'dialogue' },
+  { id: 'listening', label: 'Понимать на слух', group: 'language' },
+  { id: 'vocabulary', label: 'Находить слова', group: 'language' },
+  { id: 'grammar', label: 'Строить фразы', group: 'language' },
+  { id: 'clarity', label: 'Говорить понятно', group: 'language' },
+  { id: 'coherence', label: 'Держать мысль', group: 'dialogue' },
+  { id: 'reciprocity', label: 'Учитывать собеседника', group: 'dialogue' },
+  { id: 'initiative', label: 'Вести разговор', group: 'dialogue' },
+  { id: 'repair', label: 'Уточнять и исправляться', group: 'dialogue' },
+  // v0.5 Smooth Talk: communication strategy is a first-class skill area.
+  { id: 'positioning', label: 'Подавать себя', group: 'strategy' },
+  { id: 'negotiation', label: 'Держать цену и условия', group: 'strategy' },
 ] as const;
+export type SkillGroup = typeof SKILLS[number]['group'];
+export const SKILL_GROUP_LABELS: Record<SkillGroup, string> = { language: 'Английский', dialogue: 'Разговор', strategy: 'Стратегия' };
+/** Canonical skill-state names for both clients. */
+export const SKILL_STATE_LABELS = { unknown: 'Ещё не проверено', supported: 'Получается с опорой', provisional: 'Первые самостоятельные успехи',
+  independent: 'Получается самостоятельно', recheck: 'Пора проверить снова' } as const;
 export type SkillId = typeof SKILLS[number]['id'];
 export type Context = 'work' | 'life' | 'relocation';
 export type Mode = 'learning' | 'call';
@@ -20,7 +34,9 @@ export interface Profile {
   relocation: string; dailyMinutes: number; feedback: string;
   audioRetentionDays: number; budgetUsd: number;
 }
-export interface LessonPlan {
+/** v0.5 adds optional LessonPlanExtras (format, seed, persona, speechLevel, pressureTier, pushback, norms, patterns, moves, drill…).
+ * Partner-only fields (npcBrief, hiddenFacts, pushback, coaching) are blanked before a session reaches a client. */
+export interface LessonPlan extends LessonPlanExtras {
   id: string; familyId: string; title: string; context: Context;
   goal: string; why: string; minutes: number; targetSkills: SkillId[];
   languageFocus: string; opening: string; role: string; npcBrief: string;
@@ -55,6 +71,8 @@ export interface TimingFeedback {
 export interface Priority {
   type: 'language' | 'dialogue'; title: string; turnId: string; quote: string;
   explanation: string; example: string; retryInstruction: string;
+  /** v0.5: what kind of real cost this is, and the linked communication pattern. */
+  costKind?: CostCategory | null; patternId?: string | null;
 }
 export interface Evidence {
   skill: SkillId; result: EvidenceResult; turnId: string; quote: string;
@@ -65,12 +83,24 @@ export interface Analysis {
   evidence: Evidence[]; nextFocus: string; limitations: string[];
   model: string; createdAt: string; version: number;
   timingFeedback?: TimingFeedback[];
+  // v0.5 optional fields (older analyses lack them; clients must treat them as optional).
+  outcome?: { achieved: 'yes' | 'partly' | 'no' | 'n/a'; what: string };
+  languageErrors?: { turnId: string; quote: string; correction: string; tag: string; impact: 'meaning' | 'seniority' | 'minor' }[];
+  minorErrorsIgnored?: number;
+  patternHits?: { patternId: string; outcome: 'repeated' | 'avoided' | 'no-opportunity' | 'improved'; turnId: string; quote: string }[];
+  /** Scores are 0, 1 or 2 (null = no opportunity in this lesson). */
+  strategyMoves?: (Omit<StrategyMoveScore, 'score'> & { score: number | null })[];
+  debatable?: { title: string; turnId: string; quote: string; forSide: string; againstSide: string; verdict: string }[];
+  /** Invalid model items the server removed instead of failing the whole review. */
+  dropped?: number;
 }
 export interface Session {
   id: string; lesson: LessonPlan; mode: Mode;
   status: 'active' | 'analysing' | 'review' | 'completed' | 'error';
   createdAt: string; updatedAt: string; turns: Turn[]; analysis: Analysis | null;
-  retries: { id?: string; text: string; feedback: string; createdAt: string; audioFile?: string; improved?: boolean; analysisVersion?: number; originalTranscript?: string; transcriptEdited?: boolean; speechTiming?: SpeechTiming }[];
+  retries: { id?: string; text: string; feedback: string; createdAt: string; audioFile?: string; improved?: boolean; analysisVersion?: number; originalTranscript?: string; transcriptEdited?: boolean; speechTiming?: SpeechTiming;
+    /** v0.5 pushback round after an improved retry: the partner objects once; holding it = "stress-tested" (badge only, never required). */
+    pushback?: { npcLine: string; audioFile?: string; reply: string | null; replyAudioFile?: string; held: boolean | null; feedback: string | null; createdAt: string } | null }[];
   support: Support; error?: string; comfort?: number;
   clientRequestId?: string; retryDeferred?: boolean;
   baseline?: { version: 1; stepId: BaselineStepId };
@@ -92,11 +122,24 @@ export interface AudioUsage {
   recordedMinutes: number; spokenCharacters: number;
 }
 export interface AppState {
+  /** Display identity of the backend that produced this state. */
+  app?: { name: string; version: string };
   profile: Profile; sessions: Session[]; skills: SkillState[]; reviews: ReviewItem[];
   xp: number; completed: number; calibrationCompleted: number;
   audioUsage: AudioUsage;
+  /** @deprecated v0.4 three-probe baseline. Replaced by `placement` in v0.5; kept only for old clients. */
   onboarding?: OnboardingState;
   progression?: ProgressionState;
+  /** v0.5 placement test (always present from a v0.5 server). */
+  placement?: PlacementView;
+  /** v0.5 uploaded real calls, newest first (summaries only; GET /api/calls/:id for details). */
+  calls?: CallSummary[];
+  /** v0.5 recurring communication patterns across calls and practice. */
+  patterns?: CommunicationPattern[];
+  /** v0.5 personal drills generated from calls, patterns and the placement result. */
+  drills?: PersonalDrill[];
+  /** v0.5 facts about the learner suggested by call reviews (accepted ones feed the coach). */
+  profileFacts?: ProfileFact[];
 }
 export interface PracticeQuality {
   observedTargets: number; targetCount: number; independentSuccesses: number;
@@ -117,7 +160,11 @@ export interface ProgressionState {
     activities: { id: LearningActivity; title: string; completedSessions: number; targetSessions: number }[] }[];
   achievements: { id: string; title: string; description: string; current: number; target: number; unlocked: boolean; unlockedAt: string | null }[];
   recentResults: PracticeResult[]; notice: string;
-  recommendation?: { familyId: string; title: string; track: LearningTrackId; activity: LearningActivity; preferredMode: Mode; why: string } | null;
+  recommendation?: { familyId: string; title: string; track: LearningTrackId; activity: LearningActivity; preferredMode: Mode; why: string;
+    /** v0.5: when set, start with POST /api/sessions { drillId } instead of familyId. */
+    drillId?: string | null;
+    /** v0.5: what kind of next step this is, for the Today card copy. */
+    source?: 'drill' | 'review' | 'pattern' | 'balance' } | null;
 }
 export type BaselineStepId = 'expression' | 'listening' | 'interaction';
 export type CEFRBand = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';

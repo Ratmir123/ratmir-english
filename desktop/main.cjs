@@ -1,16 +1,20 @@
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, globalShortcut, Notification, ipcMain, clipboard, dialog, nativeImage, shell, session, powerMonitor } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, Notification, ipcMain, clipboard, dialog, nativeImage, nativeTheme, shell, session, powerMonitor } = require('electron');
 const { mkdirSync, writeFileSync, renameSync, readFileSync, statSync, existsSync } = require('node:fs');
 const { join } = require('node:path');
 const {
   SHORTCUT, USAGE_URL, IPC, isAllowedExternalLink,
   safeClipboardText, readConfiguration, prepareRuntime, configureSessionProxy,
-  validReminderMinutes, safeNetworkError,
+  validReminderMinutes, safeNetworkError, safeNotification,
 } = require('./runtime.cjs');
+const { prepareCallAudio } = require('./call-audio.cjs');
 
 const { createDailyReminderScheduler, normalizeReminderSettings } = require('./daily-reminders.cjs');
-app.setName('Smooth English');
+// Display name only. appId, userData folder, partitions and IPC channel names keep their
+// original technical identities so installed profiles survive the 0.5 rename.
+const APP_TITLE = 'Smooth Talk';
+app.setName(APP_TITLE);
 // Preserve the installed profile, cookies and remote origin across the brand rename.
 const userDataPath = join(app.getPath('appData'), 'Ratmir English');
 mkdirSync(userDataPath, { recursive: true });
@@ -29,6 +33,9 @@ let reminderNotification = null;
 let dailyReminders = null;
 let reminderLoadWarning = null;
 let pendingQuick = false;
+// Quick coach opened from the main window returns there when closed (not to the tray).
+let quickReturnsToMain = false;
+const callAudioJobs = new Map();
 let mainLoaded = false;
 let quickLoaded = false;
 let applicationPolicy = null;
@@ -57,6 +64,7 @@ if (!app.requestSingleInstanceLock()) {
     clearTimeout(reminderTimer);
     reminderTimer = null;
     dailyReminders?.stop();
+    stopCallAudioJobs();
     globalShortcut.unregisterAll();
     shortcutRegistered = false;
     if (tray) { tray.destroy(); tray = null; }
@@ -65,7 +73,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => { writeDiagnostics(); await boot(); }).catch((error) => {
     bootErrorCode = ['DESKTOP_CONFIG_INVALID', 'DESKTOP_WORKSPACE_INVALID', 'DESKTOP_NODE_INVALID', 'DESKTOP_SERVER_UNAVAILABLE'].includes(error?.message) ? error.message : 'APP_BOOT_FAILED';
     writeDiagnostics();
-    dialog.showErrorBox('Smooth English', applicationPolicy?.mode === 'remote'
+    dialog.showErrorBox(APP_TITLE, applicationPolicy?.mode === 'remote'
       ? 'Не удалось открыть подключение к серверу тренинга. Проверь настройки приложения и доступ к интернету.'
       : 'Не удалось открыть тренинг. Проверь установку через Install Desktop.cmd и наличие Node.js 24 или новее. Личные ключи и записи остаются в папке тренинга.');
     app.quit();
@@ -112,6 +120,19 @@ function secureWindow(window) {
     return { action: 'deny' };
   });
   contents.on('will-attach-webview', (event) => event.preventDefault());
+  // The page blocks unload only while a recording exists solely in this window.
+  contents.on('will-prevent-unload', (event) => {
+    const options = {
+      type: 'warning', title: APP_TITLE, buttons: ['Остаться', 'Уйти без записи'], defaultId: 0, cancelId: 0, noLink: true,
+      message: 'Запись ещё не распознана и есть только в этом окне.',
+      detail: 'Останься, чтобы распознать или удалить её. Если уйти, запись пропадёт.',
+    };
+    // A hidden (tray) window cannot host a visible modal: show the question on its own then.
+    const choice = !window.isDestroyed() && window.isVisible() ? dialog.showMessageBoxSync(window, options) : dialog.showMessageBoxSync(options);
+    if (choice === 1) event.preventDefault();
+  });
+  contents.on('destroyed', () => stopCallAudioJobs(contents));
+  contents.on('render-process-gone', () => stopCallAudioJobs(contents));
   contents.session.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
     const allowed = isTrustedContents(_webContents) && applicationPolicy.isAllowedMicrophoneCheck(permission, requestingOrigin, details);
     if (!allowed) recordDeniedPermission(permission);
@@ -179,14 +200,14 @@ function makeWindow(quick) {
   diagnostics.event = 'creating';
   writeDiagnostics();
   const window = new BrowserWindow({
-    title: quick ? 'Smooth English · Быстрый разбор' : 'Smooth English',
+    title: quick ? APP_TITLE + ' · Быстрый разбор' : APP_TITLE,
     width: quick ? 420 : 1280,
     height: quick ? 720 : 920,
     minWidth: quick ? 360 : 820,
     minHeight: quick ? 480 : 600,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#E1E1E1',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0B0B10' : '#EEEEF3',
     icon: iconPath,
     alwaysOnTop: quick,
     webPreferences: {
@@ -262,7 +283,7 @@ function makeWindow(quick) {
     if (diagnostics.event !== 'loaded') { diagnostics.event = 'load-resolved'; writeDiagnostics(); }
   }).catch(() => {
     if (diagnostics.event !== 'load-failed') { diagnostics.event = 'load-rejected'; writeDiagnostics(); }
-    dialog.showErrorBox('Smooth English', applicationPolicy.mode === 'remote'
+    dialog.showErrorBox(APP_TITLE, applicationPolicy.mode === 'remote'
       ? 'Сервер тренинга не ответил. Проверь интернет и попробуй открыть приложение снова из значка рядом с часами.'
       : 'Окно тренинга не загрузилось. Попробуй открыть его снова из значка рядом с часами.');
   });
@@ -287,6 +308,7 @@ function hideWindow(window, diagnostics) {
 
 function showTraining() {
   if (!ready) return;
+  quickReturnsToMain = false;
   hideWindow(quickWindow, windowDiagnostics.quick);
   if (!mainWindow || mainWindow.isDestroyed()) mainWindow = makeWindow(false);
   else {
@@ -297,8 +319,9 @@ function showTraining() {
   }
 }
 
-function showQuick() {
+function showQuick(fromMain = false) {
   if (!ready) { pendingQuick = true; return; }
+  quickReturnsToMain = fromMain === true;
   hideWindow(mainWindow, windowDiagnostics.main);
   if (!quickWindow || quickWindow.isDestroyed()) quickWindow = makeWindow(true);
   else {
@@ -327,7 +350,7 @@ function scheduleReminder(minutes) {
     if (quitting) return;
     if (reminderNotification) reminderNotification.close();
     reminderNotification = new Notification({
-      title: 'Smooth English',
+      title: APP_TITLE,
       body: 'Есть пять минут? Начни с одного короткого ответа по-английски.',
       icon: iconPath,
     });
@@ -363,8 +386,15 @@ function registerIpc() {
     showTraining();
     return { opened: true };
   });
-  handle(IPC.openQuick, () => { showQuick(); return { opened: true }; });
-  handle(IPC.hideQuick, () => { hideWindow(quickWindow, windowDiagnostics.quick); return { hidden: true }; });
+  // Opened from the main window's sidebar: closing the quick coach returns to the main window.
+  handle(IPC.openQuick, (event) => { showQuick(!!mainWindow && event.sender === mainWindow.webContents); return { opened: true }; });
+  handle(IPC.hideQuick, () => {
+    if (quickReturnsToMain) { showTraining(); return { hidden: true, returned: true }; }
+    hideWindow(quickWindow, windowDiagnostics.quick);
+    return { hidden: true, returned: false };
+  });
+  handle(IPC.prepareCallAudio, (event, filePath) => runCallAudioJob(event.sender, filePath));
+  handle(IPC.notify, (_event, value) => showAppNotification(value));
   handle(IPC.reminder, (_event, minutes) => scheduleReminder(minutes));
   handle(IPC.reminderSettings, () => ({ ...dailyReminders.getSettings(), ...(reminderLoadWarning ? { warning: reminderLoadWarning } : {}) }));
   handle(IPC.saveReminderSettings, (_event, settings) => { const result = dailyReminders.save(settings); reminderLoadWarning = null; return result; });
@@ -389,7 +419,7 @@ function setupDailyReminders() {
     notify() {
       if (quitting || !Notification.isSupported()) return;
       if (reminderNotification) reminderNotification.close();
-      reminderNotification = new Notification({ title: 'Smooth English', body: 'Твои 10 минут английского. Начнём с одного ответа?', icon: iconPath });
+      reminderNotification = new Notification({ title: APP_TITLE, body: 'Время для короткого разговора. Начнём с одного ответа?', icon: iconPath });
       reminderNotification.on('click', showTraining);
       reminderNotification.on('failed', () => { reminderNotification = null; });
       reminderNotification.show();
@@ -416,11 +446,13 @@ async function boot() {
   writeDiagnostics();
   setupDailyReminders();
   registerIpc();
+  // No default menu in the installed app: its Ctrl+R / F5 reload would drop an unsent recording.
+  if (app.isPackaged) Menu.setApplicationMenu(null);
   tray = new Tray(nativeImage.createFromPath(iconPath));
-  tray.setToolTip('Smooth English · Ctrl+Alt+E');
+  tray.setToolTip(APP_TITLE + ' · Ctrl+Alt+E');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Открыть тренинг', click: showTraining },
-    { label: 'Быстрый разбор · Ctrl+Alt+E', click: showQuick },
+    { label: 'Быстрый разбор · Ctrl+Alt+E', click: () => showQuick(false) },
     { type: 'separator' },
     { label: 'Напомнить через 30 минут', enabled: Notification.isSupported(), click: () => scheduleReminder(30) },
     { type: 'separator' },
@@ -428,11 +460,45 @@ async function boot() {
   ]));
   tray.on('click', showTraining);
   ready = true;
-  try { shortcutRegistered = globalShortcut.register(SHORTCUT, showQuick); } catch { shortcutRegistered = false; }
+  try { shortcutRegistered = globalShortcut.register(SHORTCUT, () => showQuick(false)); } catch { shortcutRegistered = false; }
   writeDiagnostics();
   startupStage = 'main-window';
   showTraining();
   startupStage = 'ready';
   writeDiagnostics();
-  if (pendingQuick) { pendingQuick = false; showQuick(); }
+  if (pendingQuick) { pendingQuick = false; showQuick(false); }
+}
+
+function stopCallAudioJobs(contents) {
+  for (const [child, owner] of callAudioJobs) {
+    if (contents && owner !== contents) continue;
+    try { child.kill(); } catch { }
+    callAudioJobs.delete(child);
+  }
+}
+
+/** One local ffmpeg extraction per request; killed when its window goes away or the app quits. */
+async function runCallAudioJob(sender, filePath) {
+  if (quitting) return { ok: false, reason: 'failed', message: 'Приложение закрывается.' };
+  if ([...callAudioJobs.values()].filter((owner) => owner === sender).length >= 2) {
+    return { ok: false, reason: 'failed', message: 'Уже готовлю аудио другого созвона. Подожди немного.' };
+  }
+  return prepareCallAudio(filePath, {
+    tempRoot: app.getPath('temp'),
+    track(child) {
+      callAudioJobs.set(child, sender);
+      return () => callAudioJobs.delete(child);
+    },
+  });
+}
+
+/** OS notification for in-app events (a review became ready) only while the main window is not in front. */
+function showAppNotification(value) {
+  const payload = safeNotification(value);
+  if (!payload || quitting || !Notification.isSupported()) return { shown: false };
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()) return { shown: false };
+  const notification = new Notification({ title: payload.title, body: payload.body, icon: iconPath });
+  notification.on('click', showTraining);
+  notification.show();
+  return { shown: true };
 }

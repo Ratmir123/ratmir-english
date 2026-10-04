@@ -60,15 +60,15 @@ struct LiveTranscriptTokens {
 
 /// Mounted only during microphone capture. The editable draft stays a separate
 /// TextField, with its own cursor and scroll position after capture stops.
+/// Short transcripts size to their content; long ones scroll and follow the newest
+/// words (C-07: the old measured viewport collapsed to a single line).
 struct LiveTranscriptView: View {
     let text: String
     let status: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ScaledMetric(relativeTo: .subheadline) private var maximumHeight = 88.0
-    @ScaledMetric(relativeTo: .subheadline) private var minimumHeight = 24.0
+    @ScaledMetric(relativeTo: .subheadline) private var maximumHeight = 112.0
     @ScaledMetric(relativeTo: .subheadline) private var wordSpacing = 4.0
     @State private var tokens: LiveTranscriptTokens
-    @State private var contentSize = CGSize.zero
     private let bottomID = "live-transcript-current-word"
 
     init(text: String, status: String) {
@@ -80,71 +80,68 @@ struct LiveTranscriptView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Сейчас говоришь ты", systemImage: "waveform")
-                .font(.caption.weight(.medium)).foregroundStyle(Theme.secondary)
-            ScrollViewReader { proxy in
-                ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Group {
-                            if tokens.words.isEmpty {
-                                Text("Текст появится, когда начнёшь говорить…")
-                                    .font(.subheadline).foregroundStyle(Theme.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            } else {
-                                TranscriptWordFlow(spacing: wordSpacing) {
-                                    ForEach(tokens.words) { word in
-                                        LiveTranscriptWord(word: word, reduceMotion: reduceMotion)
-                                    }
-                                }
-                            }
-                        }.padding(.vertical, 3)
-                        Color.clear.frame(height: 1).id(bottomID)
-                    }
-                    .background {
-                        GeometryReader { geometry in
-                            Color.clear.preference(key: TranscriptSizePreference.self, value: geometry.size)
-                        }
-                    }
-                }
-                .scrollIndicators(.hidden).scrollBounceBehavior(.basedOnSize)
-                .frame(height: min(min(maximumHeight, 160), max(minimumHeight, contentSize.height)))
-                .onPreferenceChange(TranscriptSizePreference.self) { contentSize = $0 }
-                .onChange(of: text) { _, fresh in
-                    // Keep reflow and hypothesis corrections immediate. Only the
-                    // genuinely appended word views own a decorative spring.
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = reduceMotion
-                    withTransaction(transaction) { tokens.update(fresh) }
-                }
-                .task(id: TranscriptFollowLayout(revision: tokens.revision, size: contentSize, height: maximumHeight)) {
-                    // A geometry update follows a line wrap, a width change or
-                    // Dynamic Type change. Wait for placement before following.
-                    await Task.yield()
-                    guard !Task.isCancelled else { return }
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) { proxy.scrollTo(bottomID, anchor: .bottom) }
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(text.isEmpty ? "Живая расшифровка. Ожидаем речь." : "Живая расшифровка: " + text)
+                .font(.caption.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
+            ViewThatFits(in: .vertical) {
+                transcriptFlow.fixedSize(horizontal: false, vertical: true)
+                scrollingTranscript
             }
+            .frame(maxHeight: min(maximumHeight, 200), alignment: .top)
+            .onChange(of: text) { _, fresh in
+                // Keep reflow and hypothesis corrections immediate. Only the
+                // genuinely appended word views own a decorative spring.
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = reduceMotion
+                withTransaction(transaction) { tokens.update(fresh) }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(text.isEmpty ? "Живая расшифровка. Ожидаем речь." : "Живая расшифровка: " + text)
             if !status.isEmpty {
-                Text(status).font(.caption2).foregroundStyle(Theme.secondary)
+                Text(status).font(.caption2).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }.padding(14).background(.white, in: RoundedRectangle(cornerRadius: 18))
-            .foregroundStyle(Theme.charcoal)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.solid, in: RoundedRectangle(cornerRadius: Radius.input, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: Radius.input, style: .continuous).strokeBorder(Theme.cyan.opacity(0.55), lineWidth: 1.5) }
+        .foregroundStyle(Theme.ink)
     }
-}
 
-private struct TranscriptFollowLayout: Equatable {
-    let revision: Int
-    let size: CGSize
-    let height: Double
-}
+    @ViewBuilder private var transcriptFlow: some View {
+        if tokens.words.isEmpty {
+            Text("Текст появится, когда начнёшь говорить…")
+                .font(.subheadline).foregroundStyle(Theme.inkSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            TranscriptWordFlow(spacing: wordSpacing) {
+                ForEach(tokens.words) { word in
+                    LiveTranscriptWord(word: word, reduceMotion: reduceMotion)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 
-private struct TranscriptSizePreference: PreferenceKey {
-    static var defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
+    private var scrollingTranscript: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    transcriptFlow.padding(.vertical, 2)
+                    Color.clear.frame(height: 1).id(bottomID)
+                }
+            }
+            .scrollIndicators(.hidden)
+            .defaultScrollAnchor(.bottom)
+            .task(id: tokens.revision) {
+                // Follow the newest words after each layout pass.
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { proxy.scrollTo(bottomID, anchor: .bottom) }
+            }
+        }
+    }
 }
 
 private struct LiveTranscriptWord: View {
