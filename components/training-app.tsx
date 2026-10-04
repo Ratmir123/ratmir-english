@@ -7,6 +7,7 @@ import type { AchievementTarget } from '@/lib/achievement-targets';
 import type { Session } from '@/lib/types';
 import type { CallSummary } from '@/lib/calls/types';
 import type { PlacementView } from '@/lib/placement/types';
+import { followThemeChanges } from '@/lib/client/theme';
 import { PlacementFlow } from './placement/placement-flow';
 import { QuickCoach } from './quick-coach';
 import { StartupWelcome } from './startup-welcome';
@@ -247,6 +248,8 @@ function App() {
 export function TrainingApp() {
   useInputModality();
   useGlassPointer();
+  // A theme picked in one window (main or quick coach) applies to the other at once.
+  useEffect(() => followThemeChanges(() => undefined), []);
   const [mode, setMode] = useState<'boot' | 'quick' | 'app'>('boot');
   useLayoutEffect(() => {
     setMode(new URLSearchParams(window.location.search).get('entry') === 'quick' ? 'quick' : 'app');

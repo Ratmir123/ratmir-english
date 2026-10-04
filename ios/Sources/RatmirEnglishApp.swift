@@ -3,6 +3,8 @@ import UIKit
 
 @main struct RatmirEnglishApp: App {
     @StateObject private var client = TrainingClient()
+    /// «Оформление» in Profile; nil (system) never overrides the device setting.
+    @AppStorage(AppAppearance.storageKey) private var appearance = AppAppearance.system.rawValue
 
     var body: some Scene {
         WindowGroup {
@@ -12,6 +14,7 @@ import UIKit
                 .tint(Theme.violet)
                 .disclosureGroupStyle(SoftDisclosureStyle())
                 .buttonStyle(PressButton())
+                .preferredColorScheme(AppAppearance(rawValue: appearance)?.colorScheme)
 #if DEBUG
                 .modifier(PreviewAccessibility())
 #endif
@@ -21,6 +24,35 @@ import UIKit
 #endif
                     await client.restore()
                 }
+        }
+    }
+}
+
+/// Manual theme switch (same three choices and default as the web): stored per device.
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    static let storageKey = "smoothTalk.appearance"
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .system: return "Как в системе"
+        case .light: return "Светлая"
+        case .dark: return "Тёмная"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max"
+        case .dark: return "moon"
+        }
+    }
+    /// Applied at the root, so sheets and full-screen covers follow it too.
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
         }
     }
 }

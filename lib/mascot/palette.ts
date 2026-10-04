@@ -52,8 +52,41 @@ interface MascotPaletteBase {
   /** Caustic inside the contact shadow and the light pool in front of the body. */
   floor: ShadowGlass;
 }
-/** A material (the shader builds from it) or, for the lab's 0.5 reference, a verbatim shader tail. */
-export type MascotPaletteSpec = MascotPaletteBase & ({ material: MascotMaterial; shaderTail?: undefined } | { material?: undefined; shaderTail: string });
+/**
+ * Translucent thick glass with flowing colour inside: the inside is seen through the curved surface (bent and
+ * magnified toward the edge), two-step domain-warped colour fields drift on ~10 s cycles as veils or ink veins,
+ * a calm dark zone stays behind the face, caustic light lines move with the deformation, the rim disperses
+ * slightly (R/G/B at different radii), a thin bright inner edge line, a curved window streak plus a soft secondary
+ * highlight, and the outer band lets the page show through.
+ */
+export interface GlassMaterial {
+  coreTop: GlassRGB; coreBottom: GlassRGB; shade: number;
+  /** How strongly the surface normal bends the view of the inside. */
+  refract: number;
+  /** Four flowing colours, cycled smoothly; `flow` is their strength, `faceFloor` what remains behind the face. */
+  flowColors: readonly [GlassRGB, GlassRGB, GlassRGB, GlassRGB]; flow: number; faceFloor: number;
+  /** Veils: smoothstep(ribbonLow, ribbonHigh, field); ink veins: |field| < veinWidth. veinMix 0 = veils, 1 = veins. */
+  ribbonLow: number; ribbonHigh: number; veinWidth: number; veinMix: number;
+  /** Light through coloured glass along the inner bottom (outer → hottest colour). */
+  glowOuter: GlassRGB; glowInner: GlassRGB; glowAmount: number;
+  /** Caustic light lines in the lower body, moving with the deformation. */
+  lineColor: GlassRGB; lines: number;
+  rim: GlassRGB; rimStart: number; rimPower: number; rimAmount: number; dispersion: number;
+  film: readonly [GlassRGB, GlassRGB, GlassRGB]; filmAmount: number; filmDark: number;
+  innerLine: GlassRGB; innerLineAt: number;
+  specular: GlassRGB; specularAmount: number; specularPower: number; streak: number; secondary: GlassRGB;
+  edgeLight: GlassRGB; rimLight: GlassRGB;
+  outline: GlassRGB; outlineAmount: number;
+  /** Outer band alpha 1 − translucency (from clearStart to the rim line, which stays solid). */
+  translucency: number; clearStart: number;
+  moodCore: number; moodFlow: number; moodRim: number;
+}
+
+/** A material the shader builds from (opal or glass) or, for the lab's 0.5 reference, a verbatim shader tail. */
+export type MascotPaletteSpec = MascotPaletteBase & (
+  | { material: MascotMaterial; glass?: undefined; shaderTail?: undefined }
+  | { glass: GlassMaterial; material?: undefined; shaderTail?: undefined }
+  | { shaderTail: string; material?: undefined; glass?: undefined });
 
 export const LIME: GlassRGB = [0.855, 0.945, 0.388];
 export const LAVENDER: GlassRGB = [0.733, 0.698, 0.961];

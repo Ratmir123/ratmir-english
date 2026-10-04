@@ -5,11 +5,13 @@ import { ArrowsClockwiseIcon, CaretRightIcon, CheckIcon, DownloadSimpleIcon, Key
 import type { AppState, Profile } from '@/lib/types';
 import { APP_CHANNEL, APP_NAME, APP_VERSION } from '@/lib/app-info';
 import { lessonBudget } from '@/lib/lesson-budget';
+import { followThemeChanges, readThemePreference, saveThemePreference, THEME_LABEL, type ThemePreference } from '@/lib/client/theme';
 import { FactsPanel } from '../calls/facts-panel';
 import { useApp } from '../app/app-context';
 import { messageOf, request } from '../app/api';
 import { ReminderSettings } from '../reminder-settings';
 import { SubscriptionLimits } from '../subscription-limits';
+import { Segmented } from '../ui/segmented';
 import styles from './profile.module.css';
 
 type Form = { name: string; goals: string; interests: string; professionalContext: string; relocation: string; dailyMinutes: string; feedback: string; audioRetentionDays: number; budgetUsd: string };
@@ -161,6 +163,18 @@ function DataCard() {
   </section>;
 }
 
+/** Light / dark / system, per device (like the phone's own setting); applied instantly, no save step. */
+function AppearanceCard() {
+  const [theme, setTheme] = useState<ThemePreference>('system');
+  useEffect(() => { setTheme(readThemePreference()); return followThemeChanges(setTheme); }, []);
+  return <section className={`surface ${styles.card}`} aria-labelledby="profile-appearance">
+    <div className={styles.head}><h2 id="profile-appearance">Оформление</h2></div>
+    <Segmented label="Тема оформления" block value={theme} onChange={value => { setTheme(value); saveThemePreference(value); }}
+      options={(['system', 'light', 'dark'] as const).map(id => ({ id, label: THEME_LABEL[id] }))} />
+    <p className="caption">Только на этом устройстве. «Как в системе» переключается вместе с Windows или iPhone.</p>
+  </section>;
+}
+
 export function ProfileScreen() {
   const app = useApp();
   const state = app.data.state!;
@@ -176,6 +190,7 @@ export function ProfileScreen() {
         </div>
       </div>
       <div className={styles.column}>
+        <AppearanceCard />
         <VoiceCard />
         <section className={`surface ${styles.card}`} aria-labelledby="reminder-title"><ReminderSettings /></section>
         <ModelCard />

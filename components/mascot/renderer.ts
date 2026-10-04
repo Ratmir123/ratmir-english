@@ -2,7 +2,7 @@
 // (MASCOT-SPEC §1–2). One quad, no textures. GLSL ES 1.0: constant loop bound, uniform array
 // indexed by the loop counter only.
 import { BODY_RADIUS, DARK, KERNEL_K, NODE_COUNT, SUPERELLIPSE_N } from '@/lib/mascot/constants';
-import { MASCOT_PALETTE, type GlassRGB, type MascotMaterial, type MascotPaletteSpec } from '@/lib/mascot/palette';
+import { MASCOT_PALETTE, type GlassMaterial, type GlassRGB, type MascotMaterial, type MascotPaletteSpec } from '@/lib/mascot/palette';
 
 const VERTEX = `attribute vec2 a_position; varying vec2 v_uv;
 void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }`;
@@ -93,12 +93,65 @@ function materialFragment(m: MascotMaterial) {
   gl_FragColor = vec4(clamp(result, 0.0, 1.0) * alpha, alpha);
 }`;
 }
+// Translucent thick glass with flowing colour inside (lib/mascot/palette GlassMaterial). The inside is sampled
+// through the curved surface (bent and magnified toward the edge); the colour fields are two-step domain-warped
+// sines (~10 s cycles, cheap: 8 sin + 1 vec4 cos), so a still pose is simply the flow at time 0.
+function glassFragment(m: GlassMaterial) {
+  const film = (w: string) => `(${v3(m.film[0])} * ${w}.x + ${v3(m.film[1])} * ${w}.y + ${v3(m.film[2])} * ${w}.z) / (${w}.x + ${w}.y + ${w}.z)`;
+  const [c0, c1, c2, c3] = m.flowColors;
+  const d = 1 + m.dispersion;
+  return `${HEAD}
+  float t = u_time;
+  float mood = clamp(u_moodAmount, 0.0, 0.35);
+  vec3 luma = vec3(0.2126, 0.7152, 0.0722);
+  vec2 inner = b * (0.5 + 0.5 * z) + normal.xy * ${f(m.refract)} + u_gaze * 0.06;
+  vec3 body = mix(${v3(m.coreTop)}, ${v3(m.coreBottom)}, smoothstep(-1.0, 1.0, inner.x * 0.45 + inner.y * 0.85));
+  body = mix(body, u_moodTint * (dot(body, luma) / max(0.04, dot(u_moodTint, luma))), mood * ${f(m.moodCore)});
+  vec2 w = inner * 1.7;
+  w += 0.6 * vec2(sin(w.y * 1.6 + t * 0.61), sin(w.x * 1.8 - t * 0.53));
+  w += 0.35 * vec2(sin(w.y * 2.7 - t * 0.47 + 1.7), sin(w.x * 2.2 + t * 0.67 + 0.4));
+  float fieldA = sin(w.x * 1.2 + w.y * 0.8 + t * 0.29);
+  float fieldB = sin(w.y * 1.5 - w.x * 0.7 - t * 0.37 + 2.0);
+  vec4 cw = 0.5 + 0.5 * cos(6.2831853 * (fieldA * 0.32 + fieldB * 0.22 + t * 0.016 - vec4(0.0, 0.25, 0.5, 0.75)));
+  cw *= cw;
+  vec3 aurora = (${v3(c0)} * cw.x + ${v3(c1)} * cw.y + ${v3(c2)} * cw.z + ${v3(c3)} * cw.w) / (cw.x + cw.y + cw.z + cw.w);
+  aurora = mix(aurora, u_moodTint, clamp(mood * ${f(m.moodFlow)}, 0.0, 1.0));
+  float veil = smoothstep(${f(m.ribbonLow)}, ${f(m.ribbonHigh)}, fieldA * 0.6 + fieldB * 0.4);
+  float vein = 1.0 - smoothstep(0.0, ${f(m.veinWidth)}, abs(fieldA * 0.7 + fieldB * 0.3));
+  vec2 faceBox = (b - vec2(0.0, 0.05)) / vec2(0.62, 0.4);
+  float faceMask = smoothstep(0.8, 1.25, length(faceBox));
+  body = mix(body, aurora, clamp(mix(veil, vein, ${f(m.veinMix)}) * mix(${f(m.faceFloor)}, 1.0, faceMask) * ${f(m.flow)}, 0.0, 1.0));
+  float glow = exp(-b.x * b.x * 2.0) * smoothstep(0.45, 0.92, b.y) * (1.0 - smoothstep(0.94, 0.995, dist));
+  vec3 glowColor = mix(mix(${v3(m.glowOuter)}, ${v3(m.glowInner)}, smoothstep(0.35, 0.95, glow)), u_moodTint, clamp(mood * ${f(m.moodRim * 0.5)}, 0.0, 1.0));
+  body = mix(body, glowColor, glow * ${f(m.glowAmount)});
+  float lines = pow(abs(sin(inner.x * 6.5 + inner.y * 2.5 + flow * 1.4 + t * 0.4)), 18.0) * smoothstep(0.15, 0.7, b.y) * faceMask;
+  body += ${v3(m.lineColor)} * lines * ${f(m.lines)};
+  body *= ${f(m.shade)} + z * ${f(1 - m.shade)};
+  vec3 rimMask = pow(vec3(smoothstep(${f(m.rimStart)}, 0.99, dist * ${f(d)}), smoothstep(${f(m.rimStart)}, 0.99, dist), smoothstep(${f(m.rimStart)}, 0.99, dist / ${f(d)})), vec3(${f(m.rimPower)}));
+  vec3 rim = mix(${v3(m.rim)}, u_moodTint, clamp(mood * ${f(m.moodRim)}, 0.0, 1.0));
+  body = mix(body, rim, rimMask * ${f(m.rimAmount)});
+  body *= 1.0 + ${f(DARK.tint)} * u_dark;
+  vec3 filmW = 0.5 + 0.5 * cos(6.2831853 * (fresnel * 1.4 + b.y * 0.3 - b.x * 0.2 + t * 0.05 + u_gaze.x * 0.2 - vec3(0.0, 0.333333, 0.666667)));
+  vec3 result = mix(body, ${film('filmW')}, clamp(fresnel * ${f(m.filmAmount)} * (1.0 + ${f(m.filmDark)} * u_dark), 0.0, 1.0));
+  result += ${v3(m.innerLine)} * exp(-abs(dist - ${f(m.innerLineAt)}) * 150.0) * (0.55 + 0.45 * upper);
+  float facing = max(0.0, dot(normal, light));
+  result += ${v3(m.specular)} * pow(facing, ${f(m.specularPower)}) * ${f(m.specularAmount)} * (1.0 + ${f(DARK.specular)} * u_dark);
+  result += vec3(1.0) * smoothstep(0.78, 0.82, dist) * (1.0 - smoothstep(0.86, 0.9, dist)) * smoothstep(0.45, 0.75, -b.y * 0.75 - b.x * 0.65) * ${f(m.streak)};
+  result += ${v3(m.secondary)} * pow(max(0.0, dot(normal, vec3(0.6, 0.55, 0.58))), 10.0);
+  result += ${v3(m.edgeLight)} * upper * edge;
+  result += ${v3(m.rimLight)} * edge * smoothstep(-0.25, 0.7, b.x + b.y);
+  result = mix(result, ${v3(m.outline)}, smoothstep(0.968, 1.0, dist) * ${f(m.outlineAmount)} * (1.0 - u_dark));
+  result += body * clamp(u_energy, 0.0, 1.0) * 0.06;
+  float opacity = alpha * (1.0 - ${f(m.translucency)} * smoothstep(${f(m.clearStart)}, 0.95, dist) * (1.0 - smoothstep(0.955, 0.985, dist)));
+  gl_FragColor = vec4(clamp(result, 0.0, 1.0) * opacity, opacity);
+}`;
+}
 const fragments = new WeakMap<MascotPaletteSpec, string>();
 /** Fragment shader source for a palette (built once per palette; exported for tests). */
 export function fragmentFor(palette: MascotPaletteSpec) {
   let source = fragments.get(palette);
   if (!source) {
-    source = palette.shaderTail !== undefined ? HEAD + palette.shaderTail : materialFragment(palette.material);
+    source = palette.shaderTail !== undefined ? HEAD + palette.shaderTail : palette.glass ? glassFragment(palette.glass) : materialFragment(palette.material);
     fragments.set(palette, source);
   }
   return source;

@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from 'next';
 import '@fontsource-variable/nunito/wght.css';
 import './globals.css';
 import { APP_NAME } from '@/lib/app-info';
+import { THEME_BOOT_SCRIPT } from '@/lib/client/theme';
 
 export const metadata: Metadata = {
   title: APP_NAME,
@@ -23,5 +24,6 @@ export const viewport: Viewport = {
 };
 
 export default function Layout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="ru"><body>{children}</body></html>;
+  // The boot script sets data-theme before hydration, hence the warning suppression on <html> only.
+  return <html lang="ru" suppressHydrationWarning><head><script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} /></head><body>{children}</body></html>;
 }

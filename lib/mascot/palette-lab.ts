@@ -1,9 +1,29 @@
 // Mascot lab only (/mascot-lab?palette=…): comparison looks next to the shipped «Black opal». Never imported by the app.
 import { DARK } from './constants';
-import { LAVENDER, LIME, MASCOT_PALETTE, type GlassRGB, type MascotPaletteSpec } from './palette';
+import { CYAN, LAVENDER, LIME, MASCOT_PALETTE, type GlassMaterial, type GlassRGB, type MascotPaletteSpec } from './palette';
 
 const f = (value: number) => value.toFixed(6);
 const VIOLET: GlassRGB = [0.435, 0.361, 0.949];
+
+/** Shared by both glass looks; each overrides what makes it itself. */
+const GLASS_BASE: GlassMaterial = {
+  coreTop: [0.07, 0.055, 0.17], coreBottom: [0.16, 0.11, 0.36], shade: 0.86,
+  refract: 0.28,
+  flowColors: [[0.45, 0.33, 0.98], [0.76, 0.7, 1.0], [0.8, 0.93, 0.36], [0.3, 0.82, 0.95]], flow: 0.62, faceFloor: 0.12,
+  ribbonLow: -0.2, ribbonHigh: 0.9, veinWidth: 0.3, veinMix: 0,
+  glowOuter: [0.5, 0.4, 0.92], glowInner: LIME, glowAmount: 0.6,
+  lineColor: [0.82, 0.9, 0.62], lines: 0.35,
+  rim: [0.76, 0.71, 1.0], rimStart: 0.78, rimPower: 1.4, rimAmount: 0.9, dispersion: 0.012,
+  film: [LIME, LAVENDER, CYAN], filmAmount: 0.9, filmDark: 0.1,
+  innerLine: [0.5, 0.48, 0.62], innerLineAt: 0.935,
+  specular: [1, 1, 1], specularAmount: 1, specularPower: 60, streak: 0.55, secondary: [0.1, 0.09, 0.15],
+  edgeLight: [0.8, 0.78, 1.0], rimLight: [0.5, 0.7, 0.3],
+  outline: [0.19, 0.12, 0.42], outlineAmount: 0.65,
+  translucency: 0.32, clearStart: 0.68,
+  moodCore: 1.4, moodFlow: 1.6, moodRim: 3,
+};
+const OPAL_FACE = MASCOT_PALETTE.face;
+const OPAL_FALLBACK = MASCOT_PALETTE.fallback;
 
 /** The 0.5 cyan glass, verbatim (appended to the shared shader head). */
 const CLASSIC_TAIL = `
@@ -22,6 +42,21 @@ const CLASSIC_TAIL = `
 
 export const LAB_PALETTES = {
   a: MASCOT_PALETTE,
+  aurora: {
+    label: 'Стекло · аврора',
+    glass: GLASS_BASE,
+    face: OPAL_FACE, fallback: OPAL_FALLBACK, floor: MASCOT_PALETTE.floor,
+  },
+  ink: {
+    label: 'Стекло · чернила',
+    glass: {
+      ...GLASS_BASE,
+      coreTop: [0.05, 0.04, 0.12], coreBottom: [0.12, 0.08, 0.28], shade: 0.84, refract: 0.22,
+      flowColors: [[0.52, 0.38, 1.0], [0.85, 0.95, 0.39], [0.8, 0.74, 1.0], [0.3, 0.82, 0.95]], flow: 0.85, faceFloor: 0.08,
+      veinWidth: 0.28, veinMix: 1, glowAmount: 0.75, lines: 0.25, translucency: 0.14, clearStart: 0.74,
+    },
+    face: OPAL_FACE, fallback: OPAL_FALLBACK, floor: MASCOT_PALETTE.floor,
+  },
   b: {
     label: 'B · сиреневый жемчуг',
     material: {

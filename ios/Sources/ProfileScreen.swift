@@ -11,12 +11,14 @@ struct ProfileScreen: View {
     @State private var exportURL: URL? = nil
     @State private var showReset = false
     @State private var confirmSignOut = false
+    @AppStorage(AppAppearance.storageKey) private var appearance = AppAppearance.system.rawValue
 
     var body: some View {
         NavigationStack {
             List {
                 profileSection
                 factsSection
+                appearanceSection
                 voiceSection
                 remindersSection
                 limitsSection
@@ -144,6 +146,23 @@ struct ProfileScreen: View {
             }
             .listRowBackground(Theme.solid)
         }
+    }
+
+    // MARK: Appearance
+
+    /// «Оформление»: the native segmented control (a list of choices at accessibility sizes).
+    private var appearanceSection: some View {
+        Section {
+            SelectionRow(selection: $appearance, options: AppAppearance.allCases.map {
+                SelectionOption(id: $0.rawValue, title: $0.title, icon: $0.icon)
+            })
+            .padding(.vertical, 4)
+        } header: {
+            sectionHeader("Оформление")
+        } footer: {
+            Text("Только на этом устройстве")
+        }
+        .listRowBackground(Theme.solid)
     }
 
     // MARK: Voice and limits
