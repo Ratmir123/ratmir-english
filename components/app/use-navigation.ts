@@ -18,13 +18,22 @@ export function withViewTransition(update: () => void) {
   running?.skipTransition();
   const root = document.documentElement;
   root.dataset.transition = 'screen';
+  // The update waits for a rendering frame to capture the old view. If frames stall (occluded or throttled
+  // window), a tap must still switch the screen: skip the animation, then apply directly as a last resort.
+  let applied = false;
+  const apply = () => { if (applied) return; applied = true; flushSync(update); };
   try {
-    const transition = doc.startViewTransition(() => { flushSync(update); });
+    const transition = doc.startViewTransition(apply);
     running = transition;
     const quiet = () => undefined;
     transition.ready.catch(quiet); transition.updateCallbackDone.catch(quiet);
     transition.finished.catch(quiet).finally(() => { if (running === transition) { running = null; delete root.dataset.transition; } });
-  } catch { delete root.dataset.transition; update(); }
+    window.setTimeout(() => {
+      if (applied) return;
+      transition.skipTransition();
+      window.setTimeout(() => { if (!applied) { apply(); if (running === transition) { running = null; delete root.dataset.transition; } } }, 120);
+    }, 300);
+  } catch { delete root.dataset.transition; apply(); }
 }
 
 /** Focus the new screen's heading so keyboard and screen-reader users land in the content (audit C-21). */

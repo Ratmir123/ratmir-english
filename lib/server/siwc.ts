@@ -172,7 +172,9 @@ export class SiwcClient {
     // Real-call reviews (purpose 'call-review', long transcripts at high effort) may think for several minutes;
     // lesson turns keep the 3-minute deadline. Reserve the deadline plus model discovery/overhead.
     const turnLimit = this.purpose === 'call-review' ? LONG_TURN_MS : TURN_MS;
-    const record = await this.access(turnLimit + 30_000);
+    // access() never reserves more than 210 s of token validity; a longer review is bounded by the remaining
+    // lifetime below and retried with a fresh token by its job queue if the credential expires mid-turn.
+    const record = await this.access(Math.min(turnLimit + 30_000, 210_000));
     timing.mark('accessReadyMs');
     // A catalog is a discovery aid. An explicit probe of the user's fixed model
     // can verify access when a new model has not reached the catalog yet. Normal

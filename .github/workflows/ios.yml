@@ -9,7 +9,7 @@ permissions:
 jobs:
   build:
     runs-on: xcode-27
-    timeout-minutes: 35
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@v4
       - name: Verify modern Apple SDK
@@ -45,6 +45,13 @@ jobs:
               assert info[field] == settings[setting], f'Packaged {field} does not match {setting}'
           print('Verified device bundle:', info['CFBundleIdentifier'], info['CFBundleShortVersionString'], info['CFBundleVersion'])
           PY
+      # The installable IPA is uploaded before the long simulator captures, so a capture timeout never loses it.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RatmirEnglish-unsigned-IPA
+          path: RatmirEnglish.ipa
+          retention-days: 7
+          if-no-files-found: error
       - name: Launch iPhone 11 simulator
         run: |
           xcodebuild -quiet -project ios/RatmirEnglish.xcodeproj -scheme RatmirEnglish -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath simulator-build CODE_SIGNING_ALLOWED=NO build
@@ -160,12 +167,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
-        with:
-          name: RatmirEnglish-unsigned-IPA
-          path: RatmirEnglish.ipa
-          retention-days: 7
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: iPhone11-preview
           path: |
