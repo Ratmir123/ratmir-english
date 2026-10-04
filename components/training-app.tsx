@@ -212,7 +212,8 @@ function App() {
   const placement: PlacementView | undefined = data.state.placement;
   return <AppContext.Provider value={context}>
     <Ambient mood={mood} />
-    <div className="app-shell" data-session={sessionView} inert={covered} aria-hidden={covered || undefined}>
+    <div className="app-shell" data-session={sessionView} data-pill={!!lesson.session && !nav.sessionOpen && lesson.session.status !== 'completed' && nav.tab !== 'today'}
+      inert={covered} aria-hidden={covered || undefined}>
       <Sidebar />
       <main className="workspace" id="content">
         <div className="workspace-inner">

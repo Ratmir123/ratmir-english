@@ -5,6 +5,7 @@ import { ArrowRightIcon, CheckIcon, LockSimpleIcon } from '@phosphor-icons/react
 import type { AppState, ProgressionState } from '@/lib/types';
 import { achievementArt, achievementTarget, EXPERIENCE_BANDS, experienceBand, type AchievementTarget } from '@/lib/achievement-targets';
 import { shortDate } from '../app/labels';
+import { RollingNumber } from './rolling-number';
 import styles from './rewards.module.css';
 
 /** Decorations sleep outside the viewport, in a hidden window and with reduced motion. */
@@ -78,10 +79,10 @@ export function AchievementMedal({ id, size = 56, motion = 'still', locked = fal
 export function XpBar({ value, compact = false, target = false }: { value: Pick<ProgressionState, 'xp' | 'level'>; compact?: boolean; target?: boolean }) {
   const progress = rankProgress(value);
   return <div className={styles.xp} {...(target ? { 'data-xp-target': true } : {})}>
-    {!compact && <div className={styles.xpTop}><span className={styles.xpValue}>{value.xp}<small>XP</small></span><span className="caption">Уровень опыта {value.level}</span></div>}
+    {!compact && <div className={styles.xpTop}><span className={styles.xpValue}><RollingNumber value={value.xp} /><small>XP</small></span><span className="caption">Уровень опыта {value.level}</span></div>}
     <div className="progress-track lime" role="progressbar" aria-label={progress.next ? `Опыт до ранга «${progress.next.title}»` : 'Все ранги открыты'}
       aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress.ratio * 100)} style={{ '--value': progress.ratio } as CSSProperties}><span /></div>
-    <div className={styles.xpLabels}><span>{progress.next ? `До «${progress.next.title}» ещё ${progress.toNext} XP` : 'Все шесть рангов открыты'}</span>{compact && <span>{value.xp} XP</span>}</div>
+    <div className={styles.xpLabels}><span>{progress.next ? `До «${progress.next.title}» ещё ${progress.toNext} XP` : 'Все шесть рангов открыты'}</span>{compact && <span><RollingNumber value={value.xp} /> XP</span>}</div>
   </div>;
 }
 

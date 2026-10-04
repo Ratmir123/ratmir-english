@@ -27,6 +27,8 @@
 .stripCopy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .quick { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.quickUpload { min-width: 0; display: grid; }
+.quickUpload > * { height: 100%; }
 .quickTile { display: flex; align-items: center; gap: 12px; min-height: 76px; padding: 14px 16px; border-radius: var(--radius-tile); text-align: left; }
 .quickTile:disabled { opacity: .5; }
 .quickIcon { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; flex-shrink: 0; background: var(--accent-violet-soft); color: var(--accent-violet-ink); }

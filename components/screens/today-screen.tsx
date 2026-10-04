@@ -3,13 +3,14 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   ArrowRightIcon, ArrowsClockwiseIcon, CaretRightIcon, ClockCounterClockwiseIcon, MegaphoneIcon, PhoneCallIcon, PlayIcon,
-  SparkleIcon, UploadSimpleIcon, WarningCircleIcon,
+  SparkleIcon, WarningCircleIcon,
 } from '@phosphor-icons/react';
 import type { Mode } from '@/lib/types';
 import { lessonBudget } from '@/lib/lesson-budget';
 import { subscriptionView } from '@/lib/subscription-view';
 import { PlacementLevelCard } from '../placement/placement-result';
 import { PatternsPanel } from '../calls/patterns-panel';
+import { CallUploadCard } from '../calls/upload-call';
 import { useApp } from '../app/app-context';
 import { greeting, longDate, MODE_HINT, MODE_LABEL, sessionStatusLabel, sessionTone, shortDate } from '../app/labels';
 import { failedCalls, laterSessions, processingCalls, todayPrimary, type TodayPrimary } from '../app/today-plan';
@@ -147,12 +148,13 @@ function QuickActions() {
   }, [app.catalog]);
   const busy = !!app.lesson.busy || !!app.lesson.starting;
   const actions = [
-    { id: 'upload', icon: UploadSimpleIcon, title: 'Загрузить созвон', note: 'Разберу и подберу тренировки', run: () => app.go('calls') },
     ...(pitch ? [{ id: 'pitch', icon: MegaphoneIcon, title: 'Питч за 30 секунд', note: 'Кто ты и почему ты', run: () => app.start({ familyId: pitch.id, mode: pitch.preferredMode, context: pitch.context, from: 'today' as const }) }] : []),
     { id: 'free', icon: SparkleIcon, title: 'Свободная тема', note: 'Разговор о своём', run: () => app.openFamily(null, true) },
   ];
   return <section aria-label="Быстрые действия" className={styles.quick}>
-    {actions.map((action, index) => <button key={action.id} type="button" className={`glass interactive press reveal ${styles.quickTile}`} style={{ '--i': index } as CSSProperties}
+    {/* W3's compact upload card: drop a file or pick one; the new call opens in «Созвоны». */}
+    <div className={`reveal ${styles.quickUpload}`}><CallUploadCard variant="compact" onCreated={id => app.go('calls', { callId: id })} /></div>
+    {actions.map((action, index) => <button key={action.id} type="button" className={`glass interactive press reveal ${styles.quickTile}`} style={{ '--i': index + 1 } as CSSProperties}
       onClick={action.run} disabled={busy && action.id === 'pitch'}>
       <span className={styles.quickIcon} aria-hidden="true"><action.icon size={22} weight="duotone" /></span>
       <span className={styles.quickCopy}><strong>{action.title}</strong><small>{action.note}</small></span>

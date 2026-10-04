@@ -147,7 +147,7 @@ export interface ProgressionExtras {
 
 const MILESTONES = [
   { id: 'first-practice', title: 'Первое дело', description: 'Завершить первое занятие с разобранной собственной попыткой.', target: 1 },
-  { id: 'three-days', title: 'Возвращаюсь к делу', description: 'Практиковаться в три разных дня по UTC.', target: 3 },
+  { id: 'three-days', title: 'Возвращаюсь к делу', description: 'Практиковаться в три разных дня.', target: 3 },
   { id: 'ten-practices', title: 'Десять настоящих попыток', description: 'Завершить десять разных разобранных занятий.', target: 10 },
   { id: 'own-improvement', title: 'Сам исправил', description: 'Завершить занятие с подтверждённой улучшенной попыткой.', target: 1 },
   { id: 'balanced-practice', title: 'И в жизни, и в работе', description: 'Разобрать по три разных занятия о жизни и работе.', target: 3 },

@@ -33,7 +33,7 @@ export function achievementTarget(id: string, state: AppState, now = Date.now())
     const today = new Date(now).toISOString().slice(0, 10);
     const practiced = value?.recentResults.some(result => result.completedAt.slice(0, 10) === today);
     return { ...normal, label: practiced ? 'К практике' : 'Практика на сегодня',
-      reason: practiced ? 'Сегодня уже засчитан день. Следующий день по UTC приблизит эту награду.' : 'Засчитываются разные дни по UTC, а не несколько уроков за день.' };
+      reason: practiced ? 'Сегодня уже засчитан день. Следующий день практики приблизит эту награду.' : 'Засчитываются разные дни, а не несколько уроков за день.' };
   }
   if (id === 'balanced-practice') {
     const life = value?.tracks.find(track => track.id === 'life')?.completedSessions ?? 0;

@@ -391,7 +391,9 @@ extension Notification.Name {
         }
     }
 
-    private func reauthenticate() async -> Bool {
+    /// Logs in again with the saved access code after a 401. Shared by concurrent callers;
+    /// feature requests that bypass `request(_:)` (e.g. `featureRaw`) can call it and retry once.
+    func reauthenticate() async -> Bool {
         if let running = reauthentication { return await running.value }
         guard let code = AccessKey.read(), !code.isEmpty else { return false }
         let attempt = Task { [weak self] () -> Bool in

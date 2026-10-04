@@ -7,6 +7,7 @@ import { useApp } from '../app/app-context';
 import { sessionStatusLabel, TAB_NAMES, TAB_ORDER, type TabId } from '../app/labels';
 import { rankProgress, RankMedal } from '../ui/rewards';
 import { ElapsedTime } from '../ui/elapsed';
+import { RollingNumber } from '../ui/rolling-number';
 import { Companion } from './companion';
 import { TAB_ICONS } from './navigation-icons';
 
@@ -67,7 +68,7 @@ export function Sidebar() {
       {progression && <button type="button" className="sidebar-rank" data-xp-target onClick={() => app.go('progress', { progress: 'rewards' })}
         aria-label={`Ранг «${rankProgress(progression).band.title}», ${progression.xp} XP. Открыть награды`}>
         <span className="row"><RankMedal level={progression.level} size={34} animated={false} />
-          <span style={{ minWidth: 0 }}><strong>{rankProgress(progression).band.title}</strong><span className="caption tabular" style={{ display: 'block' }}>{progression.xp} XP · ур. {progression.level}</span></span></span>
+          <span style={{ minWidth: 0 }}><strong>{rankProgress(progression).band.title}</strong><span className="caption tabular" style={{ display: 'block' }}><RollingNumber value={progression.xp} /> XP · ур. {progression.level}</span></span></span>
         <span className="progress-track lime" style={{ '--value': rankProgress(progression).ratio } as CSSProperties}><span /></span>
       </button>}
       <button type="button" className="nav-item" onClick={app.launchQuick} title="Ctrl+Alt+E — из любого окна">
