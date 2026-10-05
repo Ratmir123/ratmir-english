@@ -395,6 +395,14 @@ function registerIpc() {
   });
   handle(IPC.prepareCallAudio, (event, filePath) => runCallAudioJob(event.sender, filePath));
   handle(IPC.notify, (_event, value) => showAppNotification(value));
+  // The in-app appearance choice also drives the native title bar and window background (Windows follows themeSource).
+  handle(IPC.setTheme, (_event, value) => {
+    if (!['system', 'light', 'dark'].includes(value)) throw new Error('Unknown theme.');
+    nativeTheme.themeSource = value;
+    const background = nativeTheme.shouldUseDarkColors ? '#0B0B10' : '#EEEEF3';
+    for (const window of [mainWindow, quickWindow]) if (window && !window.isDestroyed()) window.setBackgroundColor(background);
+    return { theme: value };
+  });
   handle(IPC.reminder, (_event, minutes) => scheduleReminder(minutes));
   handle(IPC.reminderSettings, () => ({ ...dailyReminders.getSettings(), ...(reminderLoadWarning ? { warning: reminderLoadWarning } : {}) }));
   handle(IPC.saveReminderSettings, (_event, settings) => { const result = dailyReminders.save(settings); reminderLoadWarning = null; return result; });

@@ -21,4 +21,5 @@ contextBridge.exposeInMainWorld('ratmirDesktop', Object.freeze({
     return ipcRenderer.invoke('ratmir-desktop:prepare-call-audio', typeof path === 'string' ? path : '');
   },
   notify: (value) => ipcRenderer.invoke('ratmir-desktop:notify', value),
+  setTheme: (value) => ipcRenderer.invoke('ratmir-desktop:set-theme', value),
 }));

@@ -13,6 +13,8 @@ export function readThemePreference(): ThemePreference {
 export function applyThemePreference(value: ThemePreference) {
   const root = document.documentElement;
   if (value === 'system') delete root.dataset.theme; else root.dataset.theme = value;
+  // Desktop shell: the native title bar follows too (older shells have no bridge method; ignore failures).
+  window.ratmirDesktop?.setTheme?.(value)?.catch(() => undefined);
 }
 
 export function saveThemePreference(value: ThemePreference) {

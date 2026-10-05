@@ -23,6 +23,8 @@ export interface DesktopBridge {
   getStatus(): Promise<DesktopStatus>;
   /** v0.5: OS notification for an in-app event while the main window is hidden (ignored when it is in front). */
   notify?(value: DesktopNotification): Promise<{ shown: boolean }>;
+  /** 0.5.1: native title bar + window background follow the in-app appearance choice. */
+  setTheme?(value: 'system' | 'light' | 'dark'): Promise<{ theme: string }>;
 }
 
 export interface DesktopNotification { kind: 'review-ready' | 'call-ready'; title: string; body: string }

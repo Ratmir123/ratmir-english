@@ -93,9 +93,10 @@ function stylesFor(palette: MascotPaletteSpec) {
   }
   return entry;
 }
-/** Writes one shadow layer; the blur filter is only touched when its rounded value changes. Returns that value. */
-function placeShadow(element: HTMLElement, layer: ShadowLayerPose, lastBlur: number) {
-  element.style.transform = `translate(${n2(layer.x)}px,0) translate(-50%,-50%) scale(${n4(layer.scaleX)},${n4(layer.scaleY)})`;
+/** Writes one shadow layer (dy: floor below its rest line); the blur filter is only touched when its rounded value
+ * changes. Returns that value. */
+function placeShadow(element: HTMLElement, layer: ShadowLayerPose, dy: number, lastBlur: number) {
+  element.style.transform = `translate(${n2(layer.x)}px,${n2(dy)}px) translate(-50%,-50%) scale(${n4(layer.scaleX)},${n4(layer.scaleY)})`;
   element.style.opacity = String(n3(layer.opacity));
   const blur = Math.round(layer.blur * 10) / 10;
   if (blur !== lastBlur) element.style.filter = `blur(${blur}px)`;
@@ -162,9 +163,10 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
       const bottom = BODY_RADIUS * side / 2; // squash is anchored at the body's floor contact
       body!.style.transform = `translate3d(${n2(frame.x)}px,${n2(frame.y)}px,0) rotate(${n2(frame.rotation)}deg) translateY(${n2(bottom)}px) scale(${n4(frame.scaleX)},${n4(frame.scaleY)}) translateY(${n2(-bottom)}px)`;
       shadowPose(frame, side, shade);
-      contactBlur = placeShadow(contact!, shade.contact, contactBlur);
-      ambientBlur = placeShadow(ambient!, shade.ambient, ambientBlur);
-      poolBlur = placeShadow(pool!, shade.ambient, poolBlur); // the light pool rides the ambient pose (follows, spreads, fades)
+      const sink = shade.floorY - SHADOW.floorY * side; // > 0 while the body is pushed below the rest floor
+      contactBlur = placeShadow(contact!, shade.contact, sink, contactBlur);
+      ambientBlur = placeShadow(ambient!, shade.ambient, sink, ambientBlur);
+      poolBlur = placeShadow(pool!, shade.ambient, sink, poolBlur); // the light pool rides the ambient pose (follows, spreads, fades)
       input.time = staticPose ? 0 : frame.time;
       input.energy = frame.energy; input.gazeX = frame.gazeX; input.gazeY = frame.gazeY; input.dark = dark; input.tintAmount = frame.tintAmount;
       if (renderer) renderer.draw(input);

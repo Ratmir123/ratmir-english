@@ -32,6 +32,8 @@ export const SHADOW = {
   floorY: 0.5 + BODY_RADIUS / 2,
   /** Downward offset (·S) that presses the contact fully into the floor. */
   pressSpan: 0.12,
+  /** A tilted body's lowest point dips below its rest bottom by ≈ tiltDip·S·sin²(rotation) (superellipse n = 2.65). */
+  tiltDip: 0.27,
   contact: {
     width: 0.44, height: 0.065, lean: 0.3, shrink: 3, fade: 9, squash: 0.8, depth: 0.4, press: 0.12,
     rest: 0.75, darken: 1, pressDarken: 0.25, blur: 0.01, blurLift: 0.12, tighten: 0.5,
@@ -71,7 +73,8 @@ export interface ShadowLayerPose {
   blur: number;
 }
 export interface MascotShadowPose {
-  /** Floor line in px from the canvas top — the shadow never leaves it. */
+  /** Floor line in px from the canvas top: the rest floor, or the body's lowest point when it is pushed below it
+   * (the shadow then travels down with the body and always shows just under it). */
   floorY: number;
   /** Height of the body above the floor, ·S. */
   lift: number;
@@ -98,8 +101,9 @@ function placeLayer(out: ShadowLayerPose, t: ShadowLayerTuning, x: number, lift:
 }
 
 /**
- * Shadow for one frame. Height = upward body offset (drag up + hop, y < 0); pushing down (y > 0) keeps the
- * shadow on the floor and only tightens and darkens the contact. Writes into `out` (no allocation).
+ * Shadow for one frame. Height = upward body offset (drag up + hop, y < 0): the shadow stays on the rest floor and
+ * shrinks, fades and softens. Pushed down (y > 0) the floor follows the body's lowest point (continuous at y = 0),
+ * so the shadow is never hidden behind the body, and the contact tightens, widens and darkens. Writes into `out`.
  */
 export function shadowPose(frame: ShadowSource, side: number, out: MascotShadowPose = createShadowPose()): MascotShadowPose {
   const S = Number.isFinite(side) && side > 0 ? side : 1;
@@ -109,7 +113,7 @@ export function shadowPose(frame: ShadowSource, side: number, out: MascotShadowP
   const flat = clamp(finite(frame.squash), 0, SQUASH_SPRING.clamp);
   const width = Math.max(0.5, finite(frame.scaleX, 1));
   const lean = Math.sin(finite(frame.rotation) * Math.PI / 180);
-  out.floorY = SHADOW.floorY * S;
+  out.floorY = SHADOW.floorY * S + Math.max(0, y + SHADOW.tiltDip * S * lean * lean);
   out.lift = lift;
   placeLayer(out.contact, SHADOW.contact, x, lift, press, flat, width, lean, S);
   placeLayer(out.ambient, SHADOW.ambient, x, lift, press, flat, width, lean, S);

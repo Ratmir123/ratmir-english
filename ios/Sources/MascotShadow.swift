@@ -52,6 +52,8 @@ enum MascotShadowTuning {
     static let floorY = 0.5 + MascotTuning.bodyRadius / 2
     /// Downward offset (·S) that presses the contact fully into the floor.
     static let pressSpan = 0.12
+    /// A tilted body's lowest point dips below its rest bottom by ≈ tiltDip·S·sin²(rotation).
+    static let tiltDip = 0.27
     static let squashLimit = 0.35
     static let contact = MascotShadowLayerTuning(
         width: 0.44, height: 0.065, lean: 0.3, shrink: 3, fade: 9, squash: 0.8, depth: 0.4, press: 0.12,
@@ -97,10 +99,11 @@ struct MascotShadowLayerPose {
     var blur: Double = 0
 }
 
-/// Shadow for one frame. Height = upward body offset (drag up + hop, offsetY < 0); pushing down keeps
-/// the shadow on the floor and only tightens and darkens the contact.
+/// Shadow for one frame. Height = upward body offset (drag up + hop, offsetY < 0): the shadow stays on the rest floor
+/// and shrinks, fades and softens. Pushed down (offsetY > 0) the floor follows the body's lowest point (continuous at
+/// 0), so the shadow is never hidden behind the body, and the contact tightens, widens and darkens.
 struct MascotShadowPose {
-    /// Floor line in pt from the canvas top — the shadow never leaves it.
+    /// Floor line in pt from the canvas top: the rest floor, or the body's lowest point when it is pushed below it.
     var floorY: Double
     /// Height of the body above the floor, ·S.
     var lift: Double
@@ -116,7 +119,7 @@ struct MascotShadowPose {
         let flat = min(MascotShadowTuning.squashLimit, max(0, squash.isFinite ? squash : 0))
         let width = max(0.5, scaleX.isFinite ? scaleX : 1)
         let lean = sin((rotation.isFinite ? rotation : 0) * Double.pi / 180)
-        floorY = MascotShadowTuning.floorY * s
+        floorY = MascotShadowTuning.floorY * s + max(0, py + MascotShadowTuning.tiltDip * s * lean * lean)
         lift = height
         contact = MascotShadowPose.layer(MascotShadowTuning.contact, x: px, lift: height, press: press,
                                          flat: flat, width: width, lean: lean, side: s)
