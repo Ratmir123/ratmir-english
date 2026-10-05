@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { APP_NAME } from '@/lib/app-info';
 import { deriveOpeningGreeting } from '@/lib/startup-welcome';
 import type { AppState } from '@/lib/types';
-import { VoiceOrb } from './voice-orb';
+import { Companion } from './shell/companion';
 import styles from './startup-welcome.module.css';
 
 export interface StartupWelcomeProps {
@@ -12,7 +13,7 @@ export interface StartupWelcomeProps {
   onFinished: () => void;
 }
 
-/** A disposable cold-open layer. Home is mounted beneath it throughout. */
+/** A disposable cold-open layer (once per launch). Home is mounted beneath it throughout. */
 export function StartupWelcome({ state, onReveal, onFinished }: StartupWelcomeProps) {
   const [copy] = useState(() => deriveOpeningGreeting(state, new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone));
   const [leaving, setLeaving] = useState(false);
@@ -27,16 +28,16 @@ export function StartupWelcome({ state, onReveal, onFinished }: StartupWelcomePr
     if (immediate) { callbacks.current.onFinished(); return; }
     callbacks.current.onReveal();
     setLeaving(true);
-    timers.current.push(setTimeout(() => callbacks.current.onFinished(), 620));
+    timers.current.push(setTimeout(() => callbacks.current.onFinished(), 560));
   }, [clear]);
 
   useEffect(() => {
     const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-    if (document.hidden || reduced.matches || document.documentElement.dataset.input === 'keyboard') { finish(true); return; }
-    // Allow the greeting to settle and the short phrase to be read before Home opens.
-    timers.current.push(setTimeout(() => finish(), 3200));
+    if (document.hidden || reduced.matches) { finish(true); return; }
+    timers.current.push(setTimeout(() => finish(), 2800));
     const key = (event: KeyboardEvent) => {
-      // A keystroke skips this temporary layer; it must not activate hidden Home.
+      if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return;
+      // A keystroke skips this temporary layer; it must not activate the hidden page beneath.
       event.preventDefault(); event.stopPropagation(); finish(true);
     };
     const hidden = () => { if (document.hidden) finish(true); };
@@ -49,13 +50,13 @@ export function StartupWelcome({ state, onReveal, onFinished }: StartupWelcomePr
 
   return <div className={styles.entry} data-phase={leaving ? 'leaving' : 'hello'} data-testid="opening-greeting" onPointerDown={() => finish(true)}>
     <div className={styles.content}>
-      <div className={styles.companion} aria-hidden="true" inert><VoiceOrb state="idle" emotion="friendly" openingGreeting /></div>
+      <div className={styles.companion} aria-hidden="true" inert><Companion state="idle" emotion="happy" greeting interactive={false} exclusive={false} /></div>
       <div className={styles.copy} role="status" aria-live="polite">
         <h1>{copy.greeting}</h1>
-        <p aria-label={copy.motivation}>{copy.motivation.split(' ').map((word, index) => <span aria-hidden="true" key={index} style={{ '--word-delay': (480 + index * 45) + 'ms' } as CSSProperties}>{word}{' '}</span>)}</p>
+        <p aria-label={copy.motivation}>{copy.motivation.split(' ').map((word, index) => <span aria-hidden="true" key={index} style={{ '--word-delay': (420 + index * 45) + 'ms' } as CSSProperties}>{word}{' '}</span>)}</p>
       </div>
-      <span className={styles.wordmark} aria-hidden="true"><span>smooth english</span></span>
+      <span className={styles.wordmark} aria-hidden="true">{APP_NAME.toLowerCase()}</span>
     </div>
-    <button className={styles.skip} onClick={() => finish(true)}>Перейти к главной</button>
+    <button type="button" className={styles.skip} onClick={() => finish(true)}>Перейти к главной</button>
   </div>;
 }

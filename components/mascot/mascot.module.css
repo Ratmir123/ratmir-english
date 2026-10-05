@@ -1,0 +1,82 @@
+/* Smooth Talk mascot. Sizing defaults use :where() (zero specificity) so any caller class
+   (e.g. the legacy global .voice-orb sizes) wins regardless of stylesheet order. */
+.root {
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  appearance: none;
+  font: inherit;
+  color: inherit;
+  overflow: visible;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  contain: layout style;
+}
+:where(.root) { width: 100%; height: 100%; aspect-ratio: 1; }
+.root[data-pressed='true'] { cursor: grabbing; }
+.root[data-interactive='false'] { cursor: default; }
+.root:focus { outline: none; }
+.root:focus-visible .stage::after {
+  content: '';
+  position: absolute;
+  inset: 7%;
+  border-radius: 46%;
+  box-shadow: 0 0 0 3px var(--mascot-focus, var(--accent-violet, #6f5cf2));
+}
+
+.stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--mascot-size, 100%);
+  height: var(--mascot-size, 100%);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+/* Floor shadow layers (ambient, contact). Box, floor line and both theme fills are inline from lib/mascot/shadow.ts;
+   the loop writes only transform, opacity and filter. */
+.shadow {
+  position: absolute;
+  left: 50%;
+  background: var(--shadow-light);
+  transform: translate(-50%, -50%);
+  will-change: transform, opacity, filter;
+}
+.root[data-dark='true'] .shadow { background: var(--shadow-dark); }
+.body {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+.canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* Same silhouette without WebGL (unsupported or context lost): CSS glass (palette fill, inline) + the same SVG face. */
+.fallback {
+  position: absolute;
+  left: 11%;
+  top: 11%;
+  width: 78%;
+  height: 78%;
+  border-radius: 45%;
+}
+.root[data-lens='live'] .fallback, .root[data-lens='still'] .fallback { visibility: hidden; }
+.root[data-lens='none'] .canvas { visibility: hidden; }
+.face { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+/* Sleepy z's float outside the body: violet on light backgrounds, white glow on dark ones. */
+.root[data-dark='false'] .face [data-part='zzz'] { stroke: rgba(111, 92, 242, 0.8); }
+.root[data-state='paused'] .body { filter: saturate(0.72); }
+
+@media (prefers-reduced-motion: reduce) {
+  .body, .shadow { will-change: auto; }
+}
+@media (forced-colors: active) {
+  .root:focus-visible .stage::after { box-shadow: 0 0 0 3px CanvasText; }
+}

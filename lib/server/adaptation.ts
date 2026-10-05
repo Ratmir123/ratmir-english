@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { SKILLS, type Evidence, type ReviewItem, type Session, type SkillId, type SkillState, type Turn } from '../types';
-import { lessonActivity, lessonMaterialSignature, practiceResults } from '../progression';
+import { lessonActivity, lessonMaterialSignature, practiceResults, skillObservableIn } from '../progression';
 
 const DAY = 86_400_000;
 const knownSkills = new Set<string>(SKILLS.map((skill) => skill.id));
@@ -36,17 +36,17 @@ function normalized(text: string): string {
 function observations(sessions: Session[]): Observation[] {
   const results: Observation[] = [];
   for (const session of uniqueSessions(sessions)) {
+    // Only analysed practice sessions are skill evidence. Placement attempts, uploaded calls and communication
+    // patterns live outside sessions: a pattern is never a skill, and an empty history (after a wipe) is all unknown.
     if (!session.analysis || !['review', 'completed'].includes(session.status)) continue;
     const variant = lessonFingerprint(session);
     const procedure = `${session.analysis.model}:${session.analysis.version}`;
     const seen = new Set<string>();
     for (const evidence of session.analysis.evidence) {
       if (!knownSkills.has(evidence.skill) || !evidence.opportunity || ['disputed', 'unobserved'].includes(evidence.result)) continue;
-      // The present brain receives transcripts, not an independently validated acoustic assessment.
-      if (evidence.skill === 'clarity') continue;
-      const activity = lessonActivity(session).activity;
-      if (activity === 'writing' && !['grammar', 'vocabulary', 'coherence'].includes(evidence.skill)) continue;
-      if (activity === 'reading' && evidence.skill === 'listening') continue;
+      // The present brain receives transcripts, not an independently validated acoustic assessment (clarity),
+      // and a written or read task cannot expose dialogue listening or conversational skills.
+      if (!skillObservableIn(lessonActivity(session).activity, evidence.skill)) continue;
       const turnIndex = session.turns.findIndex((turn) => turn.id === evidence.turnId);
       const turn = session.turns[turnIndex];
       if (!turn || turn.role !== 'user' || turn.disputed || !normalized(evidence.quote)

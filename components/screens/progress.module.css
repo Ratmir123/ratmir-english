@@ -1,0 +1,76 @@
+.progress { container: progress / inline-size; }
+.panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.intro { font-size: var(--text-13); color: var(--text-secondary); max-width: 72ch; }
+
+/* Before the first test result: the test card and the rank, side by side when there is room. */
+.pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+@container progress (min-width: 760px) { .pair { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); } }
+
+/* Experience rank. The medal is the character of this card: it gets real room (≥ 96 px). */
+.rank { container: rank / inline-size; padding: 22px 22px 18px; }
+.rankGrid {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: 'medal title' 'body body';
+  gap: 14px 18px; align-items: center;
+}
+@container rank (min-width: 460px) { .rankGrid { grid-template-areas: 'medal title' 'medal body'; align-items: start; row-gap: 10px; } }
+.rankMedal { grid-area: medal; display: grid; place-items: center; width: 112px; height: 112px; }
+.rankTitle { grid-area: title; display: grid; gap: 4px; min-width: 0; align-self: center; }
+.rankTitle h2 { font-size: 26px; line-height: 1.15; overflow-wrap: anywhere; }
+.rankBody { grid-area: body; display: grid; gap: 10px; min-width: 0; justify-items: stretch; }
+.rankBody > :global(.text-button) { justify-self: start; margin-left: -4px; }
+.rankFacts { font-size: var(--text-13); color: var(--text-secondary); line-height: 1.5; }
+
+/* Section blocks (achievements on the page background, ladder and skill groups on one surface each). */
+.block { display: grid; gap: 12px; }
+.blockHead { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.blockHead h2 { font-size: 20px; }
+.group { display: grid; gap: 10px; padding: 20px 22px 12px; }
+.group h2 { font-size: 20px; }
+
+/* Practice skills: rows inside one surface. */
+.skillList { list-style: none; }
+.skill { display: grid; gap: 4px; padding: 12px 0; }
+.skillHead { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.skillCopy { display: grid; gap: 1px; min-width: 0; }
+.skillCopy strong { font-weight: 650; overflow-wrap: anywhere; }
+.skillCopy small { font-size: var(--text-13); color: var(--text-secondary); }
+.steps { display: flex; gap: 5px; flex-shrink: 0; }
+.steps i { width: 22px; height: 8px; border-radius: 4px; background: var(--surface-sunken-2); transition: background-color 240ms var(--ease-out); }
+.steps i[data-lit='true'] { background: var(--accent-violet); }
+.steps i:nth-child(2)[data-lit='true'] { background: var(--accent-lime); }
+.evidence summary { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; cursor: pointer; list-style: none; color: var(--accent-violet-ink); font-size: 13px; font-weight: 650; }
+.evidence summary::-webkit-details-marker { display: none; }
+.evidence summary svg { transition: transform 200ms var(--ease-out); }
+.evidence[open] summary svg { transform: rotate(90deg); }
+.evidence ul { list-style: none; display: grid; gap: 8px; padding: 4px 0 6px; }
+.evidence li { display: grid; gap: 2px; justify-items: start; padding: 10px 12px; border-radius: 14px; background: var(--surface-sunken); }
+.evidence q { font-size: 14px; }
+
+/* History: one surface, hairline rows; titles wrap instead of being cut. */
+.historyTools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.search { position: relative; display: flex; align-items: center; flex: 1; min-width: 220px; color: var(--text-tertiary); }
+.search svg { position: absolute; left: 14px; pointer-events: none; }
+.search input { padding-left: 42px; border-radius: var(--radius-pill); }
+.history { list-style: none; overflow: hidden; }
+.history > li { display: flex; align-items: center; gap: 4px; padding-right: 10px; min-width: 0; }
+.history > li:first-child .historyOpen { border-top-left-radius: var(--radius-card); }
+.history > li:last-child .historyOpen { border-bottom-left-radius: var(--radius-card); }
+.historyOpen {
+  display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; min-height: 64px; padding: 12px 10px 12px 18px; text-align: left;
+  transition: background-color 160ms var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) { .historyOpen:hover { background: var(--surface-hover); } }
+.historyCopy { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.historyCopy strong { font-weight: 650; overflow-wrap: anywhere; }
+.historyCopy small { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: var(--text-13); color: var(--text-secondary); }
+.chevron { flex-shrink: 0; color: var(--text-tertiary); }
+.remove { color: var(--text-tertiary); }
+.remove:hover:not(:disabled) { color: var(--status-error-ink); }
+.confirm { display: flex; gap: 6px; flex-shrink: 0; }
+.empty { display: grid; gap: 8px; justify-items: start; padding: 22px; }
+
+@media (max-width: 640px) {
+  .rank, .group { padding-inline: 18px; }
+  .historyOpen { padding-left: 14px; }
+}

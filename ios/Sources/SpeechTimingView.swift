@@ -140,12 +140,12 @@ struct SpeechTimingView: View {
             VStack(alignment: .leading, spacing: 16) {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: 6) {
-                        Label("Твоя речь в записи", systemImage: "waveform").font(.headline)
+                        Text("Паузы и темп").font(.headline)
                         Text("По аудио").font(.caption).foregroundStyle(Theme.secondary)
                     }
                 } else {
                     HStack {
-                        Label("Твоя речь в записи", systemImage: "waveform").font(.headline)
+                        Text("Паузы и темп").font(.headline)
                         Spacer(minLength: 8)
                         Text("По аудио").font(.caption).foregroundStyle(Theme.secondary)
                     }
@@ -161,8 +161,10 @@ struct SpeechTimingView: View {
                         }.padding(.top, 12)
                     } label: { Text("Другие записи: \(answers.count - 1)").font(.footnote.weight(.medium)) }
                 }
-            }.padding(20).background(Color.white, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-                .foregroundStyle(Theme.charcoal)
+            }.padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentSurface()
+                .foregroundStyle(Theme.ink)
         }
     }
 }
@@ -250,7 +252,7 @@ private struct SpeechTimeline: View {
                 for segment in timing.segments {
                     let rect = CGRect(x: size.width * segment.startSeconds / timing.durationSeconds, y: 0,
                         width: size.width * segment.duration / timing.durationSeconds, height: size.height)
-                    let color = segment.kind == "speech" ? Theme.lavender : segment.kind == "pause" ? Theme.charcoal.opacity(0.84) : Theme.surface
+                    let color = segment.kind == "speech" ? Theme.lavender : segment.kind == "pause" ? Theme.ink.opacity(0.84) : Theme.ink.opacity(0.10)
                     context.fill(Path(rect), with: .color(color))
                 }
             }.frame(height: 18).clipShape(Capsule()).accessibilityHidden(true)
@@ -268,8 +270,8 @@ private struct SpeechTimeline: View {
     }
     @ViewBuilder private var legend: some View {
         Label { Text("Речь") } icon: { Circle().fill(Theme.lavender).frame(width: 7, height: 7) }
-        Label { Text("Паузы") } icon: { Circle().fill(Theme.charcoal.opacity(0.84)).frame(width: 7, height: 7) }
-        Label { Text("До / после, короткие промежутки") } icon: { Circle().fill(Theme.surface).frame(width: 7, height: 7) }
+        Label { Text("Паузы") } icon: { Circle().fill(Theme.ink.opacity(0.84)).frame(width: 7, height: 7) }
+        Label { Text("До / после, короткие промежутки") } icon: { Circle().fill(Theme.ink.opacity(0.10)).frame(width: 7, height: 7) }
     }
 }
 

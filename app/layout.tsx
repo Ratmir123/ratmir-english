@@ -1,7 +1,29 @@
 import type { Metadata, Viewport } from 'next';
-import { Geist } from 'next/font/google';
+// Nunito Variable (OFL, Cyrillic) is bundled locally: no font request leaves the app.
+import '@fontsource-variable/nunito/wght.css';
 import './globals.css';
-const interfaceFont = Geist({ subsets: ['latin', 'cyrillic'], variable: '--font-interface', display: 'swap' });
-export const metadata: Metadata = { title: 'Smooth English', description: 'Личный тренинг английского и общения', manifest: '/manifest.webmanifest', icons: { icon: [{ url: '/icon-smooth-v042-64.png', type: 'image/png', sizes: '64x64' }], apple: '/icon-smooth-v042-192.png' }, robots: { index: false, follow: false }, appleWebApp: { capable: true, statusBarStyle: 'default', title: 'English' } };
-export const viewport: Viewport = { width: 'device-width', initialScale: 1, viewportFit: 'cover', themeColor: '#e1e1e1' };
-export default function Layout({ children }: Readonly<{ children: React.ReactNode }>) { return <html lang="ru" className={interfaceFont.variable}><body>{children}</body></html>; }
+import { APP_NAME } from '@/lib/app-info';
+import { THEME_BOOT_SCRIPT } from '@/lib/client/theme';
+
+export const metadata: Metadata = {
+  title: APP_NAME,
+  description: 'Личный тренинг общения: разговоры, созвоны и английский',
+  manifest: '/manifest.webmanifest',
+  icons: { icon: [{ url: '/icon-smooth-v042-64.png', type: 'image/png', sizes: '64x64' }], apple: '/icon-smooth-v042-192.png' },
+  robots: { index: false, follow: false },
+  appleWebApp: { capable: true, statusBarStyle: 'default', title: APP_NAME },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width', initialScale: 1, viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#eeeef3' },
+    { media: '(prefers-color-scheme: dark)', color: '#0b0b10' },
+  ],
+  colorScheme: 'light dark',
+};
+
+export default function Layout({ children }: Readonly<{ children: React.ReactNode }>) {
+  // The boot script sets data-theme before hydration, hence the warning suppression on <html> only.
+  return <html lang="ru" suppressHydrationWarning><head><script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} /></head><body>{children}</body></html>;
+}

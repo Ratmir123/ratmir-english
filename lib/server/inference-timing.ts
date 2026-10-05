@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 
-export type InferencePurpose = 'planning' | 'partner' | 'review' | 'retry' | 'hint' | 'baseline' | 'quick-coach' | 'other';
+export type InferencePurpose = 'planning' | 'partner' | 'review' | 'retry' | 'hint' | 'baseline' | 'quick-coach' | 'call-review' | 'other';
 export type InferenceUsage = { inputTokens: number | null; outputTokens: number | null; reasoningTokens: number | null; cachedInputTokens: number | null };
 export type StreamTimingEvent = { phase: 'first-byte' | 'created' | 'text' | 'completed'; characters?: number; usage?: InferenceUsage };
 export type TimingObserver<T> = (result: T) => void | Promise<void>;

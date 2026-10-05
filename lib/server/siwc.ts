@@ -169,8 +169,12 @@ export class SiwcClient {
   private async executeMeasured(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string,
     explicitProbe: boolean, timing: ReturnType<typeof inferenceTiming>): Promise<string> {
     const body = responsesBody(prompt, schema, effort, instructions);
-    // Reserve the full 3-minute response deadline plus model discovery/overhead.
-    const record = await this.access(210_000);
+    // Real-call reviews (purpose 'call-review', long transcripts at high effort) may think for several minutes;
+    // lesson turns keep the 3-minute deadline. Reserve the deadline plus model discovery/overhead.
+    const turnLimit = this.purpose === 'call-review' ? LONG_TURN_MS : TURN_MS;
+    // access() never reserves more than 210 s of token validity; a longer review is bounded by the remaining
+    // lifetime below and retried with a fresh token by its job queue if the credential expires mid-turn.
+    const record = await this.access(Math.min(turnLimit + 30_000, 210_000));
     timing.mark('accessReadyMs');
     // A catalog is a discovery aid. An explicit probe of the user's fixed model
     // can verify access when a new model has not reached the catalog yet. Normal
@@ -181,7 +185,7 @@ export class SiwcClient {
     const remaining = record.expires_at - this.now();
     if (remaining <= 0) throw new SiwcError('expired');
     const controller = new AbortController();
-    const deadline = Math.min(180_000, remaining); const timer = setTimeout(() => controller.abort(), deadline);
+    const deadline = Math.min(turnLimit, remaining); const timer = setTimeout(() => controller.abort(), deadline);
     try {
       timing.mark('requestStartMs');
       const response = await this.fetcher(SIWC_RESOURCE + '/responses', { method: 'POST', headers: { authorization: 'Bearer ' + record.access_token,
@@ -192,7 +196,7 @@ export class SiwcClient {
       if (!record.model_verified_at || record.model_available !== true) await this.markModel(record, true);
       return text;
     } catch (error) {
-      if (controller.signal.aborted) throw new SiwcError(deadline < 180_000 ? 'expired' : 'timeout');
+      if (controller.signal.aborted) throw new SiwcError(deadline < turnLimit ? 'expired' : 'timeout');
       if (error instanceof SiwcError) {
         if (error.code === 'unavailable' || error.code === 'restricted') await this.markModel(record, false);
         throw error;
@@ -214,6 +218,8 @@ export class SiwcClient {
     return this.status();
   }
 }
+const TURN_MS = 180_000;
+const LONG_TURN_MS = 420_000;
 function client(): SiwcClient { return new SiwcClient(); }
 export async function getSiwcBrainStatus(): Promise<BrainStatus> { return client().status(); }
 export async function siwcRun(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string, purpose: InferencePurpose = 'other'): Promise<string> {

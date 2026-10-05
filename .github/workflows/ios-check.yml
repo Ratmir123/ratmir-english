@@ -1,0 +1,40 @@
+name: iPhone compile check
+# Fast feedback for development branches: compile only (no screenshots, no IPA).
+on:
+  workflow_dispatch:
+  push:
+    branches: ['v05-*']
+    paths: ['ios/**', '.github/workflows/ios-check.yml']
+permissions:
+  contents: read
+concurrency:
+  group: ios-check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compile:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shader compiler
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios
+          xcodegen generate
+      - name: Compile app and tests for the simulator
+        run: |
+          set +e
+          xcodebuild -project ios/RatmirEnglish.xcodeproj -scheme RatmirEnglish -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build-for-testing > build.log 2>&1
+          status=$?
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)|TEST BUILD (SUCCEEDED|FAILED)" build.log | head -200
+          exit $status
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-compile-log
+          path: build.log
+          retention-days: 5

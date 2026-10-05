@@ -40,6 +40,7 @@
 !scripts/connect-chatgpt.ts
 !scripts/host-server.mjs
 !scripts/voice-relay.mjs
+!scripts/import-calls.ts
 !deploy/healthcheck.mjs
 
 # Keep these exclusions last, including inside otherwise allowed directories.

@@ -1,35 +1,312 @@
 import SwiftUI
 import UIKit
 
+// MARK: - Colour tokens (planning/v05/DESIGN-SYSTEM.md §2)
+
+/// Semantic colours. Every token is a dynamic UIColor, so light/dark follow the
+/// system and Increase Contrast strengthens secondary text and hairlines.
 enum Theme {
-    static let charcoal = Color(red: 34.0 / 255, green: 33.0 / 255, blue: 36.0 / 255)
-    static let surface = Color(red: 225.0 / 255, green: 225.0 / 255, blue: 225.0 / 255)
-    static let lavender = Color(red: 187.0 / 255, green: 178.0 / 255, blue: 245.0 / 255)
-    static let lime = Color(red: 218.0 / 255, green: 241.0 / 255, blue: 99.0 / 255)
-    static let secondary = charcoal.opacity(0.66)
+    enum Palette {
+        static let base = dynamic(0xEEEEF3, 0x0B0B10)
+        static let ink = dynamic(0x18171C, 0xF5F5F8)
+        static let inkSecondary = dynamic(0x18171C, 0xF5F5F8, lightAlpha: 0.62, darkAlpha: 0.64, contrastAlpha: 0.84)
+        static let inkTertiary = dynamic(0x18171C, 0xF5F5F8, lightAlpha: 0.42, darkAlpha: 0.42, contrastAlpha: 0.70)
+        static let solid = dynamic(0xFFFFFF, 0x17161D)
+        static let well = dynamic(0xF4F4F8, 0x201F28)
+        /// The inverted surface of a screen's one primary task (DESIGN-PASS 0.5.1): graphite / lifted violet-graphite.
+        static let inkSurface = dynamic(0x1D1C22, 0x232130)
+        /// Quiet control fill (secondary buttons, sunken rows), like the system's bordered fill.
+        static let fill = dynamic(0x18171C, 0xFFFFFF, lightAlpha: 0.06, darkAlpha: 0.10, contrastAlpha: 0.16)
+        /// Content surfaces cast a soft offset shadow in light only.
+        static let cardShadow = dynamic(0x1C1646, 0x000000, lightAlpha: 0.06, darkAlpha: 0)
+        static let inkShadow = dynamic(0x1C1646, 0x000000, lightAlpha: 0.20, darkAlpha: 0.35)
+        static let glassHighlight = dynamic(0xFFFFFF, 0xFFFFFF, lightAlpha: 0.85, darkAlpha: 0.16)
+        static let hairline = dynamic(0x141228, 0xFFFFFF, lightAlpha: 0.07, darkAlpha: 0.09, contrastAlpha: 0.32)
+        static let shadow = dynamic(0x1C1646, 0x000000, lightAlpha: 0.18, darkAlpha: 0.60)
+        static let shadowSoft = dynamic(0x1C1646, 0x000000, lightAlpha: 0.07, darkAlpha: 0.35)
+        static let lime = dynamic(0xDAF163, 0xDAF163)
+        /// Lime-family text that stays readable on light backgrounds.
+        static let limeInk = dynamic(0x4E6A00, 0xDAF163)
+        static let lavender = dynamic(0xBBB2F5, 0xC4BCFF)
+        static let violet = dynamic(0x6F5CF2, 0x8D7DFF)
+        static let cyan = dynamic(0x3FD5EA, 0x4FE0F2)
+        static let pink = dynamic(0xFF8FB1, 0xFF8FB1)
+        static let warning = dynamic(0xFF9F0A, 0xFF9F0A)
+        static let danger = dynamic(0xFF453A, 0xFF453A)
+        static let ctaFill = dynamic(0x18171C, 0xDAF163)
+        static let ctaLabel = dynamic(0xDAF163, 0x121116)
+        static let ctaDisabled = dynamic(0x18171C, 0xF5F5F8, lightAlpha: 0.10, darkAlpha: 0.12)
+        // One quiet tone with barely visible depth (same alphas as the web's --ambient-*).
+        static let ambientViolet = dynamic(0xBBB2F5, 0x5B4BE0, lightAlpha: 0.20, darkAlpha: 0.18)
+        static let ambientCyan = dynamic(0x7FE3F0, 0x1FB5C9, lightAlpha: 0.12, darkAlpha: 0.08)
+        static let ambientLime = dynamic(0xDAF163, 0xB7D93A, lightAlpha: 0.10, darkAlpha: 0.05)
+
+        static func dynamic(_ light: UInt32, _ dark: UInt32, lightAlpha: CGFloat = 1, darkAlpha: CGFloat = 1, contrastAlpha: CGFloat? = nil) -> UIColor {
+            UIColor { traits in
+                let isDark = traits.userInterfaceStyle == .dark
+                var alpha = isDark ? darkAlpha : lightAlpha
+                if let contrastAlpha, traits.accessibilityContrast == .high { alpha = max(alpha, contrastAlpha) }
+                return Palette.rgb(isDark ? dark : light, alpha: alpha)
+            }
+        }
+        static func rgb(_ hex: UInt32, alpha: CGFloat) -> UIColor {
+            UIColor(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
+                    blue: CGFloat(hex & 0xFF) / 255, alpha: alpha)
+        }
+    }
+
+    static let base = Color(uiColor: Palette.base)
+    static let ink = Color(uiColor: Palette.ink)
+    static let inkSecondary = Color(uiColor: Palette.inkSecondary)
+    static let inkTertiary = Color(uiColor: Palette.inkTertiary)
+    static let solid = Color(uiColor: Palette.solid)
+    static let well = Color(uiColor: Palette.well)
+    static let inkSurface = Color(uiColor: Palette.inkSurface)
+    static let fill = Color(uiColor: Palette.fill)
+    static let cardShadow = Color(uiColor: Palette.cardShadow)
+    static let inkShadow = Color(uiColor: Palette.inkShadow)
+    static let glassHighlight = Color(uiColor: Palette.glassHighlight)
+    static let hairline = Color(uiColor: Palette.hairline)
+    static let shadow = Color(uiColor: Palette.shadow)
+    static let shadowSoft = Color(uiColor: Palette.shadowSoft)
+    static let lime = Color(uiColor: Palette.lime)
+    static let limeInk = Color(uiColor: Palette.limeInk)
+    static let lavender = Color(uiColor: Palette.lavender)
+    static let violet = Color(uiColor: Palette.violet)
+    static let cyan = Color(uiColor: Palette.cyan)
+    static let pink = Color(uiColor: Palette.pink)
+    static let warning = Color(uiColor: Palette.warning)
+    static let danger = Color(uiColor: Palette.danger)
+    static let ctaFill = Color(uiColor: Palette.ctaFill)
+    static let ctaLabel = Color(uiColor: Palette.ctaLabel)
+    static let ctaDisabled = Color(uiColor: Palette.ctaDisabled)
+    static let ambientViolet = Color(uiColor: Palette.ambientViolet)
+    static let ambientCyan = Color(uiColor: Palette.ambientCyan)
+    static let ambientLime = Color(uiColor: Palette.ambientLime)
+    /// Text on light accent fills (lime, lavender, cyan), identical in both themes.
+    static let onAccent = Color(red: 24.0 / 255, green: 23.0 / 255, blue: 28.0 / 255)
+
+    // v0.4 names, kept for source compatibility. They are adaptive now.
+    static let charcoal = ink
+    static let surface = base
+    static let secondary = inkSecondary
 }
 
-/// Short, retargetable springs. State and hit targets never wait for motion.
+enum Radius {
+    static let card: CGFloat = 28
+    static let sheet: CGFloat = 34
+    static let tile: CGFloat = 22
+    static let input: CGFloat = 18
+}
+
+/// Display type uses SF Rounded (DESIGN-SYSTEM §2 Type); numbers are rounded and tabular.
+enum TypeScale {
+    static let hero = Font.system(.largeTitle, design: .rounded).weight(.bold)
+    static let title = Font.system(.title, design: .rounded).weight(.semibold)
+    static let title2 = Font.system(.title2, design: .rounded).weight(.semibold)
+    static let title3 = Font.system(.title3, design: .rounded).weight(.semibold)
+    static let headline = Font.system(.headline, design: .rounded)
+    static let stat = Font.system(.title2, design: .rounded).weight(.semibold).monospacedDigit()
+    static let bigStat = Font.system(.largeTitle, design: .rounded).weight(.bold).monospacedDigit()
+}
+
+// MARK: - Motion (DESIGN-SYSTEM §2 Motion)
+
+/// Ordinary controls and state changes ease out without overshoot (DESIGN-PASS 0.5.1 «Движение»):
+/// press 160 ms, state 240 ms. `bouncy` is only for the mascot, medals and reward moments.
+/// State and hit targets never wait for motion.
 enum NativeMotion {
-    static let press = Animation.interactiveSpring(response: 0.20, dampingFraction: 0.82, blendDuration: 0.08)
-    static let selection = Animation.interactiveSpring(response: 0.28, dampingFraction: 0.88, blendDuration: 0.10)
-    static let settle = Animation.interactiveSpring(response: 0.30, dampingFraction: 0.82, blendDuration: 0.10)
-    static let reveal = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.22)
+    static let press = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.16)
+    static let standard = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.24)
+    static let bouncy = Animation.bouncy(duration: 0.5, extraBounce: 0.1)
+    static let selection = Animation.spring(response: 0.28, dampingFraction: 0.88)
+    static let settle = Animation.spring(response: 0.30, dampingFraction: 0.82)
+    static let reveal = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.32)
     static let feedback = Animation.easeOut(duration: 0.16)
-    static var insertion: AnyTransition { .opacity.combined(with: .offset(y: 5)) }
+    static var insertion: AnyTransition {
+        .modifier(active: RevealEffect(progress: 0), identity: RevealEffect(progress: 1))
+    }
+    /// Lists and cards stagger 40 ms, at most six items.
+    static func stagger(_ index: Int) -> Animation { standard.delay(Double(min(max(index, 0), 6)) * 0.04) }
 }
 
-/// The supplied learning palette remains light and legible inside reading regions.
-/// This local environment does not force the device's tab bar, sheets, or system UI.
-struct ReadingCanvas: ViewModifier {
+/// Opacity + 8 pt rise + blur 6 → 0.
+struct RevealEffect: ViewModifier {
+    let progress: Double
     func body(content: Content) -> some View {
-        content.background(Theme.surface).foregroundStyle(Theme.charcoal)
-            .environment(\.colorScheme, .light)
-            .toolbarColorScheme(.light, for: .navigationBar)
+        content.opacity(progress)
+            .offset(y: CGFloat(1 - progress) * 8)
+            .blur(radius: CGFloat(1 - progress) * 6)
     }
 }
 
-/// Material belongs to floating controls. Reading surfaces remain quiet and solid.
+/// Staggered entrance for cards (max six). Reduce Motion: shown at once.
+struct StaggeredReveal: ViewModifier {
+    let index: Int
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func body(content: Content) -> some View {
+        content.modifier(RevealEffect(progress: shown || reduceMotion ? 1 : 0))
+            .onAppear {
+                guard !shown else { return }
+                if reduceMotion { shown = true } else { withAnimation(NativeMotion.stagger(index)) { shown = true } }
+            }
+    }
+}
+
+extension View {
+    func staggeredReveal(_ index: Int) -> some View { modifier(StaggeredReveal(index: index)) }
+}
+
+// MARK: - Russian formatting
+
+/// Dates and numbers always use Russian conventions ("3 окт.", "1 500 XP", 24 h).
+enum RuFormat {
+    static let locale = Locale(identifier: "ru_RU")
+    static func plural(_ count: Int, _ one: String, _ few: String, _ many: String) -> String {
+        let n10 = abs(count) % 10
+        let n100 = abs(count) % 100
+        if n10 == 1 && n100 != 11 { return one }
+        if (2...4).contains(n10) && !(12...14).contains(n100) { return few }
+        return many
+    }
+    static func count(_ value: Int, _ one: String, _ few: String, _ many: String) -> String {
+        number(value) + " " + plural(value, one, few, many)
+    }
+    static func minutes(_ value: Int) -> String { count(value, "минуту", "минуты", "минут") }
+    static func number(_ value: Int) -> String { value.formatted(.number.locale(locale)) }
+    static func xp(_ value: Int) -> String { number(value) + " XP" }
+    static func day(_ date: Date) -> String { date.formatted(.dateTime.day().month(.abbreviated).locale(locale)) }
+    static func dayTime(_ date: Date) -> String {
+        date.formatted(.dateTime.day().month(.abbreviated).hour().minute().locale(locale))
+    }
+    static func time(_ date: Date) -> String { date.formatted(.dateTime.hour().minute().locale(locale)) }
+    static func weekday(_ date: Date) -> String { date.formatted(.dateTime.weekday(.abbreviated).locale(locale)) }
+    static func relativeDay(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Сегодня" }
+        if calendar.isDateInYesterday(date) { return "Вчера" }
+        return day(date)
+    }
+}
+
+enum NativeDate {
+    private static let fractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    private static let plain = ISO8601DateFormatter()
+    static func parse(_ value: String) -> Date? { fractional.date(from: value) ?? plain.date(from: value) }
+}
+
+// MARK: - Canvas and ambient background
+
+/// Slow aurora behind content: MeshGradient on iOS 18+, blurred blobs on iOS 17,
+/// static with Reduce Motion, solid with Reduce Transparency. Paused off screen.
+struct AmbientBackdrop: View {
+    var intensity: Double = 1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var visible = false
+    private var moving: Bool { visible && !reduceMotion && scenePhase == .active }
+    var body: some View {
+        ZStack {
+            Theme.base
+            if !reduceTransparency {
+                TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !moving)) { context in
+                    AmbientLayer(time: moving ? context.date.timeIntervalSinceReferenceDate : 0)
+                }
+                .opacity(intensity)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear { visible = true }
+        .onDisappear { visible = false }
+    }
+}
+
+private struct AmbientLayer: View {
+    let time: Double
+    var body: some View {
+        if #available(iOS 18.0, *) {
+            AmbientMesh(time: time)
+        } else {
+            AmbientBlobs(time: time)
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct AmbientMesh: View {
+    let time: Double
+    var body: some View {
+        MeshGradient(width: 3, height: 3, points: points, colors: colors)
+    }
+    private var points: [SIMD2<Float>] {
+        let a = Float(sin(time * 2 * Double.pi / 34))
+        let b = Float(cos(time * 2 * Double.pi / 41))
+        let c = Float(sin(time * 2 * Double.pi / 38 + 1.3))
+        let d = Float(cos(time * 2 * Double.pi / 45 + 0.7))
+        let topMiddle = SIMD2<Float>(0.5 + 0.16 * a, 0)
+        let leftMiddle = SIMD2<Float>(0, 0.45 + 0.14 * b)
+        let center = SIMD2<Float>(0.5 + 0.13 * c, 0.5 + 0.11 * d)
+        let rightMiddle = SIMD2<Float>(1, 0.55 + 0.14 * a)
+        let bottomMiddle = SIMD2<Float>(0.5 + 0.16 * d, 1)
+        return [SIMD2<Float>(0, 0), topMiddle, SIMD2<Float>(1, 0),
+                leftMiddle, center, rightMiddle,
+                SIMD2<Float>(0, 1), bottomMiddle, SIMD2<Float>(1, 1)]
+    }
+    private var colors: [Color] {
+        [Theme.ambientViolet, Color.clear, Theme.ambientCyan,
+         Color.clear, Theme.ambientLime.opacity(0.55), Color.clear,
+         Theme.ambientCyan.opacity(0.7), Theme.ambientLime, Theme.ambientViolet]
+    }
+}
+
+private struct AmbientBlobs: View {
+    let time: Double
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let height = proxy.size.height
+            ZStack {
+                blob(Theme.ambientViolet, side: width * 1.05,
+                     x: -width * 0.30 + CGFloat(sin(time * 2 * Double.pi / 34)) * width * 0.08, y: -height * 0.30)
+                blob(Theme.ambientCyan, side: width * 0.9,
+                     x: width * 0.34, y: -height * 0.04 + CGFloat(cos(time * 2 * Double.pi / 41)) * height * 0.05)
+                blob(Theme.ambientLime, side: width * 0.85,
+                     x: -width * 0.08 + CGFloat(cos(time * 2 * Double.pi / 38)) * width * 0.07, y: height * 0.34)
+            }
+            .frame(width: width, height: height)
+        }
+    }
+    private func blob(_ color: Color, side: CGFloat, x: CGFloat, y: CGFloat) -> some View {
+        Circle().fill(color).frame(width: side, height: side).blur(radius: side * 0.22).offset(x: x, y: y)
+    }
+}
+
+/// Screen root: ambient background and adaptive foreground. Never forces a colour scheme.
+struct LiquidCanvas: ViewModifier {
+    var intensity: Double = 1
+    func body(content: Content) -> some View {
+        content.foregroundStyle(Theme.ink)
+            .background { AmbientBackdrop(intensity: intensity) }
+    }
+}
+
+/// v0.4 name kept for source compatibility: now the adaptive canvas.
+struct ReadingCanvas: ViewModifier {
+    func body(content: Content) -> some View { content.modifier(LiquidCanvas()) }
+}
+
+// MARK: - Materials
+
+/// Glass for floating chrome only (tab bar, sheet headers, the conversation dock, toasts). iOS 26+: Liquid Glass; earlier:
+/// thin material, inner highlight and a float shadow; Reduce Transparency / Increase Contrast: solid.
 struct LiquidChrome: ViewModifier {
     @Environment(\.isEnabled) private var isEnabled
     var radius: CGFloat = 28
@@ -38,81 +315,279 @@ struct LiquidChrome: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if !isEnabled {
-            content.background(Theme.surface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-                .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.white.opacity(0.7), lineWidth: 1).allowsHitTesting(false) }
-        } else if reduceTransparency || contrast == .increased {
-            content.background(tint ?? .white, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-                .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Theme.charcoal.opacity(0.22), lineWidth: 1).allowsHitTesting(false) }
+    @ViewBuilder func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        if reduceTransparency || contrast == .increased {
+            content.background { SolidChromeFill(shape: shape, tint: tint) }
         } else if #available(iOS 26.0, *) {
             if let tint {
-                content.glassEffect(.regular.tint(tint).interactive(interactive && !reduceMotion), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+                content.glassEffect(.regular.tint(tint).interactive(interactive && isEnabled && !reduceMotion), in: shape)
             } else {
-                content.glassEffect(.regular.interactive(interactive && !reduceMotion), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+                content.glassEffect(.regular.interactive(interactive && isEnabled && !reduceMotion), in: shape)
             }
         } else {
-            if let tint {
-                content.background(tint, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-                    .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.white.opacity(0.25), lineWidth: 1).allowsHitTesting(false) }
-            } else {
-                content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-                    .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.white.opacity(0.7), lineWidth: 1).allowsHitTesting(false) }
-                    .shadow(color: Theme.charcoal.opacity(0.065), radius: 10, x: 0, y: 4)
-            }
+            content.background { GlassFallbackFill(shape: shape, tint: tint) }
         }
     }
 }
 
-/// One native container batches the few floating control effects and lets the system
-/// preserve their fluid interaction. The reading content itself never becomes glass.
+private struct SolidChromeFill: View {
+    let shape: RoundedRectangle
+    let tint: Color?
+    var body: some View {
+        ZStack {
+            shape.fill(Theme.solid)
+            if let tint { shape.fill(tint.opacity(0.55)) }
+            shape.strokeBorder(Theme.hairline, lineWidth: 1)
+        }
+    }
+}
+
+private struct GlassFallbackFill: View {
+    let shape: RoundedRectangle
+    let tint: Color?
+    var body: some View {
+        ZStack {
+            shape.fill(.ultraThinMaterial)
+            if let tint { shape.fill(tint.opacity(0.62)) }
+            shape.strokeBorder(LinearGradient(colors: [Theme.glassHighlight, Theme.hairline], startPoint: .top, endPoint: .bottom), lineWidth: 1)
+        }
+        .shadow(color: Theme.shadow, radius: 16, x: 0, y: 10)
+    }
+}
+
+/// One native container batches sibling glass and lets the system morph it.
 struct NativeGlassGroup<Content: View>: View {
+    let spacing: CGFloat
     let content: Content
-    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    init(spacing: CGFloat = 10, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing
+        self.content = content()
+    }
     @ViewBuilder var body: some View {
-        if #available(iOS 26.0, *) { GlassEffectContainer(spacing: 8) { content } }
+        if #available(iOS 26.0, *) { GlassEffectContainer(spacing: spacing) { content } }
         else { content }
     }
 }
 
-/// A full-width optical backing, including the home-indicator area. Glass buttons
-/// float above it, while sharp scrolling text cannot compete with the composer.
+/// Content surface (DESIGN-PASS 0.5.1): opaque card colour, a hairline edge and a soft offset shadow
+/// in light only. Content never sits on glass; a status tint is a quiet wash over the solid fill.
+struct ContentSurface: ViewModifier {
+    var radius: CGFloat = Radius.card
+    var tint: Color? = nil
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        content
+            .background {
+                ZStack {
+                    shape.fill(Theme.solid)
+                    if let tint { shape.fill(tint.opacity(0.6)) }
+                }
+                .shadow(color: Theme.cardShadow, radius: 10, x: 0, y: 4)
+            }
+            .overlay { shape.strokeBorder(Theme.hairline, lineWidth: 1).allowsHitTesting(false) }
+    }
+}
+
+extension View {
+    func contentSurface(radius: CGFloat = Radius.card, tint: Color? = nil) -> some View {
+        modifier(ContentSurface(radius: radius, tint: tint))
+    }
+}
+
+/// Content card (v0.4 name kept): a solid `ContentSurface`. Glass belongs to chrome only.
+struct LiquidCard<Content: View>: View {
+    let radius: CGFloat
+    let padding: CGFloat
+    let tint: Color?
+    let content: Content
+    init(radius: CGFloat = Radius.card, padding: CGFloat = 20, tint: Color? = nil, @ViewBuilder content: () -> Content) {
+        self.radius = radius
+        self.padding = padding
+        self.tint = tint
+        self.content = content()
+    }
+    var body: some View {
+        content.frame(maxWidth: .infinity, alignment: .leading).padding(padding)
+            .contentSurface(radius: radius, tint: tint)
+    }
+}
+
+/// Solid reading surface (reviews, transcripts, long text). Never glass.
+struct SurfaceCard<Content: View>: View {
+    let color: Color
+    let content: Content
+    init(color: Color = Theme.solid, @ViewBuilder content: () -> Content) {
+        self.color = color
+        self.content = content()
+    }
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+        content.frame(maxWidth: .infinity, alignment: .leading).padding(20)
+            .background { shape.fill(color).shadow(color: Theme.cardShadow, radius: 10, x: 0, y: 4) }
+            .overlay { shape.strokeBorder(Theme.hairline, lineWidth: 1).allowsHitTesting(false) }
+    }
+}
+
+/// The one primary task of a screen: an inverted surface (graphite in light, lifted violet-graphite
+/// in dark) with light text and the lime action. The content renders in the dark appearance, so every
+/// adaptive token (text, hairlines, `PrimaryButton`) flips with it.
+struct InkCard<Content: View>: View {
+    let padding: CGFloat
+    let content: Content
+    init(padding: CGFloat = 22, @ViewBuilder content: () -> Content) {
+        self.padding = padding
+        self.content = content()
+    }
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(padding)
+            .foregroundStyle(Theme.ink)
+            .environment(\.colorScheme, .dark)
+            .background { shape.fill(Theme.inkSurface).shadow(color: Theme.inkShadow, radius: 18, x: 0, y: 10) }
+            .overlay { shape.strokeBorder(Color.white.opacity(0.08), lineWidth: 1).allowsHitTesting(false) }
+    }
+}
+
+/// One surface holding a list of rows (no cards inside cards); rows are separated with `RowDivider`.
+/// An optional title sits inside the surface above the first row.
+struct GroupedRows<Content: View>: View {
+    let title: String?
+    let content: Content
+    init(_ title: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let title {
+                Text(title).font(TypeScale.headline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 4)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .contentSurface()
+    }
+}
+
+/// Hairline between rows of one surface, inset from the leading edge like a system list.
+struct RowDivider: View {
+    var inset: CGFloat = 16
+    var body: some View {
+        Rectangle().fill(Theme.hairline).frame(height: 1).padding(.leading, inset).accessibilityHidden(true)
+    }
+}
+
+/// A tappable row inside `GroupedRows`: optional stroke icon, title, detail and a trailing chevron or accessory.
+struct ListRowLabel<Accessory: View>: View {
+    var icon: String? = nil
+    let title: String
+    var detail: String? = nil
+    var showsChevron = true
+    let accessory: Accessory
+    init(icon: String? = nil, title: String, detail: String? = nil, showsChevron: Bool = true,
+         @ViewBuilder accessory: () -> Accessory) {
+        self.icon = icon
+        self.title = title
+        self.detail = detail
+        self.showsChevron = showsChevron
+        self.accessory = accessory()
+    }
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            if let icon {
+                Image(systemName: icon).font(.body.weight(.medium)).foregroundStyle(Theme.ink)
+                    .frame(width: 26).accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.semibold)).multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail, !detail.isEmpty {
+                    Text(detail).font(.footnote).foregroundStyle(Theme.inkSecondary).multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            accessory
+            if showsChevron {
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .foregroundStyle(Theme.ink)
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
+
+extension ListRowLabel where Accessory == EmptyView {
+    init(icon: String? = nil, title: String, detail: String? = nil, showsChevron: Bool = true) {
+        self.init(icon: icon, title: title, detail: detail, showsChevron: showsChevron) { EmptyView() }
+    }
+}
+
+/// Row press feedback inside a grouped surface: a quiet fill instead of a scale.
+struct RowButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(isEnabled ? 1 : 0.46)
+            .background(configuration.isPressed && isEnabled ? Theme.fill : Color.clear)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Composer dock
+
+/// Bottom glass backing of the conversation dock. Drawn only when the dock has content (C-14).
 struct ComposerBackdrop: ViewModifier {
+    var visible = true
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     func body(content: Content) -> some View {
         content.frame(maxWidth: .infinity)
             .background {
-                if reduceTransparency || contrast == .increased {
-                    UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
-                        .fill(Theme.surface)
-                } else {
-                    UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
-                        .fill(.regularMaterial)
-                        .overlay {
-                            UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
-                                .fill(Color.white.opacity(0.58))
-                        }
+                if visible {
+                    if reduceTransparency || contrast == .increased {
+                        UnevenRoundedRectangle(topLeadingRadius: Radius.sheet, topTrailingRadius: Radius.sheet, style: .continuous)
+                            .fill(Theme.solid)
+                    } else {
+                        UnevenRoundedRectangle(topLeadingRadius: Radius.sheet, topTrailingRadius: Radius.sheet, style: .continuous)
+                            .fill(.regularMaterial)
+                            .overlay(alignment: .top) {
+                                UnevenRoundedRectangle(topLeadingRadius: Radius.sheet, topTrailingRadius: Radius.sheet, style: .continuous)
+                                    .stroke(Theme.hairline, lineWidth: 1)
+                            }
+                            .shadow(color: Theme.shadowSoft, radius: 18, x: 0, y: -4)
+                    }
                 }
             }
-            .environment(\.colorScheme, .light)
     }
 }
 
-/// The backing owns the whole bottom edge. A safeAreaBar adds another system
-/// surface below the custom composer, so the inset intentionally has no gap.
+/// The backing owns the whole bottom edge, including the home-indicator area.
 struct ConversationDock<Dock: View>: ViewModifier {
+    let showsBackdrop: Bool
     let dock: Dock
-    @State private var containerBottomInset: CGFloat?
-    init(@ViewBuilder dock: () -> Dock) { self.dock = dock() }
+    @State private var containerBottomInset: CGFloat? = nil
+    init(showsBackdrop: Bool = true, @ViewBuilder dock: () -> Dock) {
+        self.showsBackdrop = showsBackdrop
+        self.dock = dock()
+    }
     func body(content: Content) -> some View {
         GeometryReader { geometry in
             content.safeAreaInset(edge: .bottom, spacing: 0) {
                 // The space is part of this backing's real layout, not a shape
                 // escaping an inset. Sheet/large-type content cannot leak below it.
                 dock.padding(.bottom, containerBottomInset ?? geometry.safeAreaInsets.bottom)
-                    .modifier(ComposerBackdrop())
+                    .modifier(ComposerBackdrop(visible: showsBackdrop))
             }
             .ignoresSafeArea(.container, edges: .bottom)
         }
@@ -151,44 +626,153 @@ private struct ContainerBottomInsetReader: UIViewRepresentable {
     }
 }
 
-struct SoftDisclosureStyle: DisclosureGroupStyle {
+// MARK: - Buttons
+
+struct PressButton: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(reduceMotion ? nil : NativeMotion.reveal) { configuration.isExpanded.toggle() }
-            } label: {
-                HStack(spacing: 12) {
-                    configuration.label.frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: "chevron.down").font(.caption.weight(.semibold))
-                        .rotationEffect(.degrees(configuration.isExpanded ? 180 : 0))
-                        .foregroundStyle(Theme.secondary)
-                }.foregroundStyle(Theme.charcoal).frame(minHeight: 44).contentShape(Rectangle())
-            }.buttonStyle(PressButton())
-                .accessibilityValue(configuration.isExpanded ? "Развёрнуто" : "Свёрнуто")
-                .accessibilityHint("Дважды коснись, чтобы " + (configuration.isExpanded ? "свернуть подробности." : "раскрыть подробности."))
-            if configuration.isExpanded {
-                configuration.content.transition(reduceMotion ? .identity : NativeMotion.insertion)
-            }
-        }
+        configuration.label.opacity(isEnabled ? 1 : 0.46)
+            .opacity(configuration.isPressed && isEnabled ? 0.85 : 1)
+            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
     }
 }
 
-enum NativeDate {
-    static func parse(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+/// The one filled action of a screen: charcoal + lime in light, lime + dark in dark.
+/// `compact` sizes it for a row (44 pt tall, hugging its label).
+struct PrimaryButton: ButtonStyle {
+    var compact = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(compact ? .subheadline.weight(.semibold) : .body.weight(.semibold))
+            .padding(.horizontal, compact ? 18 : 22).padding(.vertical, compact ? 10 : 15)
+            .frame(maxWidth: compact ? nil : .infinity, minHeight: compact ? 44 : 52)
+            .foregroundStyle(isEnabled ? Theme.ctaLabel : Theme.inkTertiary)
+            .background(isEnabled ? Theme.ctaFill : Theme.ctaDisabled, in: Capsule())
+            .shadow(color: isEnabled ? Theme.cardShadow : Color.clear, radius: 8, x: 0, y: 4)
+            .contentShape(Capsule())
+            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
     }
 }
+
+/// Secondary action: a quiet filled capsule (like the system bordered button). Not glass: it sits on content.
+struct SecondaryButton: ButtonStyle {
+    var compact = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(compact ? .subheadline.weight(.semibold) : .body.weight(.semibold))
+            .padding(.horizontal, compact ? 18 : 20).padding(.vertical, compact ? 10 : 14)
+            .frame(maxWidth: compact ? nil : .infinity, minHeight: compact ? 44 : 50)
+            .foregroundStyle(isEnabled ? Theme.ink : Theme.inkTertiary)
+            .background(Theme.fill, in: Capsule())
+            .contentShape(Capsule())
+            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
+    }
+}
+
+/// Sheet close control for the navigation bar: an xmark (iOS 26 renders it as a glass circle), so a
+/// long sheet title never truncates a text button to «От…». The spoken label keeps the verb.
+struct SheetCloseButton: View {
+    var title = "Отмена"
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) { Image(systemName: "xmark").font(.body.weight(.semibold)) }
+            .accessibilityLabel(title)
+    }
+}
+
+/// Small quiet capsule for secondary actions (min 44 × 44).
+struct QuietButton: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.footnote.weight(.semibold)).padding(.horizontal, 14).padding(.vertical, 11)
+            .frame(minWidth: 44, minHeight: 44)
+            .foregroundStyle(isEnabled ? Theme.ink : Theme.inkTertiary)
+            .background(Theme.fill, in: Capsule())
+            .contentShape(Capsule())
+            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
+    }
+}
+
+/// Round icon control on content (play a line, delete a row): solid quiet fill or a status tint.
+struct SoftIconButton: ButtonStyle {
+    var size: CGFloat = 44
+    var tint: Color? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .frame(width: size, height: size)
+            .foregroundStyle(isEnabled ? Theme.ink : Theme.inkTertiary)
+            .background(tint ?? Theme.fill, in: Circle())
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Circle())
+            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? 0.94 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
+    }
+}
+
+/// Circular glass icon button (44 pt by default) — floating chrome only (dock, sheet header).
+struct LiquidIconButton: ButtonStyle {
+    var size: CGFloat = 44
+    var tint: Color? = nil
+    var foreground: Color = Theme.ink
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .frame(width: size, height: size)
+            .foregroundStyle(isEnabled ? foreground : Theme.inkTertiary)
+            .modifier(LiquidChrome(radius: size / 2, tint: tint, interactive: false))
+            .contentShape(Circle())
+            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? 0.92 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
+    }
+}
+
+/// Destructive text action in a quiet capsule.
+struct DestructiveQuietButton: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.footnote.weight(.semibold)).padding(.horizontal, 14).padding(.vertical, 11)
+            .frame(minWidth: 44, minHeight: 44)
+            .foregroundStyle(isEnabled ? Theme.danger : Theme.inkTertiary)
+            .background(Theme.fill, in: Capsule())
+            .contentShape(Capsule())
+            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
+    }
+}
+
+struct SegmentPressButton: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.scaleEffect(configuration.isPressed && !reduceMotion ? 0.965 : 1)
+            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
+    }
+}
+
+// MARK: - Small components
 
 struct BrandMark: View {
     let size: CGFloat
     var body: some View {
         Text("S·").font(.system(size: size * 0.55, weight: .bold, design: .rounded))
-            .foregroundStyle(Theme.charcoal).frame(width: size, height: size)
+            .foregroundStyle(Theme.onAccent).frame(width: size, height: size)
             .background(Theme.lime, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
-            .accessibilityLabel("Smooth English")
+            .accessibilityLabel("Smooth Talk")
     }
 }
 
@@ -197,50 +781,117 @@ struct ScreenHeading: View {
     let subtitle: String
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.system(.largeTitle, design: .rounded).weight(.semibold)).tracking(-0.7)
-            Text(subtitle).font(.subheadline).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(title).font(TypeScale.hero).tracking(-0.6)
+            Text(subtitle).font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
         }.padding(.top, 12).padding(.bottom, 4)
     }
 }
 
+/// Small caption label (form fields, eyebrows).
 struct InputLabel: View {
     let title: String
-    var body: some View { Text(title).font(.caption.weight(.medium)).foregroundStyle(Theme.secondary) }
+    var body: some View { Text(title).font(.caption.weight(.semibold)).foregroundStyle(Theme.inkSecondary) }
 }
 
-struct SurfaceCard<Content: View>: View {
-    let color: Color
-    let content: Content
-    init(color: Color = .white, @ViewBuilder content: () -> Content) { self.color = color; self.content = content() }
-    var body: some View {
-        content.frame(maxWidth: .infinity, alignment: .leading).padding(20)
-            .background(color, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color.white.opacity(0.45), lineWidth: 1).allowsHitTesting(false) }
-    }
-}
-
-struct Metric: View {
-    let value: String
+/// Section title with real emphasis (the review's key sections are not grey captions).
+struct LiquidSectionHeader: View {
     let title: String
-    let color: Color
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var systemImage: String? = nil
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(value).font(.system(.largeTitle, design: .rounded).weight(.semibold)).monospacedDigit().tracking(-1)
-                .contentTransition(reduceMotion ? .identity : .numericText())
-            Text(title).font(.caption.weight(.medium))
-        }.foregroundStyle(Theme.charcoal).frame(maxWidth: .infinity, alignment: .leading).padding(20)
-            .background(color, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .animation(reduceMotion ? nil : NativeMotion.feedback, value: value)
+        HStack(spacing: 8) {
+            if let systemImage { Image(systemName: systemImage).foregroundStyle(Theme.ink).accessibilityHidden(true) }
+            Text(title).font(TypeScale.headline.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
+/// Status chip: a coloured dot and ink text, readable over any background.
 struct StatusPill: View {
     let title: String
     let color: Color
     var body: some View {
-        Text(title).font(.caption2.weight(.semibold)).foregroundStyle(Theme.charcoal)
-            .padding(.horizontal, 10).padding(.vertical, 7).background(color, in: Capsule())
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(title).font(.caption2.weight(.semibold)).foregroundStyle(Theme.ink)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(color.opacity(0.22), in: Capsule())
+        .overlay { Capsule().strokeBorder(Theme.hairline, lineWidth: 1) }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A number and its label, placed inside a host surface (no tile, no colour bar of its own).
+struct Metric: View {
+    let value: String
+    let title: String
+    var color: Color = Theme.violet
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(TypeScale.stat)
+                .contentTransition(reduceMotion ? .identity : .numericText())
+            Text(title).font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(Theme.ink)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(reduceMotion ? nil : NativeMotion.feedback, value: value)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Inline, non-modal message with an optional action (recoverable errors, notices).
+struct InlineBanner: View {
+    enum Tone { case error, warning, info, success }
+    let tone: Tone
+    let title: String
+    var message: String? = nil
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
+    var dismiss: (() -> Void)? = nil
+    private var icon: String {
+        switch tone {
+        case .error: return "exclamationmark.triangle.fill"
+        case .warning: return "exclamationmark.circle.fill"
+        case .info: return "info.circle.fill"
+        case .success: return "checkmark.seal.fill"
+        }
+    }
+    private var color: Color {
+        switch tone {
+        case .error: return Theme.danger
+        case .warning: return Theme.warning
+        case .info: return Theme.violet
+        case .success: return Theme.limeInk
+        }
+    }
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).foregroundStyle(color).font(.body.weight(.semibold)).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                if let message, !message.isEmpty {
+                    Text(message).font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                }
+                if let actionTitle, let action {
+                    Button(actionTitle, action: action).buttonStyle(QuietButton()).padding(.top, 2)
+                }
+            }
+            Spacer(minLength: 0)
+            if let dismiss {
+                Button(action: dismiss) { Image(systemName: "xmark").font(.caption.weight(.bold)) }
+                    .buttonStyle(SoftIconButton(size: 32))
+                    .accessibilityLabel("Скрыть сообщение")
+            }
+        }
+        .padding(14)
+        .background(Theme.solid, in: RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous).strokeBorder(color.opacity(0.45), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -250,8 +901,7 @@ struct SelectionOption: Identifiable {
     let icon: String
 }
 
-/// Let the system own the glass and the foreground together. A separately
-/// composited glass view can refract/erase sibling text even from a background.
+/// System segmented control (platform glass) or a large-type list.
 struct SelectionRow: View {
     @Binding var selection: String
     let options: [SelectionOption]
@@ -275,23 +925,22 @@ struct SelectionRow: View {
                                     Image(systemName: "checkmark").font(.system(size: 24, weight: .semibold))
                                         .frame(width: 28, height: 32)
                                 }
-                            }.foregroundStyle(Theme.charcoal).padding(16).frame(maxWidth: .infinity, minHeight: 54)
-                                .background(selection == option.id ? Theme.lavender.opacity(0.48) : Theme.surface.opacity(0.42),
+                            }.foregroundStyle(Theme.ink).padding(16).frame(maxWidth: .infinity, minHeight: 54)
+                                .background(selection == option.id ? Theme.lavender.opacity(0.42) : Theme.well,
                                             in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                         }.buttonStyle(SegmentPressButton()).accessibilityAddTraits(selection == option.id ? .isSelected : [])
                     }
                 }
             } else {
                 NativePracticeSegments(selection: $selection, options: options, reduceMotion: reduceMotion)
-                    .frame(height: 46)
+                    .frame(height: 40)
             }
         }.sensoryFeedback(.selection, trigger: selection)
     }
 }
 
-/// UISegmentedControl adopts the same system Liquid Glass interaction as the
-/// native navigation controls when built with the current SDK. Do not set custom
-/// background/divider images, colored selected backgrounds, or sibling overlays.
+/// UISegmentedControl adopts the system Liquid Glass interaction with the current SDK.
+/// Do not set custom background/divider images or coloured selected backgrounds.
 struct NativePracticeSegments: UIViewRepresentable {
     @Binding var selection: String
     let options: [SelectionOption]
@@ -335,11 +984,10 @@ final class NativePracticeSegmentedControl: UISegmentedControl {
                 setTitle(option.title, forSegmentAt: index)
             }
         }
-        let foreground = UIColor(red: 34 / 255, green: 33 / 255, blue: 36 / 255, alpha: 1)
         let normalFont = UIFont.preferredFont(forTextStyle: .subheadline)
         let selectedFont = UIFont.systemFont(ofSize: normalFont.pointSize, weight: .semibold)
-        setTitleTextAttributes([.foregroundColor: foreground.withAlphaComponent(0.74), .font: normalFont], for: .normal)
-        setTitleTextAttributes([.foregroundColor: foreground, .font: selectedFont], for: .selected)
+        setTitleTextAttributes([.foregroundColor: Theme.Palette.inkSecondary, .font: normalFont], for: .normal)
+        setTitleTextAttributes([.foregroundColor: Theme.Palette.ink, .font: selectedFont], for: .selected)
         let nextIndex = options.firstIndex { $0.id == selectedID } ?? UISegmentedControl.noSegment
         guard selectedSegmentIndex != nextIndex else { return }
         // Programmatic preview/state changes retarget the current native transition.
@@ -353,129 +1001,42 @@ final class NativePracticeSegmentedControl: UISegmentedControl {
     }
 }
 
-struct SegmentPressButton: ButtonStyle {
+struct SoftDisclosureStyle: DisclosureGroupStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.scaleEffect(configuration.isPressed && !reduceMotion ? 0.965 : 1)
-            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
-    }
-}
-
-/// SwiftUI child navigation stacks can reset the tab-item tint on selection.
-/// Pin item colors on this controller only, keeping the native glass background.
-struct StableTabBarAppearance: UIViewControllerRepresentable {
-    let selection: Int
-    func makeUIViewController(context: Context) -> Controller { Controller() }
-    func updateUIViewController(_ controller: Controller, context: Context) { controller.apply() }
-    final class Controller: UIViewController {
-        override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); apply() }
-        override func didMove(toParent parent: UIViewController?) { super.didMove(toParent: parent); apply() }
-        func apply() {
-            guard let tab = tabBarController else { return }
-            let selected = UIColor(red: 34 / 255, green: 33 / 255, blue: 36 / 255, alpha: 1)
-            let normal = selected.withAlphaComponent(0.62)
-            func configure(_ source: UITabBarAppearance) -> UITabBarAppearance {
-                let result = source.copy() as! UITabBarAppearance
-                for item in [result.stackedLayoutAppearance, result.inlineLayoutAppearance, result.compactInlineLayoutAppearance] {
-                    item.selected.iconColor = selected
-                    item.selected.titleTextAttributes = [.foregroundColor: selected]
-                    item.normal.iconColor = normal
-                    item.normal.titleTextAttributes = [.foregroundColor: normal]
-                }
-                return result
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(reduceMotion ? nil : NativeMotion.standard) { configuration.isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 12) {
+                    configuration.label.frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.down").font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(configuration.isExpanded ? 180 : 0))
+                        .foregroundStyle(Theme.inkSecondary)
+                }.foregroundStyle(Theme.ink).frame(minHeight: 44).contentShape(Rectangle())
+            }.buttonStyle(PressButton())
+                .accessibilityValue(configuration.isExpanded ? "Развёрнуто" : "Свёрнуто")
+                .accessibilityHint("Дважды коснись, чтобы " + (configuration.isExpanded ? "свернуть подробности." : "раскрыть подробности."))
+            if configuration.isExpanded {
+                configuration.content.transition(reduceMotion ? .identity : NativeMotion.insertion)
             }
-            tab.tabBar.tintColor = selected
-            tab.tabBar.unselectedItemTintColor = normal
-            tab.tabBar.standardAppearance = configure(tab.tabBar.standardAppearance)
-            tab.tabBar.scrollEdgeAppearance = configure(tab.tabBar.scrollEdgeAppearance ?? tab.tabBar.standardAppearance)
         }
-    }
-}
-
-struct PressButton: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.isEnabled) private var isEnabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.opacity(isEnabled ? 1 : 0.46)
-            .opacity(configuration.isPressed && isEnabled ? 0.85 : 1)
-            .scaleEffect(x: configuration.isPressed && !reduceMotion ? 0.982 : 1, y: configuration.isPressed && !reduceMotion ? 0.965 : 1)
-            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
-    }
-}
-
-struct PrimaryButton: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.isEnabled) private var isEnabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.subheadline.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 16)
-            .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(isEnabled ? Theme.lime : Theme.secondary)
-            .modifier(LiquidChrome(radius: 20, tint: Theme.charcoal))
-            .scaleEffect(x: configuration.isPressed && isEnabled && !reduceMotion ? 0.982 : 1, y: configuration.isPressed && isEnabled && !reduceMotion ? 0.965 : 1)
-            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
-    }
-}
-
-struct SecondaryButton: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.isEnabled) private var isEnabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.subheadline.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 16)
-            .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(isEnabled ? Theme.charcoal : Theme.secondary)
-            .modifier(LiquidChrome(radius: 20, tint: Theme.lime))
-            .scaleEffect(x: configuration.isPressed && isEnabled && !reduceMotion ? 0.982 : 1, y: configuration.isPressed && isEnabled && !reduceMotion ? 0.965 : 1)
-            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
-    }
-}
-
-struct QuietButton: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.isEnabled) private var isEnabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.footnote.weight(.medium)).padding(.horizontal, 14).padding(.vertical, 12)
-            .frame(minWidth: 44, minHeight: 44)
-            .foregroundStyle(Theme.charcoal).modifier(LiquidChrome(radius: 24))
-            .opacity(isEnabled ? 1 : 0.45).scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
-            .animation(reduceMotion ? nil : NativeMotion.press, value: configuration.isPressed)
     }
 }
 
 struct TranscriptCard: View {
     let turn: Turn
+    /// Overrides the speaker caption (e.g. «Реплика из твоего созвона» in a replay).
+    var label: String? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(turn.role == "user" ? "ТЫ" : "СОБЕСЕДНИК").font(.caption2.weight(.semibold)).tracking(0.7).foregroundStyle(Theme.secondary)
+            Text(label ?? (turn.role == "user" ? "Ты" : "Собеседник")).font(.caption.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
             Text(turn.text).font(.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }.frame(maxWidth: .infinity, alignment: .leading).padding(18)
-            .background(turn.role == "user" ? Theme.lavender.opacity(0.36) : .white, in: RoundedRectangle(cornerRadius: 23, style: .continuous))
-    }
-}
-
-struct PriorityCard: View {
-    let priority: Priority
-    let number: Int
-    @State private var showExplanation = false
-    var body: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 12) {
-                    Text(String(number)).font(.caption.weight(.semibold)).frame(width: 26, height: 26).background(Theme.lavender.opacity(0.5), in: Circle())
-                    Text(priority.title).font(.headline)
-                }
-                Text(priority.quote).font(.subheadline).foregroundStyle(Theme.secondary)
-                    .padding(.leading, 12).overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(Theme.lavender).frame(width: 3) }
-                VStack(alignment: .leading, spacing: 8) {
-                    InputLabel(title: "Пример сильнее")
-                    Text(priority.example).font(.subheadline.weight(.semibold)).textSelection(.enabled)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    InputLabel(title: "Твоя следующая попытка")
-                    Text(priority.retryInstruction).font(.subheadline)
-                }
-                DisclosureGroup(isExpanded: $showExplanation) {
-                    Text(priority.explanation).font(.subheadline).foregroundStyle(Theme.secondary).padding(.top, 8)
-                } label: { Text("Почему это важно").font(.footnote.weight(.medium)) }
+            .background(turn.role == "user" ? Theme.lavender.opacity(0.28) : Theme.solid, in: RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Radius.tile, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1)
             }
-        }
     }
 }
 
@@ -484,7 +1045,7 @@ struct EvidenceLabel: View {
     let confirmed: Bool
     var body: some View {
         Label(title, systemImage: confirmed ? "checkmark.circle.fill" : "circle")
-            .font(.caption).foregroundStyle(confirmed ? Theme.charcoal : Theme.secondary)
+            .font(.caption).foregroundStyle(confirmed ? Theme.ink : Theme.inkSecondary)
             .accessibilityLabel(title + (confirmed ? ": подтверждено" : ": пока не подтверждено"))
     }
 }
@@ -495,27 +1056,53 @@ struct ActivityPanel: View {
     let startedAt: Date?
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            ProgressView().tint(Theme.charcoal).padding(.top, 3)
+            ProgressView().tint(Theme.violet).padding(.top, 3)
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(title).font(.subheadline.weight(.semibold))
                     Spacer(minLength: 8)
-                    if let startedAt { Text(startedAt, style: .timer).font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary) }
+                    if let startedAt { Text(startedAt, style: .timer).font(.caption.monospacedDigit()).foregroundStyle(Theme.inkSecondary) }
                 }
-                Text(detail).font(.footnote).foregroundStyle(Theme.secondary)
+                Text(detail).font(.footnote).foregroundStyle(Theme.inkSecondary)
             }
-        }.padding(18).background(Color.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 23, style: .continuous))
+        }.padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentSurface(radius: Radius.tile)
             .contentTransition(.opacity)
             .accessibilityElement(children: .combine)
     }
 }
 
+/// Progress bar: a solid fill on a quiet track, easing out without overshoot (DESIGN-PASS 0.5.1).
+struct LiquidProgressBar: View {
+    let value: Double
+    var color: Color = Theme.violet
+    var height: CGFloat = 8
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var clamped: Double { value.isFinite ? min(1, max(0, value)) : 0 }
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.ink.opacity(0.08))
+                Capsule().fill(color)
+                    .frame(width: max(clamped > 0 ? height : 0, proxy.size.width * CGFloat(clamped)))
+            }
+        }
+        .frame(height: height)
+        .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.6), value: clamped)
+        .accessibilityElement()
+        .accessibilityValue("\(Int((clamped * 100).rounded())) процентов")
+    }
+}
+
+// MARK: - Launch greeting
 
 /// Launch decoration never waits on a model or owns navigation. An interrupted
 /// launch is consumed, so foreground/background changes cannot replay it.
 struct NativeOpeningReadiness: Hashable {
     let signedIn: Bool
     let stateLoaded: Bool
+    /// v0.5: the placement test is about to be presented (keeps its v0.4 name).
     let onboardingBlocked: Bool
     let protectedActivity: Bool
     let foreground: Bool
@@ -570,7 +1157,6 @@ struct NativeHomeEntrance: ViewModifier {
 }
 
 /// No visible continue button: the entire greeting can be tapped or escaped.
-/// The model, learning state, and Home content are already ready underneath it.
 struct NativeOpeningGreeting: View {
     let name: String
     let sentence: String
@@ -580,25 +1166,25 @@ struct NativeOpeningGreeting: View {
     @State private var entered = false
     @State private var played = false
     @State private var pose = VoiceOrbGreetingPose.arriving
-    @State private var mood = VoiceOrbMood.friendly
+    @State private var mood = VoiceOrbMood.happy
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         Button(action: skip) {
             VStack(spacing: 18) {
                 Spacer(minLength: 18)
-                VoiceOrb(mode: .ready, level: 0, mood: mood, greetingPose: pose)
+                VoiceOrb(mode: .ready, level: 0, mood: mood, greetingPose: pose, interactive: false)
                     .frame(width: 176, height: 184).allowsHitTesting(false).accessibilityHidden(true)
                     .opacity(entered && !leaving ? 1 : 0)
                     .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.62), value: entered)
                     .animation(reduceMotion ? nil : .timingCurve(0.4, 0, 0.6, 1, duration: 0.38), value: leaving)
                 Text("Привет, \(name).")
-                    .font(.system(.largeTitle, design: .rounded).weight(.semibold)).tracking(-0.7)
+                    .font(TypeScale.hero).tracking(-0.6)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .opacity(entered && !leaving ? 1 : 0).offset(y: leaving ? -4 : entered ? 0 : 12)
                     .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.58).delay(0.24), value: entered)
                     .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.18), value: leaving)
-                Text(sentence).font(.body).foregroundStyle(Theme.secondary)
+                Text(sentence).font(.body).foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 360)
                     .opacity(entered && !leaving ? 1 : 0).offset(y: leaving ? -3 : entered ? 0 : 10)
@@ -607,9 +1193,9 @@ struct NativeOpeningGreeting: View {
                 Spacer(minLength: 18)
                 Spacer(minLength: 0).frame(height: 42)
             }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
-                .foregroundStyle(Theme.charcoal)
+                .foregroundStyle(Theme.ink)
                 .background {
-                    Theme.surface.opacity(leaving ? 0 : 1)
+                    Theme.base.opacity(leaving ? 0 : 1)
                         .animation(reduceMotion ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: NativeOpeningState.handoffSeconds), value: leaving)
                 }
         }.buttonStyle(.plain).contentShape(Rectangle()).ignoresSafeArea()
@@ -625,7 +1211,7 @@ struct NativeOpeningGreeting: View {
                 do {
                     try await Task.sleep(for: .milliseconds(780))
                     pose = .lifted
-                    mood = .pleased
+                    mood = .joy
                     try await Task.sleep(for: .milliseconds(760))
                     pose = .landing
                     try await Task.sleep(for: .milliseconds(640))

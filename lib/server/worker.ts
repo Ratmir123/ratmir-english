@@ -1,6 +1,8 @@
 import { claimAnalysisJob, finishAnalysisJob, getAppState, getSession, saveSession } from './store';
 import { analyse } from './teacher';
 import { SiwcError } from './siwc-protocol';
+import { processPlacementQueue } from './placement/routes';
+import { processCallQueue } from './calls/routes';
 
 const globals = globalThis as unknown as { trainingWorker?: ReturnType<typeof setInterval>; trainingWorkerBusy?: boolean };
 export async function processAnalysisQueue(analyser: typeof analyse = analyse) {
@@ -26,9 +28,15 @@ export async function processAnalysisQueue(analyser: typeof analyse = analyse) {
     if (job) finishAnalysisJob(job.sessionId, error instanceof Error ? error.message : 'Не удалось подготовить разбор.', !(error instanceof SiwcError));
   } finally { globals.trainingWorkerBusy = false; }
 }
+function tick() {
+  void processAnalysisQueue();
+  // Feature queues own their own busy flags and never throw.
+  void processPlacementQueue().catch(() => undefined);
+  void processCallQueue().catch(() => undefined);
+}
 export function ensureWorker() {
   if (globals.trainingWorker) return;
-  globals.trainingWorker = setInterval(() => void processAnalysisQueue(), 1500);
+  globals.trainingWorker = setInterval(tick, 1500);
   globals.trainingWorker.unref();
-  void processAnalysisQueue();
+  tick();
 }

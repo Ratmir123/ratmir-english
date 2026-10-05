@@ -33,9 +33,17 @@ enum RewardArt {
             return review.createdAt.flatMap(NativeDate.parse).map { date >= $0 } ?? true
         }
     }
+    /// Mirrors ACHIEVEMENT_ART in lib/achievement-targets.ts (v0.5 achievements reuse existing art).
+    static let achievementArt: [String: String] = [
+        "first-practice": "first-practice", "three-days": "three-days", "ten-practices": "ten-practices",
+        "own-improvement": "own-improvement", "balanced-practice": "balanced-worlds",
+        "independent-listening": "independent-listening", "ielts-four-sides": "four-sides",
+        "placement-complete": "four-sides", "first-call-review": "independent-listening", "call-replay": "own-improvement",
+        "pattern-improving": "rank-mint", "counter-offer": "rank-gold", "no-disclaimers": "three-days",
+        "case-first": "ten-practices", "dated-next-step": "balanced-worlds", "clean-pitch": "first-practice"
+    ]
     static func achievement(_ id: String) -> String {
-        let names = ["balanced-practice": "balanced-worlds", "ielts-four-sides": "four-sides"]
-        return "reward-" + (names[id] ?? id) + "-v041"
+        "reward-" + (achievementArt[id] ?? "first-practice") + "-v041"
     }
     static func rank(_ level: Int) -> (art: String, title: String) {
         let rank = practiceRank(level)
@@ -43,51 +51,104 @@ enum RewardArt {
     }
 }
 
-/// Light, a small physical sway, and a fixed floor shadow give the medal weight.
-/// The current rank alone animates. Press feedback retargets a separate spring layer.
+/// The rank art as a physical medal (DESIGN-PASS-0.5.1, RankMedalSolid.swift): a rim when it turns, light
+/// and foil that move against the turn and the phone's tilt, a floor shadow that slides and shrinks.
+/// The current rank sways and floats; a drag spins it with inertia, a tap turns it once. Locked and small
+/// medals stay still. Decorative (navigation wraps it where useful, L-08).
 struct RankEmblem: View {
     let level: Int
     var size: CGFloat = 124
     var animated = true
+    /// Rank-up: starts back-facing and lands face-front after 1.5 decelerating turns with a flash.
+    var entrance = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.scenePhase) private var scenePhase
     @State private var visible = false
+    @State private var spin = MedalSpinModel()
+    /// A finger or a throw is on the medal: full frame rate until it rests.
+    @State private var handling = false
+    @State private var motionHeld = false
     private var rank: PracticeRank { RewardArt.practiceRank(level) }
     private var moving: Bool { animated && !reduceMotion && contrast != .increased && visible && scenePhase == .active }
+    private var lit: Bool { size >= MedalTuning.solidMin }
+    private var gestures: Bool { lit && animated && !reduceMotion }
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !moving)) { context in
-            let time = moving ? context.date.timeIntervalSinceReferenceDate : 0
-            let pose = RewardMotionPose.rank(art: rank.art, time: time, size: size, active: moving)
-            if animated {
-                Button {} label: { emblem(time: time, pose: pose) }
-                    .buttonStyle(RewardArtPressStyle())
-                    .accessibilityLabel("Ранг «\(rank.title)»")
-                    .accessibilityHint("Нажми, чтобы пошевелить значок. Опыт не меняется.")
-            } else { emblem(time: time, pose: pose).accessibilityHidden(true) }
-        }.frame(width: size, height: size)
-            .modifier(RewardVisibility(visible: $visible))
+        TimelineView(.animation(minimumInterval: handling ? nil : 1.0 / 30, paused: !(moving || handling))) { context in
+            emblem(time: context.date.timeIntervalSinceReferenceDate)
+        }
+        .frame(width: size, height: size)
+        .overlay {
+            if gestures { MascotTouchLayer(handler: { touch($0) }) }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Ранг «\(rank.title)»")
+        .modifier(RewardVisibility(visible: $visible))
+        .onAppear {
+            guard entrance, lit, !reduceMotion else { return }
+            spin.enter(at: Date().timeIntervalSinceReferenceDate)
+            handling = true
+        }
+        .onChange(of: moving, initial: true) { _, value in holdMotion(value) }
+        .onDisappear { holdMotion(false) }
+        .task(id: handling) { await releaseFrames() }
     }
-    private func emblem(time: TimeInterval, pose: RewardMotionPose) -> some View {
-        ZStack {
-            Ellipse().fill(Theme.charcoal.opacity(pose.shadowOpacity))
+    private func emblem(time: TimeInterval) -> some View {
+        let idle = moving ? time : 0
+        let pose = RewardMotionPose.rank(art: rank.art, time: idle, size: size, active: moving)
+        let hand = spin.advance(to: time)
+        // Idle yaw sway keeps the rim readable at rest; it eases between ±yaw like the web's alternate animation.
+        let sway = moving ? -MedalTuning.yaw(for: rank.art) * cos(time * .pi / MedalTuning.turnPeriod) : 0
+        let yaw = lit ? hand.yaw + sway : 0
+        let pitch = lit ? hand.pitch : 0
+        let device = moving && lit ? MedalMotion.shared.light(at: time) : (yaw: 0.0, pitch: 0.0)
+        let shape = MedalLight(yaw: yaw, pitch: pitch, size: size)
+        return ZStack {
+            Ellipse().fill(Theme.ink.opacity(pose.shadowOpacity))
                 .frame(width: size * 0.43, height: size * 0.075)
-                .scaleEffect(x: pose.shadowScale, y: 1).offset(y: size * 0.32)
+                .scaleEffect(x: pose.shadowScale * shape.shadowWidth, y: 1)
+                .offset(x: shape.shadowX, y: size * 0.32)
             ZStack {
-                RankAtmosphere(art: rank.art, time: time)
-                Image("reward-" + rank.art + "-v041").resizable().scaledToFit()
-                    .overlay {
-                        if moving {
-                            LinearGradient(colors: [.clear, .white.opacity(0.08), .white.opacity(0.52), .clear], startPoint: .leading, endPoint: .trailing)
-                                .frame(width: size * 0.30, height: size * 1.6)
-                                .rotationEffect(.degrees(24))
-                                .offset(x: size * CGFloat((time.truncatingRemainder(dividingBy: 5.4) / 5.4) * 3.2 - 1.6))
-                                .frame(width: size, height: size)
-                                .mask(Image("reward-" + rank.art + "-v041").resizable().scaledToFit())
-                        }
-                    }
+                if lit { RankAtmosphere(art: rank.art, time: idle) }
+                if lit {
+                    MedalSolid(art: rank.art, size: size, yaw: yaw, pitch: pitch, lightYaw: yaw + device.yaw, lightPitch: pitch + device.pitch,
+                               holo: ["rank-violet", "rank-rose", "rank-gold"].contains(rank.art), glint: spin.flash(at: time) ?? glint(idle))
+                } else {
+                    Image("reward-" + rank.art + "-v041").resizable().scaledToFit()
+                }
             }.scaleEffect(pose.scale).rotationEffect(.degrees(pose.rotation), anchor: UnitPoint(x: 0.5, y: 0.64)).offset(y: pose.lift)
-        }.frame(width: size, height: size).contentShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+        }.frame(width: size, height: size)
+    }
+    /// An occasional glint across the face while the medal idles.
+    private func glint(_ time: TimeInterval) -> Double? {
+        guard moving else { return nil }
+        let phase = ((time + 2.2) / MedalTuning.glintPeriod).truncatingRemainder(dividingBy: 1)
+        guard phase < MedalTuning.glintShare else { return nil }
+        return (1 - cos(phase / MedalTuning.glintShare * .pi)) / 2
+    }
+    private func touch(_ event: MascotTouchEvent) {
+        let now = Date().timeIntervalSinceReferenceDate
+        switch event {
+        case .began(let point, let side): spin.touchBegan(point, side: side)
+        case .moved(let point, let side): spin.touchMoved(point, side: side, time: now)
+        case .ended(let point, let side, let quick): spin.touchEnded(point, side: side, time: now, quick: quick)
+        case .cancelled: spin.touchCancelled()
+        }
+        if !handling { handling = true }
+    }
+    /// Drops back to the idle 30 fps (or a paused timeline) once the medal rests.
+    private func releaseFrames() async {
+        guard handling else { return }
+        while !Task.isCancelled {
+            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+            if !spin.isBusy(at: Date().timeIntervalSinceReferenceDate) { handling = false; return }
+        }
+    }
+    private func holdMotion(_ on: Bool) {
+        let wanted = on && lit
+        guard wanted != motionHeld else { return }
+        motionHeld = wanted
+        if wanted { MedalMotion.shared.acquire() } else { MedalMotion.shared.release() }
     }
 }
 
@@ -130,7 +191,7 @@ struct RewardMotionPose {
 
 private struct RewardVisibility: ViewModifier {
     @Binding var visible: Bool
-    func body(content: Content) -> some View {
+    @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
             content.onScrollVisibilityChange(threshold: 0.1) { visible = $0 }.onDisappear { visible = false }
         } else {
@@ -191,15 +252,24 @@ private struct RankAtmosphere: View {
                     context.stroke(air, with: .color(accent.opacity(sin(phase * .pi) * 0.35)), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
                 }
             case "rank-violet", "rank-pearl":
+                // Four-point sparkles, the same shape as the web's clip-path stars.
                 for index in 0..<4 {
                     let angle = Double(index) * .pi / 2 + 0.45
                     let point = CGPoint(x: center.x + CGFloat(cos(angle)) * side * 0.39, y: center.y + CGFloat(sin(angle)) * side * 0.33)
                     let flicker = (sin(time * (art == "rank-pearl" ? 1.0 : 2.2) + Double(index) * 1.8) + 1) / 2
-                    let reach = side * CGFloat(0.012 + flicker * 0.021)
+                    let reach = side * CGFloat(0.037 + flicker * 0.019)
+                    let waist = reach * 0.18
                     var spark = Path()
-                    spark.move(to: CGPoint(x: point.x - reach, y: point.y)); spark.addLine(to: CGPoint(x: point.x + reach, y: point.y))
-                    spark.move(to: CGPoint(x: point.x, y: point.y - reach)); spark.addLine(to: CGPoint(x: point.x, y: point.y + reach))
-                    context.stroke(spark, with: .color(accent.opacity(0.20 + flicker * 0.45)), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+                    spark.move(to: CGPoint(x: point.x, y: point.y - reach))
+                    spark.addLine(to: CGPoint(x: point.x + waist, y: point.y - waist))
+                    spark.addLine(to: CGPoint(x: point.x + reach, y: point.y))
+                    spark.addLine(to: CGPoint(x: point.x + waist, y: point.y + waist))
+                    spark.addLine(to: CGPoint(x: point.x, y: point.y + reach))
+                    spark.addLine(to: CGPoint(x: point.x - waist, y: point.y + waist))
+                    spark.addLine(to: CGPoint(x: point.x - reach, y: point.y))
+                    spark.addLine(to: CGPoint(x: point.x - waist, y: point.y - waist))
+                    spark.closeSubpath()
+                    context.fill(spark, with: .color(accent.opacity(0.20 + flicker * 0.45)))
                 }
             case "rank-rose", "rank-gold":
                 let count = art == "rank-gold" ? 10 : 6
@@ -223,6 +293,8 @@ struct RewardImage: View {
     let name: String
     var size: CGFloat = 70
     var motion: Motion = .still
+    /// Locked rewards are desaturated so earned ones keep their meaning.
+    var locked = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var visible = false
@@ -231,75 +303,174 @@ struct RewardImage: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !moving)) { context in
             let pose = RewardMotionPose.achievement(time: moving ? context.date.timeIntervalSinceReferenceDate : 0, size: size, motion: motion, active: moving)
             ZStack {
-                Ellipse().fill(Theme.charcoal.opacity(pose.shadowOpacity))
+                Ellipse().fill(Theme.ink.opacity(pose.shadowOpacity))
                     .frame(width: size * 0.44, height: size * 0.07).scaleEffect(x: pose.shadowScale, y: 1).offset(y: size * 0.32)
-                Image(name).resizable().scaledToFit().scaleEffect(pose.scale).rotationEffect(.degrees(pose.rotation), anchor: UnitPoint(x: 0.5, y: 0.68)).offset(y: pose.lift)
+                Image(name).resizable().scaledToFit()
+                    .saturation(locked ? 0 : 1).opacity(locked ? 0.5 : 1)
+                    .scaleEffect(pose.scale).rotationEffect(.degrees(pose.rotation), anchor: UnitPoint(x: 0.5, y: 0.68)).offset(y: pose.lift)
             }
         }.frame(width: size, height: size).accessibilityHidden(true).modifier(RewardVisibility(visible: $visible))
     }
 }
 
-/// This destination describes the route; it never starts a billable lesson by opening.
+/// Where «Как получить» leads (mirrors achievementTarget in lib/achievement-targets.ts).
+enum AchievementRoute {
+    case resume(Conversation, label: String)
+    case family(id: String, label: String)
+    case free(context: String, label: String)
+    case placement(label: String)
+    case tab(ShellTab, label: String)
+    /// A screen inside «Созвоны» (e.g. the patterns list).
+    case calls(CallsRoute, label: String)
+    case drill(id: String, mode: String, label: String)
+}
+
+/// «Как получить»: what the achievement asks for and one direct way there (L-09).
 struct AchievementPracticeView: View {
     let achievement: PracticeAchievement
     @EnvironmentObject private var client: TrainingClient
+    private var state: TrainingState? { client.state }
+
     private var savedAttempt: Conversation? {
-        guard achievement.id == "own-improvement" else { return nil }
-        return client.state?.sessions.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }.first { session in
-            session.baseline == nil && session.lesson.kind != "calibration" && session.analysis?.priorities.isEmpty == false &&
-            (session.status == "review" || (session.status == "completed" && session.retryDeferred == true && !RewardArt.qualifiedImprovement(session)))
+        let sorted = (state?.sessions ?? []).sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+        return sorted.first { session in
+            session.lesson.kind != "calibration" && session.analysis?.priorities.isEmpty == false &&
+            (session.status == "review" || (session.awaitsRetry && !RewardArt.qualifiedImprovement(session)))
         }
     }
-    private var track: String {
+
+    private var route: AchievementRoute {
         switch achievement.id {
-        case "independent-listening", "ielts-four-sides": return "ielts-foundation"
+        case "own-improvement":
+            if let savedAttempt {
+                return .resume(savedAttempt, label: RewardArt.qualifiedImprovement(savedAttempt) ? "Завершить свою практику" : "Вернуться к своей попытке")
+            }
+            return .free(context: "life", label: "К короткой практике")
         case "balanced-practice":
-            let values = client.state?.progression?.tracks ?? []
-            return (values.first { $0.id == "life" }?.completedSessions ?? 0) <= (values.first { $0.id == "work" }?.completedSessions ?? 0) ? "life" : "work"
-        default: return "life"
+            let tracks = state?.progression?.tracks ?? []
+            let life = tracks.first { $0.id == "life" }?.completedSessions ?? 0
+            let work = tracks.first { $0.id == "work" }?.completedSessions ?? 0
+            return life <= work ? .free(context: "life", label: "К разговорам о жизни") : .free(context: "work", label: "К рабочим разговорам")
+        case "independent-listening":
+            return .family(id: "ielts-listening", label: "К практике на слух")
+        case "ielts-four-sides":
+            let activities = state?.progression?.tracks.first { $0.id == "ielts-foundation" }?.activities ?? []
+            let weakest = activities.sorted { $0.completedSessions < $1.completedSessions }.first?.id ?? "speaking"
+            return .family(id: "ielts-" + weakest, label: "К следующему навыку")
+        case "placement-complete":
+            return .placement(label: state?.placementSignal?.started == true ? "Продолжить тест" : "Пройти тест уровня")
+        case "first-call-review":
+            return .tab(.calls, label: "Загрузить созвон")
+        case "call-replay":
+            if let drill = state?.drillSignals.first(where: { $0.status != "done" }) {
+                return .drill(id: drill.id, mode: drill.preferredMode, label: "Переиграть момент")
+            }
+            return .tab(.calls, label: "К созвонам")
+        case "pattern-improving":
+            return .calls(.patterns, label: "К паттернам")
+        case "counter-offer": return .family(id: "strategy-price", label: "Отрепетировать встречную цифру")
+        case "no-disclaimers": return .family(id: "work-call-opening", label: "Отрепетировать начало звонка")
+        case "case-first": return .family(id: "strategy-agency-screening", label: "Отрепетировать вопросы агентства")
+        case "dated-next-step": return .family(id: "strategy-recap-close", label: "Отрепетировать финал звонка")
+        case "clean-pitch": return .family(id: "strategy-pitch-30", label: "К питчу за 30 секунд")
+        default: return .free(context: "life", label: "К короткой практике")
         }
     }
+
     private var explanation: String {
         switch achievement.id {
-        case "three-days": return "Засчитываются три разных дня по UTC. Несколько занятий за сегодня не добавят ещё один день."
+        case "three-days": return "Засчитываются разные дни практики. Несколько занятий за один день добавят только один день."
         case "own-improvement":
             if let savedAttempt, RewardArt.qualifiedImprovement(savedAttempt) { return "Ответ уже исправлен. Осталось завершить занятие, чтобы сохранить результат." }
-            return savedAttempt == nil ? "Сначала нужна собственная попытка и разбор, затем её улучшение своими словами." : "Есть сохранённый разбор. Вернись к своей попытке и исправь её без готового ответа."
-        case "independent-listening": return "Слушай без текста и используй услышанные детали в своём ответе. Опоры доступны, но награда учитывает самостоятельное понимание."
-        case "ielts-four-sides": return "Попробуй речь, понимание на слух, чтение и письмо. Начни с навыка, где пока меньше попыток."
+            return savedAttempt == nil ? "Сначала нужна своя попытка и разбор, затем её улучшение своими словами." : "Есть сохранённый разбор. Вернись к нему и исправь ответ без готового текста."
+        case "independent-listening": return "Слушай без текста и используй услышанные детали в ответе."
+        case "ielts-four-sides": return "Попробуй речь, понимание на слух, чтение и письмо. Начнём с навыка, где пока меньше попыток."
         case "balanced-practice": return "Откроем направление, где пока меньше завершённых занятий."
-        default: return "Выбери короткое занятие, ответь сам и сохрани практику с разбором."
+        case "placement-complete": return "Около 25 минут в два захода. Можно прерваться и продолжить позже."
+        case "first-call-review": return "Запись, расшифровка или готовый разбор реального звонка. Разбор покажет, что стоило денег и что тренировать."
+        case "call-replay": return "Тренировки появляются после разбора реального звонка."
+        case "pattern-improving": return "Паттерн сдаётся, когда ты несколько раз обходишь его в тренировках и на реальном звонке."
+        case "counter-offer", "no-disclaimers", "case-first", "dated-next-step":
+            return "Награда за реальный созвон. Сначала отрепетируй момент здесь, затем загрузи следующий звонок."
+        case "clean-pitch": return "Скажи питч голосом: до 45 секунд, с цифрой или результатом и без оговорок."
+        default: return achievement.description
         }
     }
-    private var activity: String? {
-        if achievement.id == "independent-listening" { return "listening" }
-        if achievement.id == "ielts-four-sides" {
-            return client.state?.progression?.tracks.first { $0.id == "ielts-foundation" }?.activities
-                .sorted { $0.completedSessions < $1.completedSessions }.first?.id ?? "speaking"
-        }
-        return nil
-    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 16) {
-                    RewardImage(name: RewardArt.achievement(achievement.id), size: 92, motion: achievement.unlocked ? .earned : .goal)
-                    ScreenHeading(title: achievement.title, subtitle: "Твоя цель · \(achievement.current)/\(achievement.target)")
+                    RewardImage(name: RewardArt.achievement(achievement.id), size: 92, motion: achievement.unlocked ? .earned : .goal, locked: !achievement.unlocked)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(achievement.title).font(TypeScale.title2).fixedSize(horizontal: false, vertical: true)
+                        Text(ProgressCopy.achievementStatus(achievement)).font(.subheadline.weight(.semibold)).monospacedDigit()
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
                 }
-                Text(achievement.description).font(.subheadline)
-                JourneyProgressBar(current: achievement.current, target: achievement.target)
-                Text(explanation).font(.subheadline).foregroundStyle(Theme.secondary)
-                if let savedAttempt {
-                    Button { client.resume(savedAttempt) } label: {
-                        Label(RewardArt.qualifiedImprovement(savedAttempt) ? "Завершить свою практику" : "Вернуться к своей попытке", systemImage: "arrow.uturn.backward")
-                    }.buttonStyle(PrimaryButton()).disabled(client.busy || client.recording || client.hasUnuploadedRecording)
-                } else {
-                    NavigationLink { PracticeTrackView(trackID: track, preferredActivity: activity) } label: {
-                        Label("Выбрать подходящую практику", systemImage: "arrow.up.right")
-                    }.buttonStyle(PrimaryButton())
-                }
-                Text("Одно короткое задание под выбранную цель.").font(.caption).foregroundStyle(Theme.secondary)
+                Text(achievement.description).font(.body).fixedSize(horizontal: false, vertical: true)
+                if !achievement.unlocked { JourneyProgressBar(current: achievement.current, target: achievement.target) }
+                Text(explanation).font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                if !achievement.unlocked { actionButton }
             }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
-        }.modifier(ReadingCanvas()).navigationTitle("Взять на прицел").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+        }
+        .modifier(LiquidCanvas())
+        .navigationTitle("Как получить")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var routeLabel: String {
+        switch route {
+        case .resume(_, let label): return label
+        case .family(_, let label): return label
+        case .free(_, let label): return label
+        case .placement(let label): return label
+        case .tab(_, let label): return label
+        case .calls(_, let label): return label
+        case .drill(_, _, let label): return label
+        }
+    }
+
+    private var startKey: String? {
+        switch route {
+        case .family(let id, _): return TrainingClient.familyKey(id)
+        case .free: return TrainingClient.freeKey
+        case .drill(let id, _, _): return TrainingClient.drillKey(id)
+        case .resume, .placement, .tab, .calls: return nil
+        }
+    }
+
+    @ViewBuilder private var actionButton: some View {
+        let key = startKey
+        Button { follow(route) } label: {
+            StartButtonLabel(title: routeLabel, starting: key.map { client.isStarting($0) } ?? false)
+        }
+        .buttonStyle(PrimaryButton())
+        .disabled(client.busy || client.startingIntent != nil || client.recording || (key != nil && client.hasUnuploadedRecording))
+        if key != nil && client.hasUnuploadedRecording {
+            Text("Сначала реши, что делать с несохранённой записью на вкладке «Сегодня».")
+                .font(.footnote).foregroundStyle(Theme.inkSecondary)
+        }
+    }
+
+    private func follow(_ route: AchievementRoute) {
+        switch route {
+        case .resume(let session, _):
+            client.resume(session)
+        case .family(let id, _):
+            let mode = client.catalogFamily(id)?.preferredMode ?? (id == "ielts-listening" || id.hasPrefix("strategy-") ? "call" : "learning")
+            Task { await client.startFamily(familyId: id, mode: mode) }
+        case .free(let context, _):
+            Task { await client.startFree(mode: "learning", context: context) }
+        case .placement:
+            client.placementPresented = true
+        case .tab(let tab, _):
+            client.requestedTab = tab
+        case .calls(let destination, _):
+            CallsNavigator.shared.open(destination)
+            client.requestedTab = .calls
+        case .drill(let id, let mode, _):
+            Task { await client.startDrill(id: id, mode: mode) }
+        }
     }
 }

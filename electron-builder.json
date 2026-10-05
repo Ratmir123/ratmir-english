@@ -1,7 +1,7 @@
 {
   "appId": "com.ratmir.english",
-  "productName": "Smooth English",
-  "copyright": "Smooth English",
+  "productName": "Smooth Talk",
+  "copyright": "Smooth Talk",
   "directories": {
     "app": "desktop",
     "output": ".runtime/desktop-dist"
@@ -37,7 +37,7 @@
     "runAfterFinish": false,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "Smooth English",
-    "artifactName": "Smooth English Setup.${ext}"
+    "shortcutName": "Smooth Talk",
+    "artifactName": "Smooth Talk Setup.${ext}"
   }
 }

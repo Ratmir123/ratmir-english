@@ -51,10 +51,9 @@ export function SpeechTimingPanel({ session }: { session: Session }) {
   const recordings = session.turns.filter(turn => turn.role === 'user' && turn.source === 'audio' && !turn.disputed && validSpeechTiming(turn.speechTiming, turn.audioFile));
   const retries = session.retries.flatMap((retry, index) => validSpeechTiming(retry.speechTiming, retry.audioFile) ? [{ retry, index }] : []);
   if (!recordings.length && !retries.length) return null;
-  return <section className={styles.panel} aria-labelledby={'timing-' + session.id}>
-    <span className="eyebrow">ИЗ ОРИГИНАЛЬНОГО АУДИО</span>
+  return <section className={`surface ${styles.panel}`} aria-labelledby={'timing-' + session.id}>
     <h2 id={'timing-' + session.id}>Ритм твоей речи</h2>
-    <p className={styles.intro}>Где детектор нашёл речь и промежутки между ней. Паузы измеряются по записи, даже если расшифровка их пропустила. Их причина и качество произношения здесь не оцениваются.</p>
+    <p className={styles.intro}>По исходной записи: где детектор нашёл речь и промежутки между ней. Паузы измеряются по записи, даже если расшифровка их пропустила. Их причина и качество произношения здесь не оцениваются.</p>
     {recordings.map((turn, index) => <TimingRecording key={turn.id} title={'Запись ' + (index + 1)} timing={turn.speechTiming!} feedback={session.analysis?.timingFeedback?.filter(value => value.turnId === turn.id) ?? []} />)}
     {retries.map(({ retry, index }) => <TimingRecording key={retry.id || 'retry-' + index} title={'Новая попытка ' + (index + 1)} timing={retry.speechTiming!} feedback={[]} />)}
   </section>;
