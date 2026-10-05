@@ -50,7 +50,7 @@ const windowDiagnostics = {
 const diagnosticPath = join(userDataPath, 'desktop-status.json');
 const iconPath = app.isPackaged
   ? join(process.resourcesPath, 'app-icons', 'icon.ico')
-  : join(app.getAppPath(), '..', 'public', 'icon-smooth-v042.ico');
+  : join(app.getAppPath(), '..', 'public', 'icon-smooth-v051.ico');
 const preloadPath = join(__dirname, 'preload.cjs');
 
 if (!app.requestSingleInstanceLock()) {

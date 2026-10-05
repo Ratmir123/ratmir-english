@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   title: APP_NAME,
   description: 'Личный тренинг общения: разговоры, созвоны и английский',
   manifest: '/manifest.webmanifest',
-  icons: { icon: [{ url: '/icon-smooth-v042-64.png', type: 'image/png', sizes: '64x64' }], apple: '/icon-smooth-v042-192.png' },
+  icons: { icon: [{ url: '/icon-smooth-v051-64.png', type: 'image/png', sizes: '64x64' }], apple: '/icon-smooth-v051-192.png' },
   robots: { index: false, follow: false },
   appleWebApp: { capable: true, statusBarStyle: 'default', title: APP_NAME },
 };

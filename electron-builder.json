@@ -14,7 +14,7 @@
   "beforeBuild": "scripts/desktop-before-build.cjs",
   "extraFiles": [
     {
-      "from": "public/icon-smooth-v042.ico",
+      "from": "public/icon-smooth-v051.ico",
       "to": "resources/app-icons/icon.ico"
     }
   ],
@@ -27,7 +27,7 @@
         ]
       }
     ],
-    "icon": "public/icon-smooth-v042.ico",
+    "icon": "public/icon-smooth-v051.ico",
     "executableName": "Ratmir English"
   },
   "nsis": {

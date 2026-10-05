@@ -23,7 +23,7 @@ jobs:
         run: |
           brew install xcodegen
           cd ios
-          test -f Resources/Assets.xcassets/AppIcon.appiconset/icon-smooth-v042-1024.png
+          test -f Resources/Assets.xcassets/AppIcon.appiconset/icon-smooth-v051-1024.png
           xcodegen generate
       - name: Build unsigned device app
         run: |
