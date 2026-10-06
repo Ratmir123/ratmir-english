@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { CaretLeftIcon, CaretRightIcon } from '@phosphor-icons/react';
 import { useApp } from '../app/app-context';
 import { MODE_LABEL, sessionStatusLabel, sessionTone, TAB_NAMES } from '../app/labels';
+import { phraseSupportLine } from '@/lib/phrases/labels';
 import { ConversationView, Turns } from './conversation';
 import { AnalysisWaiting, ErrorBanner, ProcessingNote, ReviewView } from './review';
 import styles from './session.module.css';
@@ -22,6 +23,8 @@ export function SessionScreen() {
   const tone = sessionTone(s);
   const mode = (s.baseline ? 'Старая стартовая проба' : MODE_LABEL[s.mode]) + (s.lesson.track === 'ielts-foundation' ? ' · Основа для IELTS' : '');
   const avoid = conversation ? (s.lesson.mustAvoid ?? []).slice(0, 6) : [];
+  // «Мои фразы» (PASS-0.5.3 §1.5): in «С опорами» the Russian cues of the round or of the woven phrases, never the English.
+  const recall = conversation ? phraseSupportLine(s.lesson, s.mode) : null;
   // Top-level blocks carry data-enter: opening a lesson runs the 'screen' staircase (MOTION-PASS-0.5.2 §2).
   return <div className={`screen ${styles.session}`} data-screen="session">
     <header className={styles.header} data-enter="">
@@ -36,6 +39,7 @@ export function SessionScreen() {
       <div className={styles.brief}>
         <p><strong>Задача:</strong> {s.lesson.goal}</p>
         {avoid.length > 0 && <p className={styles.avoid}><strong>Не говори:</strong> {avoid.map((item, index) => <span key={item}>{index > 0 && ', '}<q lang="en">{item}</q></span>)}</p>}
+        {recall && <p className={styles.recall}><strong>{recall.label}:</strong> {recall.text}</p>}
         {s.lesson.why && <details className={styles.why}><summary>Зачем это<CaretRightIcon size={14} weight="bold" className={styles.caret} /></summary><p>{s.lesson.why}</p></details>}
       </div>
     </header>

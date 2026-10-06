@@ -1,6 +1,9 @@
 // Glass jelly body: the 0.4 liquid lens shader extended with the 32-node deformable outline
 // (MASCOT-SPEC §1–2). One quad, no textures. GLSL ES 1.0: constant loop bound, uniform array
 // indexed by the loop counter only.
+// PASS-0.5.3: the body rolls (CSS rotate on the body element), so `u_tilt` counter-rotates the key light and the
+// highlight axes and the highlights stay put on screen; app mascots compile without blocking the main thread
+// (KHR_parallel_shader_compile) and lose their context on dispose; small canvases render at ≤ 1.5× density.
 import { BODY_RADIUS, DARK, KERNEL_K, NODE_COUNT, SUPERELLIPSE_N } from '@/lib/mascot/constants';
 import { MASCOT_PALETTE, type GlassMaterial, type GlassRGB, type MascotPaletteSpec } from '@/lib/mascot/palette';
 
@@ -23,6 +26,7 @@ uniform float u_disp[${NODE_COUNT}];
 uniform float u_dark;
 uniform vec3 u_moodTint;
 uniform float u_moodAmount;
+uniform float u_tilt;
 const float R0 = ${f(BODY_RADIUS)};
 const float KERNEL = ${f(KERNEL_K)};
 const float EXPONENT = ${f(SUPERELLIPSE_N)};
@@ -40,6 +44,9 @@ float radiusAt(float theta) {
   }
   return R0 * (1.0 + sum / weights);
 }
+// The body element is CSS-rotated by u_tilt (radians, clockwise on screen, y down). Lights and highlight axes are fixed
+// on screen: a screen direction v enters the body frame as R(−u_tilt)·v; cs = (cos u_tilt, sin u_tilt).
+vec2 unroll(vec2 v, vec2 cs) { return vec2(cs.x * v.x + cs.y * v.y, cs.x * v.y - cs.y * v.x); }
 `;
 const MAIN = `void main() {
   vec2 p = vec2(v_uv.x, 1.0 - v_uv.y) * 2.0 - 1.0; // y grows down, like the physics
@@ -55,10 +62,11 @@ const MAIN = `void main() {
   vec2 refracted = b * (0.67 + z * 0.28) + normal.xy * 0.19;
   float flow = sin(refracted.x * 3.0 + refracted.y * 2.1 + u_time * 0.48);
   float pool = sin(refracted.y * 3.7 - refracted.x * 1.3 - u_time * 0.37);
-  vec3 light = normalize(vec3(-0.52 + u_gaze.x * 0.15, -0.69 + u_gaze.y * 0.12, 0.7));
+  vec2 tiltCS = vec2(cos(u_tilt), sin(u_tilt));
+  vec3 light = normalize(vec3(unroll(vec2(-0.52 + u_gaze.x * 0.15, -0.69 + u_gaze.y * 0.12), tiltCS), 0.7));
   float fresnel = pow(1.0 - z, 2.0);
   float edge = exp(-abs(dist - 0.969) * 108.0) * (1.0 + ${f(DARK.rim)} * u_dark);
-  float upper = smoothstep(0.30, 0.95, -b.y - b.x * 0.35);
+  float upper = smoothstep(0.30, 0.95, dot(b, unroll(vec2(-0.35, -1.0), tiltCS)));
 `;
 /** Shared shader head (uniforms, ring radius, canvas → body coordinates, light): lab looks append their tail to it. */
 export const HEAD = PRELUDE + MAIN;
@@ -114,10 +122,10 @@ ${MAIN}
   result += ${v3(m.innerLine)} * exp(-abs(dist - ${f(m.innerLineAt)}) * 150.0) * (0.55 + 0.45 * upper);
   float facing = max(0.0, dot(normal, light));
   result += ${v3(m.specular)} * pow(facing, ${f(m.specularPower)}) * ${f(m.specularAmount)} * (1.0 + ${f(DARK.specular)} * u_dark);
-  result += vec3(1.0) * smoothstep(0.78, 0.82, dist) * (1.0 - smoothstep(0.86, 0.9, dist)) * smoothstep(0.45, 0.75, -b.y * 0.75 - b.x * 0.65) * ${f(m.streak)};
-  result += ${v3(m.secondary)} * pow(max(0.0, dot(normal, vec3(0.6, 0.55, 0.58))), 10.0);
+  result += vec3(1.0) * smoothstep(0.78, 0.82, dist) * (1.0 - smoothstep(0.86, 0.9, dist)) * smoothstep(0.45, 0.75, dot(b, unroll(vec2(-0.65, -0.75), tiltCS))) * ${f(m.streak)};
+  result += ${v3(m.secondary)} * pow(max(0.0, dot(normal, vec3(unroll(vec2(0.6, 0.55), tiltCS), 0.58))), 10.0);
   result += ${v3(m.edgeLight)} * upper * edge;
-  result += ${v3(m.rimLight)} * edge * smoothstep(-0.25, 0.7, b.x + b.y);
+  result += ${v3(m.rimLight)} * edge * smoothstep(-0.25, 0.7, dot(b, unroll(vec2(1.0, 1.0), tiltCS)));
   result = mix(result, ${v3(m.outline)}, smoothstep(0.968, 1.0, dist) * ${f(m.outlineAmount)} * (1.0 - u_dark));
   result += body * clamp(u_energy, 0.0, 1.0) * 0.06; // live microphone glow (same term as LiquidCompanion.metal)
   float opacity = alpha * (1.0 - ${f(m.translucency)} * smoothstep(${f(m.clearStart)}, 0.95, dist) * (1.0 - smoothstep(0.955, 0.985, dist)));
@@ -144,22 +152,52 @@ export interface MascotRenderInput {
   dark: number;
   tint: Float32Array;
   tintAmount: number;
+  /** Body roll in radians (the body element's CSS rotation, clockwise positive); 0 when omitted (upright). */
+  tilt?: number;
+}
+export type MascotRendererStatus = 'pending' | 'ready' | 'failed';
+export interface MascotRendererOptions {
+  /**
+   * Compile without blocking the main thread (KHR_parallel_shader_compile when the browser has it): the program is only
+   * used once COMPLETION_STATUS_KHR reports it done, and draw() returns false until then — poll status(). Default false:
+   * compile and link synchronously, so the first draw() right after creation works (dev icon capture, shared stills).
+   */
+  parallel?: boolean;
 }
 export interface MascotRenderer {
-  /** CSS size of the square canvas; the backing store is capped at maxDpr. */
+  /** CSS size of the square canvas; the backing store is capped at maxDpr (≤ 1.5× below 64 px). */
   resize(cssSize: number): void;
-  draw(input: MascotRenderInput): void;
+  /** Draws one frame; false while the program is still compiling (parallel mode) or the context is lost. */
+  draw(input: MascotRenderInput): boolean;
+  /** 'pending' while a parallel compile runs, then 'ready', or 'failed' (no usable program: show the CSS fallback). */
+  status(): MascotRendererStatus;
+  /** Frees the GL objects and loses the context (WEBGL_lose_context) one task later — unless a renderer is created on
+   * the same canvas first (a re-bind in the same commit), which reclaims the context. */
   dispose(): void;
   readonly canvas: HTMLCanvasElement;
 }
 
-export function createMascotRenderer(canvas: HTMLCanvasElement, maxDpr = 2, palette: MascotPaletteSpec = MASCOT_PALETTE): MascotRenderer | null {
+/** Small canvases (< 64 CSS px) render at ≤ 1.5× density: the difference is invisible, the fill cost is not. */
+const SMALL_SIDE = 64, SMALL_DPR = 1.5;
+/** A parallel compile that has not reported completion by then is resolved synchronously (driver safety net). */
+const PARALLEL_DEADLINE_MS = 2000;
+/** Backing-store scale for a square canvas of `cssSize` CSS px: the device ratio, at least 1, capped at maxDpr (1.5 below 64 px). */
+export function canvasScale(cssSize: number, maxDpr: number, devicePixelRatio: number): number {
+  const limit = cssSize < SMALL_SIDE ? Math.min(maxDpr, SMALL_DPR) : maxDpr;
+  return Math.min(limit, Math.max(1, Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1));
+}
+const pendingLoss = new WeakMap<HTMLCanvasElement, ReturnType<typeof setTimeout>>();
+
+export function createMascotRenderer(canvas: HTMLCanvasElement, maxDpr = 2, palette: MascotPaletteSpec = MASCOT_PALETTE, options: MascotRendererOptions = {}): MascotRenderer | null {
+  const loss = pendingLoss.get(canvas);
+  if (loss !== undefined) { clearTimeout(loss); pendingLoss.delete(canvas); }
   let gl: WebGLRenderingContext | null = null;
   try {
     gl = canvas.getContext('webgl', { alpha: true, antialias: false, depth: false, stencil: false, premultipliedAlpha: true, powerPreference: 'low-power' });
   } catch { gl = null; }
   if (!gl || gl.isContextLost()) return null;
   const context = gl;
+  const parallel = options.parallel ? context.getExtension('KHR_parallel_shader_compile') : null;
   const shaders: WebGLShader[] = [];
   let program: WebGLProgram | null = null;
   let buffer: WebGLBuffer | null = null;
@@ -168,15 +206,16 @@ export function createMascotRenderer(canvas: HTMLCanvasElement, maxDpr = 2, pale
     if (buffer) context.deleteBuffer(buffer);
     if (program) context.deleteProgram(program);
     shaders.forEach(shader => context.deleteShader(shader));
+    buffer = null; program = null; shaders.length = 0;
   };
   try {
+    // Statuses are not queried here: with KHR_parallel_shader_compile any status query before completion would block.
     const compile = (type: number, source: string) => {
       const shader = context.createShader(type);
       if (!shader) throw new Error('No shader');
       shaders.push(shader);
       context.shaderSource(shader, source);
       context.compileShader(shader);
-      if (!context.getShaderParameter(shader, context.COMPILE_STATUS)) throw new Error(context.getShaderInfoLog(shader) || 'Shader unavailable');
       return shader;
     };
     program = context.createProgram();
@@ -184,49 +223,88 @@ export function createMascotRenderer(canvas: HTMLCanvasElement, maxDpr = 2, pale
     context.attachShader(program, compile(context.VERTEX_SHADER, VERTEX));
     context.attachShader(program, compile(context.FRAGMENT_SHADER, fragmentFor(palette)));
     context.linkProgram(program);
-    if (!context.getProgramParameter(program, context.LINK_STATUS)) throw new Error('Mascot shader unavailable');
-    context.useProgram(program);
-    buffer = context.createBuffer();
-    context.bindBuffer(context.ARRAY_BUFFER, buffer);
-    context.bufferData(context.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), context.STATIC_DRAW);
-    const position = context.getAttribLocation(program, 'a_position');
-    context.enableVertexAttribArray(position);
-    context.vertexAttribPointer(position, 2, context.FLOAT, false, 0, 0);
-    const uniform = (name: string) => context.getUniformLocation(program!, name);
-    const sizeUniform = uniform('u_size'), timeUniform = uniform('u_time'), energyUniform = uniform('u_energy');
-    const gazeUniform = uniform('u_gaze'), dispUniform = uniform('u_disp'), darkUniform = uniform('u_dark');
-    const tintUniform = uniform('u_moodTint'), amountUniform = uniform('u_moodAmount');
-    context.clearColor(0, 0, 0, 0);
-    let width = 0;
-    return {
-      canvas,
-      resize(cssSize) {
-        const scale = Math.min(maxDpr, Math.max(1, window.devicePixelRatio || 1));
-        const next = Math.max(1, Math.round(cssSize * scale));
-        if (next === width && canvas.width === next) return;
-        width = next;
-        canvas.width = next; canvas.height = next;
-        context.viewport(0, 0, next, next);
-        context.uniform2f(sizeUniform, next, next);
-      },
-      draw(input) {
-        if (context.isContextLost()) return;
-        context.uniform1f(timeUniform, input.time);
-        context.uniform1f(energyUniform, input.energy);
-        context.uniform2f(gazeUniform, input.gazeX, input.gazeY);
-        context.uniform1fv(dispUniform, input.displacement);
-        context.uniform1f(darkUniform, input.dark);
-        context.uniform3f(tintUniform, input.tint[0], input.tint[1], input.tint[2]);
-        context.uniform1f(amountUniform, input.tintAmount);
-        context.clear(context.COLOR_BUFFER_BIT);
-        context.drawArrays(context.TRIANGLES, 0, 6);
-      },
-      dispose: cleanup,
-    };
   } catch {
     cleanup();
     return null;
   }
+
+  type Uniforms = Record<'size' | 'time' | 'energy' | 'gaze' | 'disp' | 'dark' | 'tint' | 'amount' | 'tilt', WebGLUniformLocation | null>;
+  let state: MascotRendererStatus = 'pending';
+  let uniforms: Uniforms | null = null;
+  let width = 0, disposed = false;
+  const startedAt = performance.now();
+  /** Finishes the setup once the program has linked; reports the state. */
+  const status = (): MascotRendererStatus => {
+    if (state !== 'pending' || disposed || context.isContextLost()) return state;
+    const linked = program!;
+    // A driver that never reports completion must not leave the mascot hidden: after 2 s resolve it the blocking way.
+    if (parallel && !context.getProgramParameter(linked, parallel.COMPLETION_STATUS_KHR) && performance.now() - startedAt < PARALLEL_DEADLINE_MS) return state;
+    try {
+      if (!context.getProgramParameter(linked, context.LINK_STATUS)) {
+        const log = shaders.map(shader => context.getShaderInfoLog(shader)).filter(Boolean).join('\n');
+        throw new Error(log || context.getProgramInfoLog(linked) || 'Mascot shader unavailable');
+      }
+      context.useProgram(linked);
+      buffer = context.createBuffer();
+      context.bindBuffer(context.ARRAY_BUFFER, buffer);
+      context.bufferData(context.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), context.STATIC_DRAW);
+      const position = context.getAttribLocation(linked, 'a_position');
+      context.enableVertexAttribArray(position);
+      context.vertexAttribPointer(position, 2, context.FLOAT, false, 0, 0);
+      const uniform = (name: string) => context.getUniformLocation(linked, name);
+      uniforms = {
+        size: uniform('u_size'), time: uniform('u_time'), energy: uniform('u_energy'), gaze: uniform('u_gaze'), disp: uniform('u_disp'),
+        dark: uniform('u_dark'), tint: uniform('u_moodTint'), amount: uniform('u_moodAmount'), tilt: uniform('u_tilt'),
+      };
+      context.clearColor(0, 0, 0, 0);
+      if (width) { context.viewport(0, 0, width, width); context.uniform2f(uniforms.size, width, width); }
+      state = 'ready';
+    } catch {
+      cleanup();
+      state = 'failed';
+    }
+    return state;
+  };
+  if (!parallel && status() !== 'ready') return null;
+  return {
+    canvas,
+    resize(cssSize) {
+      const next = Math.max(1, Math.round(cssSize * canvasScale(cssSize, maxDpr, window.devicePixelRatio)));
+      if (next === width && canvas.width === next) return;
+      width = next;
+      canvas.width = next; canvas.height = next;
+      if (state === 'ready' && uniforms && !context.isContextLost()) {
+        context.viewport(0, 0, next, next);
+        context.uniform2f(uniforms.size, next, next);
+      }
+    },
+    draw(input) {
+      if (disposed || context.isContextLost() || status() !== 'ready' || !uniforms) return false;
+      context.uniform1f(uniforms.time, input.time);
+      context.uniform1f(uniforms.energy, input.energy);
+      context.uniform2f(uniforms.gaze, input.gazeX, input.gazeY);
+      context.uniform1fv(uniforms.disp, input.displacement);
+      context.uniform1f(uniforms.dark, input.dark);
+      context.uniform3f(uniforms.tint, input.tint[0], input.tint[1], input.tint[2]);
+      context.uniform1f(uniforms.amount, input.tintAmount);
+      context.uniform1f(uniforms.tilt, Number.isFinite(input.tilt) ? input.tilt! : 0);
+      context.clear(context.COLOR_BUFFER_BIT);
+      context.drawArrays(context.TRIANGLES, 0, 6);
+      return true;
+    },
+    status,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      cleanup();
+      const lose = context.isContextLost() ? null : context.getExtension('WEBGL_lose_context');
+      if (!lose) return;
+      pendingLoss.set(canvas, setTimeout(() => {
+        pendingLoss.delete(canvas);
+        if (!context.isContextLost()) lose.loseContext();
+      }, 0));
+    },
+  };
 }
 
 /**

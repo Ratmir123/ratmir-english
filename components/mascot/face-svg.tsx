@@ -18,6 +18,8 @@ const Z_PATH = 'M-1.6 -1.7H1.6L-1.6 1.7H1.6';
 
 export interface FaceRefs {
   face: SVGGElement | null;
+  /** The group carrying the emissive glow filter (dropped below 72 px, PASS-0.5.3 §5). */
+  glow: SVGGElement | null;
   blush: SVGGElement | null;
   eyes: [SVGGElement | null, SVGGElement | null];
   pills: [SVGPathElement | null, SVGPathElement | null];
@@ -33,10 +35,14 @@ export interface FaceRefs {
 }
 export function createFaceRefs(): FaceRefs {
   return {
-    face: null, blush: null, eyes: [null, null], pills: [null, null], specialGroups: [null, null], specials: [null, null],
+    face: null, glow: null, blush: null, eyes: [null, null], pills: [null, null], specialGroups: [null, null], specials: [null, null],
     mouth: null, lip: null, open: null, clip: null, tongue: null, zzz: null, zs: [null, null, null],
   };
 }
+/** Below this side (CSS px) the face has no SVG glow filter: invisible at that size, and a filter pass per frame. */
+export const FACE_GLOW_MIN_SIDE = 72;
+/** The glow filter reference for a face rendered with `uid`. */
+export const faceGlowFilter = (uid: string) => `url(#${uid}-glow)`;
 
 const specialCache = new Map<string, SpecialEyeGeometry>();
 function special(shape: Exclude<EyeShape, 'pill'>, side: 0 | 1): SpecialEyeGeometry {
@@ -61,8 +67,9 @@ export function faceStrings(frame: MascotFrame): { pills: [string, string]; mout
 
 export interface FaceStrings { pills: [string, string]; mouth: string }
 /** Rendered once; never re-rendered (props are stable), so per-frame imperative updates are never fought by React. */
-/** Colours come from the mascot palette; a palette change re-renders only the colour attributes. */
-export const MascotFace = memo(function MascotFace({ uid, refs, strings, blush, colors, className }: { uid: string; refs: FaceRefs; strings: FaceStrings; blush: number; colors: MascotFaceColors; className?: string }) {
+/** Colours come from the mascot palette; a palette change re-renders only the colour attributes. `glow` is the initial
+ * state of the glow filter (default on); the mascot toggles it imperatively (refs.glow) when its size crosses 72 px. */
+export const MascotFace = memo(function MascotFace({ uid, refs, strings, blush, colors, className, glow = true }: { uid: string; refs: FaceRefs; strings: FaceStrings; blush: number; colors: MascotFaceColors; className?: string; glow?: boolean }) {
   const glowId = `${uid}-glow`, blushId = `${uid}-blush`, clipId = `${uid}-mouth`;
   return <svg className={className} viewBox="-50 -50 100 100" aria-hidden="true" focusable="false" overflow="visible">
     <defs>
@@ -83,7 +90,7 @@ export const MascotFace = memo(function MascotFace({ uid, refs, strings, blush, 
       {[-1, 1].map(side => <ellipse key={side} cx={fmt(side * BLUSH.x)} cy={fmt(BLUSH.y)} rx={fmt(BLUSH.rx + BLUSH.blur * 1.5)} ry={fmt(BLUSH.ry + BLUSH.blur * 1.5)} fill={`url(#${blushId})`} />)}
     </g>
     <g ref={node => { refs.face = node; }}>
-      <g filter={`url(#${glowId})`}>
+      <g ref={node => { refs.glow = node; }} filter={glow ? `url(#${glowId})` : undefined}>
         {([0, 1] as const).map(index => <g key={index} ref={node => { refs.eyes[index] = node; }} transform={`translate(${fmt((index === 0 ? -1 : 1) * EYE_X)} ${fmt(EYE_Y)})`}>
           <path ref={node => { refs.pills[index] = node; }} d={strings.pills[index]} fill={colors.eye} />
           <g ref={node => { refs.specialGroups[index] = node; }} opacity="0">

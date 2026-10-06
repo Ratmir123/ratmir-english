@@ -1,18 +1,18 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { ArrowsClockwiseIcon } from '@phosphor-icons/react';
 import { APP_NAME } from '@/lib/app-info';
 import { Companion, type MascotEmotion } from './shell/companion';
 import { MOTION_MS, prefersReducedMotion } from './ui/motion';
 import styles from './startup-welcome.module.css';
 
-/** boot: waiting for the state (companion breathing) · greeting: «Привет…» next to it · leaving: fading over the shell. */
+/** boot: the preloader (companion + motivation line) · greeting: «Привет…» above the line · leaving: fading over the shell. */
 export type LaunchPhase = 'boot' | 'greeting' | 'leaving';
 export type LaunchCopy = { greeting: string; motivation: string };
 
-/** How long the greeting stays (from its first word) before the layer hands off to the shell. */
-const GREETING_MS = 2700;
+/** How long the greeting stays (from its first word) before the layer hands off to the shell (PASS-0.5.3 §6). */
+const GREETING_MS = 2200;
 
 /** The server-rendered first paint of the launch layer: the background only — the companion needs the client. */
 export function LaunchBackdrop() {
@@ -20,17 +20,24 @@ export function LaunchBackdrop() {
 }
 
 /**
- * One launch layer from the first paint to the hand-off (MOTION-PASS-0.5.2 §4). The SAME companion instance breathes
- * while the state loads, greets next to its words when a greeting is due, turns sad with a retry when loading fails,
- * then the layer fades (600 ms) while the shell rises in its staircase underneath. A key press or a click skips the
+ * One launch layer from the first paint to the hand-off (MOTION-PASS-0.5.2 §4, PASS-0.5.3 §6). Boot is the preloader:
+ * the SAME companion instance rises in and idles on the compositor (a still frame with a CSS roll/breath that a busy
+ * main thread cannot stall) above one motivation line that needs no data; a hairline progress joins the line only when
+ * loading takes longer than 0.9 s. When the app is ready the companion goes live and greets, «Привет, …» rises into
+ * the room above the line and the line cross-fades to the personal one if it differs. Loading fails → sad, with a retry.
+ * Then the layer fades (600 ms) while the shell rises in its staircase underneath. A key press or a click skips the
  * greeting at once; reduced motion never gets the greeting choreography (training-app decides).
  */
-export function LaunchLayer({ phase, copy, error, retrying, onRetry, onSkip, onGreeted, onLeft }: {
-  phase: LaunchPhase; copy: LaunchCopy | null; error: string | null; retrying: boolean;
+export function LaunchLayer({ phase, line, copy, error, retrying, onRetry, onSkip, onGreeted, onLeft }: {
+  phase: LaunchPhase; line: string; copy: LaunchCopy | null; error: string | null; retrying: boolean;
   onRetry: () => void; onSkip: () => void; onGreeted: () => void; onLeft: () => void;
 }) {
   const callbacks = useRef({ onSkip, onGreeted, onLeft });
   callbacks.current = { onSkip, onGreeted, onLeft };
+  // Live physics from the greeting on (or to look sad about an error), and never back: the hand-off without a greeting
+  // keeps the compositor idle, so nothing starts on the main thread while the shell's staircase runs.
+  const live = useRef(false);
+  if (phase === 'greeting' || error) live.current = true;
 
   useEffect(() => {
     if (phase !== 'greeting') return;
@@ -61,7 +68,7 @@ export function LaunchLayer({ phase, copy, error, retrying, onRetry, onSkip, onG
   }, [phase]);
 
   // While the layer covers the page, the shell mounting beneath must not bring a scrollbar (it would shift the
-  // companion sideways the moment the greeting starts).
+  // companion sideways the moment the greeting starts). The attribute also pauses the ambient aurora behind it.
   useLayoutEffect(() => {
     if (phase === 'leaving') return;
     const root = document.documentElement;
@@ -70,11 +77,13 @@ export function LaunchLayer({ phase, copy, error, retrying, onRetry, onSkip, onG
   }, [phase]);
 
   const emotion: MascotEmotion = error ? (retrying ? 'thinking' : 'sad') : copy ? 'joy' : 'calm';
+  const personal = copy && copy.motivation !== line ? copy.motivation : null;
   return <div className={styles.layer} data-phase={phase} data-testid="opening-greeting" aria-busy={phase === 'boot' && !error}
     onPointerDown={phase === 'greeting' ? () => callbacks.current.onSkip() : undefined}>
     <div className={styles.stage}>
       <div className={styles.mascot} aria-hidden="true">
-        <Companion state="idle" emotion={emotion} greeting={phase === 'greeting'} interactive={false} exclusive={false} />
+        <Companion state="idle" emotion={emotion} greeting={phase === 'greeting'} idleMode={live.current ? 'live' : 'compositor'}
+          interactive={false} exclusive={false} />
       </div>
       <div className={styles.copy}>
         {error ? <div className={styles.problem} role="alert">
@@ -84,13 +93,20 @@ export function LaunchLayer({ phase, copy, error, retrying, onRetry, onSkip, onG
             <ArrowsClockwiseIcon size={17} aria-hidden="true" />{retrying ? 'Подключаюсь…' : 'Повторить'}
           </button>
         </div>
-          : copy ? <div className={styles.hello} role="status" aria-live="polite">
-            <h1>{copy.greeting}</h1>
-            <p aria-label={copy.motivation}>{copy.motivation.split(' ').map((word, index) =>
-              <span aria-hidden="true" key={index} style={{ '--word-delay': (380 + index * 55) + 'ms' } as CSSProperties}>{word}{' '}</span>)}</p>
-            <span className={styles.wordmark} aria-hidden="true">{APP_NAME.toLowerCase()}</span>
-          </div>
-            : <span className="visually-hidden" role="status">Открываю тренинг…</span>}
+          : <div className={styles.hello} data-greeted={copy ? 'true' : undefined}>
+            {/* Visible copy is decoration; the status below speaks it once. The greeting's room is kept from the first
+                frame, so the line only glides down into place — it never jumps. */}
+            <div className={styles.greeting} aria-hidden="true">{copy && <h1>{copy.greeting}</h1>}</div>
+            <p className={styles.line} aria-hidden="true">
+              <span data-leaving={personal ? 'true' : undefined}>{line}</span>
+              {personal && <span data-arriving="true">{personal}</span>}
+            </p>
+            <div className={styles.foot} aria-hidden="true">
+              <span className={styles.progress}><i /></span>
+              <span className={styles.wordmark}>{APP_NAME.toLowerCase()}</span>
+            </div>
+            <span className="visually-hidden" role="status">{copy ? `${copy.greeting} ${copy.motivation}` : `Открываю тренинг… ${line}`}</span>
+          </div>}
       </div>
     </div>
     {phase === 'greeting' && <button type="button" className={styles.skip} onClick={() => callbacks.current.onSkip()}>Перейти к главной</button>}

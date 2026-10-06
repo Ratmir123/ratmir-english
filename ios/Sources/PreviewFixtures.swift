@@ -18,14 +18,17 @@ struct PreviewAccessibility: ViewModifier {
 
     /// Screens that open the conversation sheet.
     static let conversationScreens: Set<String> = ["conversation", "listening", "dictation-preview", "analysing", "analysis-error",
-        "review", "review-retry", "pushback", "celebrate", "saved-deferred", "preview-timing", "ielts-reading", "ielts-writing"]
+        "review", "review-retry", "pushback", "celebrate", "saved-deferred", "preview-timing", "ielts-reading", "ielts-writing",
+        "phrase-review",
+        "hints"]
 
     static func tab(for screen: String) -> ShellTab? {
         switch screen {
         case "practice-catalog", "practice-detail": return .practice
+        case "phrases": return .practice
         case "calls", "call-review", "call-transcript", "call-speakers", "patterns", "facts": return .calls
         case "progress", "skills", "history", "achievements", "ranks", "ranks-bottom", "placement-result": return .progress
-        case "profile", "settings", "reminder-editor", "reminder-denied": return .profile
+        case "profile", "settings", "reminder-editor", "reminder-denied", "profile-voice": return .profile
         default: return nil
         }
     }
@@ -37,7 +40,7 @@ struct PreviewAccessibility: ViewModifier {
         let state = stateFixture(screen, now: now, conversation: conversation)
         client.previewMode = true
         client.state = decode(state, as: TrainingState.self)
-        client.status = decode(["app": ["name": "Smooth Talk", "version": "0.5.2", "channel": "alpha"],
+        client.status = decode(["app": ["name": "Smooth Talk", "version": "0.5.3", "channel": "alpha"],
                                 "brain": ["model": "gpt-6.1-sol", "verified": true], "audio": ["configured": true]], as: ServerStatus.self)
         client.subscriptionUsage = decode(usageFixture(), as: SubscriptionUsage.self)
         client.catalog = decode(["catalog": catalogFixture()], as: FamiliesResponse.self)?.catalog ?? []
@@ -67,6 +70,15 @@ struct PreviewAccessibility: ViewModifier {
             client.liveTranscriptStatus = LiveCaptionCopy.listening
         }
         if screen == "dictation-preview" { startDictation(client) }
+        // PASS-0.5.3 §2 previews: hint levels (level 2 shown), a limit notice on Today.
+        if screen == "hints" {
+            client.showPreviewHint("Try reacting to his news first: “Oh nice — what got you into climbing?”", level: 2)
+        }
+        if screen == "today-limit" {
+            client.subscriptionUsage = decode(limitUsageFixture(), as: SubscriptionUsage.self)
+        }
+        // PASS-0.5.3 §1.6 previews: «Мои фразы», the capture sheet (PhrasesViews.swift `PhrasesPreview`).
+        PhrasesPreview.install(client, screen: screen)
         return true
     }
 
@@ -149,6 +161,7 @@ struct PreviewAccessibility: ViewModifier {
         }
         if screen == "preview-timing" { addTiming(&value) }
         if screen == "ielts-reading" || screen == "ielts-writing" { makeTextActivity(&value, reading: screen == "ielts-reading") }
+        if screen == "phrase-review" { PhrasesPreview.makeReview(&value) }
         return value
     }
 
@@ -224,7 +237,7 @@ struct PreviewAccessibility: ViewModifier {
             sessions.append(done)
         }
         var state: [String: Any] = [
-            "app": ["name": "Smooth Talk", "version": "0.5.2"],
+            "app": ["name": "Smooth Talk", "version": "0.5.3"],
             "profile": ["name": "Alex", "dailyMinutes": 15, "goals": "Уверенно вести созвоны с клиентами на английском.",
                         "interests": ["AI", "игры", "спорт"], "professionalContext": "CG-художник, работает с брендами.",
                         "relocation": "Переезд через месяц.", "feedback": "Прямо и по делу.", "audioRetentionDays": 30, "budgetUsd": 35],
@@ -240,6 +253,7 @@ struct PreviewAccessibility: ViewModifier {
         state["progression"] = PreviewProgression.make(sessionId: sessionID, now: now, deferred: screen == "saved-deferred",
                                                        level: screen == "rank-up" ? 3 : 2)
         state["placement"] = screen == "placement" ? placementNotStarted() : placementCompleted(now: now)
+        state["phrases"] = PhrasesPreview.phrases()
         mergeFeatureFields(into: &state, screen: screen)
         return state
     }
@@ -367,6 +381,20 @@ struct PreviewAccessibility: ViewModifier {
                       "windowDurationMins": 10080, "resetsAt": NSNull()]],
          "manageUrl": "https://chatgpt.com/codex/settings/usage",
          "activity": ["periodDays": 30, "requests": 18, "successful": 17, "failed": 1, "averageLatencyMs": 7400]]
+    }
+
+    /// `today-limit`: a fresh snapshot whose five-hour window is nearly spent (synthetic numbers) — «Лимит подписки
+    /// почти исчерпан · Сброс через 2 ч 15 мин» under Today's header.
+    private static func limitUsageFixture() -> [String: Any] {
+        let iso = ISO8601DateFormatter()
+        let now = Date()
+        return ["available": true, "source": "codex", "scope": "account", "checkedAt": iso.string(from: now), "stale": false, "plan": "plus",
+                "windows": [["id": "w1", "bucketId": "codex", "bucketName": "Codex", "kind": "primary", "usedPercent": 88, "remainingPercent": 12,
+                             "windowDurationMins": 300, "resetsAt": iso.string(from: now.addingTimeInterval(8_100))],
+                            ["id": "w2", "bucketId": "codex", "bucketName": "Codex", "kind": "secondary", "usedPercent": 40, "remainingPercent": 60,
+                             "windowDurationMins": 10080, "resetsAt": iso.string(from: now.addingTimeInterval(3 * 86_400))]],
+                "manageUrl": "https://chatgpt.com/codex/settings/usage",
+                "activity": ["periodDays": 30, "requests": 18, "successful": 17, "failed": 1, "averageLatencyMs": 7400]]
     }
 
     private static func catalogFixture() -> [[String: Any]] {

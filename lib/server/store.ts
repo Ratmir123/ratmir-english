@@ -6,9 +6,10 @@ import { deriveProgression, nextRecommendedFamily } from '../progression';
 import { baselineReportFingerprint, emptyOnboardingRecord, presentOnboarding, type OnboardingRecord } from './onboarding-data';
 import type { BaselineReport } from '../types';
 import { unassistedSpokenTurns } from '../onboarding';
-import { connection, transaction } from './db';
+import { connection, maybeTransaction, transaction } from './db';
 import { clearPlacement, placementProgressionInputs, presentPlacement } from './placement/state';
 import { callProgressionInputs, clearCalls, listCallSummaries, listDrills, listPatterns, listProfileFacts } from './calls/state';
+import { clearPhraseHistory, forgetPhraseSession, listPhrasesForState } from './phrases/repository';
 import { APP_NAME, APP_VERSION } from '../app-info';
 
 const MAX_JOB_ATTEMPTS = 3;
@@ -182,12 +183,17 @@ export function saveBaselineReport(fingerprint: string, report: BaselineReport):
 
 export function deleteSession(id: string): void {
   const { db, claims } = connection();
-  db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  maybeTransaction(db, () => {
+    db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+    // Saved phrases keep their schedule but no history entry points to a deleted session.
+    forgetPhraseSession(db, id);
+  });
   claims.delete(id);
 }
 
 /** Training deletion keeps financial usage and profile: deleting history must not bypass the API budget.
- * It removes practice sessions, the legacy baseline, placement attempts, calls, patterns, drills and suggested facts. */
+ * It removes practice sessions, the legacy baseline, placement attempts, calls, patterns, drills and suggested facts.
+ * Saved phrases («Мои фразы») stay with their schedule; only their history (which points to the deleted sessions) is cleared. */
 export function deleteAllTraining(): void {
   const { db, claims } = connection();
   transaction(db, () => {
@@ -195,6 +201,7 @@ export function deleteAllTraining(): void {
     db.exec("DELETE FROM sessions; DELETE FROM settings WHERE key='onboarding';");
     clearPlacement(db);
     clearCalls(db);
+    clearPhraseHistory(db);
     db.prepare('INSERT INTO settings(key,data) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data')
       .run('learning-generation', JSON.stringify(nextGeneration));
   });
@@ -349,6 +356,7 @@ export function getAppState(): AppState {
       patterns: listPatterns(db, sessions),
       drills: listDrills(db, sessions),
       profileFacts: listProfileFacts(db),
+      phrases: listPhrasesForState(db),
       completed: progression.completedPractice,
       calibrationCompleted: onboarding.introCompletedAt ? onboarding.completedStages
         : completed.filter((session) => session.lesson.kind === 'calibration').length,

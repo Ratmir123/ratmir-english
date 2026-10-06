@@ -1,5 +1,5 @@
 import { SKILLS, type Analysis, type AppState, type LearningActivity, type LearningTrackId, type PracticeResult, type ProgressionState, type Session, type SkillId } from './types';
-import { FAMILIES, LEARNING_ACTIVITIES, LEARNING_TRACKS, familyForDrill, familyForPattern, findFamily, shorten, type CuratedFamily, type LessonPlanV05 } from './training';
+import { FAMILIES, LEARNING_ACTIVITIES, LEARNING_TRACKS, PHRASES_FAMILY, familyForDrill, familyForPattern, findFamily, shorten, type CuratedFamily, type LessonPlanV05 } from './training';
 import type { CommunicationPattern, PatternOutcome, PersonalDrill } from './calls/types';
 import type { StrategyMoveId, StrategyMoveScore } from './strategy-moves';
 import { validSpeechTiming } from './speech-timing';
@@ -85,7 +85,12 @@ export function isDrillSession(session: Session, drillSessionIds?: ReadonlySet<s
   return !!(session.lesson as LessonPlanV05).drillId || !!drillSessionIds?.has(session.id);
 }
 
-/** XP: a lesson is 15, a short drill 8 (+4 with an independent success); a confirmed improved retry adds 5. */
+/** A «Мои фразы» round (PASS-0.5.3 §1.5.1): short like a drill. Phrases woven into an ordinary lesson change nothing here. */
+export function isPhraseRoundSession(session: Session): boolean {
+  return session.lesson.familyId === PHRASES_FAMILY.id;
+}
+
+/** XP: a lesson is 15, a short drill or phrase round 8 (+4 with an independent success); a confirmed improved retry adds 5. */
 export function practiceResult(session: Session, now = Date.now(), drillSessionIds?: ReadonlySet<string>): PracticeResult | null {
   if (session.status !== 'completed' || session.baseline || session.lesson.kind === 'calibration' || !session.analysis
     || !Number.isSafeInteger(session.analysis.version) || session.analysis.version < 1) return null;
@@ -100,7 +105,7 @@ export function practiceResult(session: Session, now = Date.now(), drillSessionI
   const targets = new Set<SkillId>(session.lesson.targetSkills.filter(skill => skill !== 'clarity'));
   const seenTargets = new Set(evidence.filter(item => targets.has(item.skill)).map(item => item.skill));
   const independentSuccesses = evidence.filter(item => item.result === 'success' && !item.supported).length;
-  const base = isDrillSession(session, drillSessionIds) ? 8 + (independentSuccesses ? 4 : 0) : 15;
+  const base = isDrillSession(session, drillSessionIds) || isPhraseRoundSession(session) ? 8 + (independentSuccesses ? 4 : 0) : 15;
   return { sessionId: session.id, xp: base + (improvedRetry ? 5 : 0), completedAt: new Date(completed).toISOString(),
     ...lessonActivity(session), improvedRetry, ...(improvement ? { improvedAt: new Date(validTime(improvement.createdAt)).toISOString() } : {}), evidence,
     quality: { observedTargets: seenTargets.size, targetCount: targets.size, independentSuccesses,

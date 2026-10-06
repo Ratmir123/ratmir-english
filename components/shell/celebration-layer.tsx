@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowRightIcon, SparkleIcon } from '@phosphor-icons/react';
 import { fireConfetti } from '../mascot/confetti';
 import type { Celebration } from '../app/celebrations';
-import { AchievementMedal, RankMedal } from '../ui/rewards';
+import { AchievementMedal, RankMedal, RankName } from '../ui/rewards';
 import { MOTION_MS } from '../ui/motion';
 import { Sheet } from '../ui/sheet';
 import { Companion } from './companion';
@@ -70,10 +70,11 @@ function AchievementToast({ item, onDone, onOpen }: { item: Extract<Celebration,
 function RankSheet({ item, onDone }: { item: Extract<Celebration, { kind: 'rank' }>; onDone: () => void }) {
   const [celebrate] = useState(1);
   useEffect(() => { const timer = setTimeout(() => fireConfetti(null, { count: 120 }), 380); return () => clearTimeout(timer); }, [item.id]);
-  return <Sheet open onClose={onDone} title={`Новый ранг — «${item.title}»`} eyebrow="Ранг опыта" className={styles.rankSheet} testId="rank-up"
+  // The medal drops in and makes two slow turns onto its face (PASS-0.5.3 §8), breathing its colour; the title wears it too.
+  return <Sheet open onClose={onDone} title={<>Новый ранг — «<RankName level={item.level} />»</>} eyebrow="Ранг опыта" className={styles.rankSheet} testId="rank-up"
     actions={<button type="button" className="button primary large block" onClick={onDone} autoFocus>Забрать</button>}>
     <div className={styles.rankStage}>
-      <RankMedal level={item.level} size={168} drop />
+      <RankMedal level={item.level} size={168} drop aura />
       <div className={styles.rankMascot}><Companion emotion="love" celebrate={celebrate} celebrateEmotion="excited" confetti={false} interactive={false} status="Празднует новый ранг" exclusive={false} /></div>
     </div>
     <p className="muted">Уровень опыта {item.level}. Ранги отмечают твою практику — уровень английского показывает тест.</p>

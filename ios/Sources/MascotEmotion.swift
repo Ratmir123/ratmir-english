@@ -162,6 +162,37 @@ extension MascotEmotion {
         }
     }
 
+    /// PASS 0.5.3 §4: a tilt is never a held lean but a gentle roll around 0 (the same table as lib/mascot/emotions.ts).
+    /// Fast shakes (laugh, the first second of excited, annoyed) and the drag lean are not rolls.
+    var roll: MascotRoll? {
+        switch self {
+        case .curious: return MascotRoll(amplitude: 6, period: 4.2)
+        case .wink: return MascotRoll(amplitude: 4.5, period: 3.8)
+        case .shy: return MascotRoll(amplitude: 4, period: 4.6)
+        case .proud: return MascotRoll(amplitude: 3, period: 5.2)
+        // Thinking keeps its slow sway (4.5° · sin(0.91 t), ≈ 6.9 s).
+        case .thinking: return MascotRoll(amplitude: 4.5, period: 6.9)
+        case .happy, .joy: return MascotRoll(amplitude: 2.5, period: 3.4)
+        default: return nil
+        }
+    }
+}
+
+/// A roll: `sign · amplitude · sin(2π · t / period)` from the moment the emotion starts, so it begins upright, swings to
+/// both sides by the same amount and is centred on 0. The sign is random per entry; tap reactions alternate it.
+struct MascotRoll: Equatable {
+    /// Degrees.
+    let amplitude: Double
+    /// Seconds per full side-to-side cycle.
+    let period: Double
+
+    func angle(elapsed: Double, sign: Double) -> Double {
+        guard elapsed.isFinite, elapsed > 0, period > 0 else { return 0 }
+        return (sign < 0 ? -1 : 1) * amplitude * sin(2 * Double.pi * elapsed / period)
+    }
+}
+
+extension MascotEmotion {
     /// App state → context emotion. Legacy moods keep their meaning; a busy mode
     /// (listening / speaking / thinking) wins over neutral legacy flavours so the
     /// existing session screen gets lip-sync and the thinking face without changes.

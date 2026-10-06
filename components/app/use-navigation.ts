@@ -60,7 +60,9 @@ const toTop = () => window.scrollTo({ top: 0, behavior: 'auto' });
 /** Sections reachable by navigation: Созвоны → Звонки · Паттерны · Плейбук; Прогресс → its tabs or the full test report. */
 export type CallsSection = 'calls' | 'patterns' | 'playbook';
 export type ProgressSection = 'overview' | 'skills' | 'history' | 'rewards' | 'report';
-export type NavigationOptions = { callId?: string | null; calls?: CallsSection; progress?: ProgressSection };
+/** Profile rows a link can open (PASS-0.5.3 §3: a limit notice opens «Тренер и лимиты» or «Голос»). */
+export type ProfileSection = 'voice' | 'reminders' | 'limits' | 'data';
+export type NavigationOptions = { callId?: string | null; calls?: CallsSection; progress?: ProgressSection; profileSection?: ProfileSection };
 
 /**
  * In-memory navigation only: the Electron bridge trusts just `/` and `/?entry=` URLs (audit C-19),
@@ -72,6 +74,7 @@ export function useNavigation() {
   const [returnTab, setReturnTab] = useState<TabId>('today');
   const [callTarget, setCallTarget] = useState<{ id: string | null; section: CallsSection | null; nonce: number }>({ id: null, section: null, nonce: 0 });
   const [progressSection, setProgressSection] = useState<{ id: ProgressSection; nonce: number }>({ id: 'overview', nonce: 0 });
+  const [profileTarget, setProfileTarget] = useState<{ id: ProfileSection | null; nonce: number }>({ id: null, nonce: 0 });
   const tabRef = useRef(tab);
   tabRef.current = tab;
   const sessionOpenRef = useRef(sessionOpen);
@@ -82,6 +85,7 @@ export function useNavigation() {
       setSessionOpen(false); setTab(next);
       if (next === 'calls') setCallTarget(previous => ({ id: options.callId ?? null, section: options.calls ?? null, nonce: previous.nonce + 1 }));
       if (next === 'progress' && options.progress) setProgressSection(previous => ({ id: options.progress!, nonce: previous.nonce + 1 }));
+      if (next === 'profile' && options.profileSection) setProfileTarget(previous => ({ id: options.profileSection!, nonce: previous.nonce + 1 }));
       toTop();
     };
     // Leaving an open lesson keeps the soft cross-fade; a plain tab switch swaps at once and the staircase takes over.
@@ -102,7 +106,7 @@ export function useNavigation() {
   }, []);
 
   // Stable identity unless a value changes, so the app context is not rebuilt on unrelated renders.
-  return useMemo(() => ({ tab, tabRef, sessionOpen, sessionOpenRef, returnTab, callTarget, progressSection, go, openSession, closeSession }),
-    [tab, sessionOpen, returnTab, callTarget, progressSection, go, openSession, closeSession]);
+  return useMemo(() => ({ tab, tabRef, sessionOpen, sessionOpenRef, returnTab, callTarget, progressSection, profileTarget, go, openSession, closeSession }),
+    [tab, sessionOpen, returnTab, callTarget, progressSection, profileTarget, go, openSession, closeSession]);
 }
 export type Navigation = ReturnType<typeof useNavigation>;

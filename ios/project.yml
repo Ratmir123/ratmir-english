@@ -19,8 +19,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.ratmirenglish.personal
-        MARKETING_VERSION: '0.5.2'
-        CURRENT_PROJECT_VERSION: '12'
+        MARKETING_VERSION: '0.5.3'
+        CURRENT_PROJECT_VERSION: '13'
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Info.plist
@@ -37,6 +37,11 @@ targets:
           UIColorName: LaunchBackground
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        # PASS-0.5.3 §1.7: the Home Screen quick action opens the capture sheet (AppEntryPoints.swift, cold and warm launch).
+        UIApplicationShortcutItems:
+          - UIApplicationShortcutItemType: app.ratmirenglish.capture
+            UIApplicationShortcutItemTitle: Запомнить фразу
+            UIApplicationShortcutItemIconSymbolName: text.badge.plus
   RatmirEnglishTests:
     type: bundle.unit-test
     platform: iOS

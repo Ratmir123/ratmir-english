@@ -141,6 +141,8 @@ struct PracticeForYou: View {
             header(total: model.total)
             tileRow(model.blockTiles)
             if model.pending.isEmpty { emptyLine }
+            // PASS-0.5.3 §1.6: «Мои фразы» between the drills and the patterns, as on the web (PhrasesViews.swift).
+            PracticePhrasesCard()
             if !model.suggestions.isEmpty { patterns(model.suggestions) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

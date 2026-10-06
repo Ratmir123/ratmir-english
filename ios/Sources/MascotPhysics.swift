@@ -6,7 +6,9 @@ import CoreGraphics
 enum MascotTuning {
     static let nodeCount = 32
     static let fixedStep = 1.0 / 240.0
-    static let maxSubsteps = 8
+    /// PASS 0.5.3 §5: up to 12 fixed steps per rendered frame, so a 30 fps companion (8 steps) never drops time
+    /// on a late frame; only a real stall (> 50 ms) loses the remainder.
+    static let maxSubsteps = 12
     static let ringStiffness = 140.0
     static let ringDamping = 7.5
     static let ringNeighbour = 900.0
@@ -39,8 +41,30 @@ enum MascotTuning {
     /// Envelope follower: attack 35 ms, release 110 ms, per fixed step.
     static let attackCoefficient = 1.0 - exp(-MascotTuning.fixedStep / 0.035)
     static let releaseCoefficient = 1.0 - exp(-MascotTuning.fixedStep / 0.110)
-    /// Slow travelling wave that keeps the outline liquid at rest (about ±1.4 % of R0).
-    static let idleWave = 4.0
+}
+
+/// PASS 0.5.3 §4 (lib/mascot: the same numbers): the body never stays leaned to one side. Emotion rolls are in
+/// `MascotEmotion.roll`; the calm idle life adds an occasional roll episode; the body rolls like an egg on its base.
+enum MascotRollTuning {
+    /// Calm idle episode: one smooth cycle 0 → +5° → −5° → 0 over 2.6 s, its sign random (never always clockwise).
+    static let idleAmplitude = 5.0
+    static let idleDuration = 2.6
+    /// Rolling, not swinging: the pivot sits near the bottom of the canvas (·S from the top) …
+    static let pivotY = 0.86
+    /// … and the body shifts sideways with the tilt, Δx = shift · R0 · S · φ(rad): the top and the centre move the same way.
+    static let shift = 0.35
+
+    /// The idle episode's tilt target in degrees, `elapsed` seconds after it started (0 outside the episode).
+    static func idleRoll(elapsed: Double, sign: Double) -> Double {
+        guard elapsed.isFinite, elapsed > 0, elapsed < idleDuration else { return 0 }
+        return (sign < 0 ? -1 : 1) * idleAmplitude * sin(2 * Double.pi * elapsed / idleDuration)
+    }
+
+    /// Sideways shift (pt) of a body tilted by `rotation` degrees on a canvas of side `side`; the floor shadow follows it.
+    static func offset(rotation: Double, side: Double) -> Double {
+        guard rotation.isFinite, side.isFinite, side > 0 else { return 0 }
+        return shift * MascotTuning.bodyRadius * side * rotation * Double.pi / 180
+    }
 }
 
 enum MascotMetrics {
@@ -150,7 +174,8 @@ struct MascotFrame {
     var offsetY: Double = 0
     var scaleX: Double = 1
     var scaleY: Double = 1
-    /// Degrees, positive = clockwise.
+    /// Degrees, positive = clockwise. The body rolls about `MascotRollTuning.pivotY` and shifts sideways with it
+    /// (`MascotRollTuning.offset`, applied by the render tree, not included in `offsetX`).
     var rotation: Double = 0
     /// Squash q (positive = wider and shorter); feeds the floor shadow (MascotShadowPose).
     var squash: Double = 0
@@ -179,7 +204,6 @@ enum MascotTouchFeedback {
 enum MascotIdleAction: Equatable {
     case rest
     case glance(Double)
-    case curiousTilt
     case happyFlicker
 }
 
@@ -293,6 +317,17 @@ final class MascotPhysics {
     private var idle: MascotIdleAction = .rest
     private var idleUntil = 0.0
 
+    // Rolls (PASS 0.5.3 §4, lib/mascot/physics.ts): every emotion with a roll starts upright when entered, its sign random
+    // per entry; tap reactions that roll alternate the sign (the first one random, non-rolling reactions keep it).
+    private var rollSign = 1.0
+    /// The next rolling tap reaction's sign (0 = not drawn yet).
+    private var tapRollSign = 0.0
+    /// The emotion a tap just asked for; consumed when it is entered (one frame later).
+    private var tapEmotion: MascotEmotion?
+    /// Calm roll episode: start time (−∞ = none) and sign.
+    private var idleRollStart = -Double.infinity
+    private var idleRollSign = 1.0
+
     // Behaviours
     private var laughNext = 0.0
     private var laughSign = 1.0
@@ -329,7 +364,8 @@ final class MascotPhysics {
     private var tapCycle = 0
     private var rng: UInt64
 
-    init() {
+    /// `seed` makes blinks, idle life and roll directions reproducible (tests); 0 is replaced by a fixed non-zero seed.
+    init(seed: UInt64 = UInt64.random(in: 1...UInt64.max)) {
         let count = MascotTuning.nodeCount
         ringD = [Double](repeating: 0, count: count)
         ringV = [Double](repeating: 0, count: count)
@@ -346,7 +382,7 @@ final class MascotPhysics {
         scheduled = [MascotScheduledImpulse](repeating: MascotScheduledImpulse(), count: 8)
         reversals = [Double](repeating: -1_000, count: 4)
         taps = [Double](repeating: -1_000, count: 12)
-        rng = UInt64.random(in: 1...UInt64.max)
+        rng = MascotPhysics.mixSeed(seed)
         faceGoal[MascotFaceChannel.tintR.rawValue] = MascotRGB.base.r
         faceGoal[MascotFaceChannel.tintG.rawValue] = MascotRGB.base.g
         faceGoal[MascotFaceChannel.tintB.rawValue] = MascotRGB.base.b
@@ -375,7 +411,7 @@ final class MascotPhysics {
         lastCelebrate = input.celebrate
     }
 
-    /// Advances to the timeline date with fixed 1/240 s steps (≤ 8 per frame, remainder dropped).
+    /// Advances to the timeline date with fixed 1/240 s steps (≤ 12 per frame, remainder dropped).
     func advance(to date: Date, input: MascotInput) -> MascotFrame {
         let now = date.timeIntervalSinceReferenceDate
         prime(input: input)
@@ -383,6 +419,7 @@ final class MascotPhysics {
         if lastTime < 0 {
             lastActivity = now
             shownSince = now
+            if shown.roll != nil { rollSign = randomSign() }
             nextBlink = now + 1.2 + nextRandom() * 2.4
             nextIdle = now + 4 + nextRandom() * 3
             startBehaviour(shown, now: now)
@@ -402,6 +439,8 @@ final class MascotPhysics {
         if emotion != shown {
             enter(emotion, now: now)
         }
+        // A tap that kept the same face changes nothing (the PC does not re-enter it either).
+        tapEmotion = nil
         updateBlinkAndIdle(now: now, emotion: emotion)
         planTargets(input, emotion: emotion, now: now)
         fireScheduled(now: now)
@@ -458,6 +497,16 @@ final class MascotPhysics {
     func playLaunchGreeting(time now: Double) {
         play(.happy, for: 0.9, now: now)
         launchHopPending = true
+    }
+
+    /// The face on screen now (context or a reaction).
+    var emotion: MascotEmotion { shown }
+
+    /// A calm roll episode now (the PC's `idleRoll`): one smooth cycle 0 → ±5° → ∓5° → 0 over 2.6 s. Idle life starts
+    /// these by itself with a random sign; it only shows while calm.
+    func startIdleRoll(sign: Double, time now: Double) {
+        idleRollStart = now
+        idleRollSign = sign < 0 ? -1 : 1
     }
 
     // MARK: Touch API (canvas coordinates, y grows down)
@@ -650,6 +699,11 @@ final class MascotPhysics {
     private func enter(_ emotion: MascotEmotion, now: Double) {
         shown = emotion
         shownSince = now
+        if emotion.roll != nil {
+            rollSign = tapEmotion == emotion ? nextTapRollSign() : randomSign()
+        }
+        tapEmotion = nil
+        if emotion != .calm { idleRollStart = -Double.infinity }
         let goal = emotion.faceTarget
         changeShapes(left: goal.shapeL, right: goal.shapeR, now: now)
         startBehaviour(emotion, now: now)
@@ -716,6 +770,8 @@ final class MascotPhysics {
         } else {
             let reaction = MascotEmotion.tapReaction(at: tapCycle)
             tapCycle = (tapCycle + 1) % MascotEmotion.tapCycleLength
+            // Rolling tap reactions alternate their direction (PASS 0.5.3 §4).
+            tapEmotion = reaction.emotion
             play(reaction.emotion, for: reaction.duration, now: now)
         }
         if physical {
@@ -788,8 +844,9 @@ final class MascotPhysics {
         } else if roll < 0.70 {
             hop.velocity -= 0.45 * side
         } else if roll < 0.85 {
-            idle = .curiousTilt
-            idleUntil = now + 1.1
+            // Same 15 % share as the old held lean: one smooth roll to one side, then the other, back upright.
+            idleRollStart = now
+            idleRollSign = randomSign()
         } else {
             idle = .happyFlicker
             idleUntil = now + 0.6
@@ -815,10 +872,6 @@ final class MascotPhysics {
             break
         case .glance(let direction):
             goal.gazeX = direction
-        case .curiousTilt:
-            goal.openR = min(goal.openR, 0.82)
-            goal.tiltL -= 4
-            goal.tiltR += 5
         case .happyFlicker:
             goal.smileL = max(goal.smileL, 0.4)
             goal.smileR = max(goal.smileR, 0.4)
@@ -860,6 +913,7 @@ final class MascotPhysics {
                 laughNext = now + 0.18
             }
         case .excited:
+            // A quick excited shake that stops after 1 s (the PC does the same).
             if age < 1.0 {
                 tiltGoal = 8 * sin(2 * Double.pi * 4 * age)
             }
@@ -871,13 +925,8 @@ final class MascotPhysics {
         case .proud:
             puffGoalX = 1.06
             puffGoalY = 1.06
-            tiltGoal = -4
         case .surprised:
             squashGoal = -0.25
-        case .curious:
-            tiltGoal = 9
-        case .thinking:
-            tiltGoal = 4.5 * sin(0.91 * t)
         case .listening:
             puffGoalX = 1.02
             puffGoalY = 1.02
@@ -893,20 +942,21 @@ final class MascotPhysics {
         case .shy:
             puffGoalX = 0.95
             puffGoalY = 0.95
-            tiltGoal = -6
         case .annoyed:
             if age < 0.3 {
                 tiltGoal = 4 * sin(2 * Double.pi * 8 * age)
             }
-        case .wink:
-            tiltGoal = 6
         case .squeeze:
             squashGoal = 0.22
         default:
             break
         }
-        if idle == .curiousTilt {
-            tiltGoal += 7
+        // PASS 0.5.3 §4: curious, wink, shy, proud, thinking, happy and joy roll gently around upright, never lean.
+        if let roll = emotion.roll {
+            tiltGoal += roll.angle(elapsed: age, sign: rollSign)
+        }
+        if emotion == .calm {
+            tiltGoal += MascotRollTuning.idleRoll(elapsed: now - idleRollStart, sign: idleRollSign)
         }
         // Opening greeting pose rides on the same springs (applied as targets).
         puffGoalX *= input.greetingScaleX
@@ -1022,11 +1072,10 @@ final class MascotPhysics {
         } else {
             holdDepth = max(0, holdDepth - dt / 0.12)
         }
-        let wavePhase = simTime * 0.95
-        let waveAmplitude = sleeping ? MascotTuning.idleWave * 0.5 : MascotTuning.idleWave
+        // No travelling outline wave (PASS 0.5.3 §4, the PC has none): the ring moves only for touch, drag and the voice.
         for index in 0..<count {
             let angle = ringAngle[index]
-            var force = waveAmplitude * sin(2 * angle - wavePhase)
+            var force = 0.0
             if holdDepth > 0 {
                 force -= MascotTuning.holdForce * gaussian(wrapAngle(angle - touchAngle)) * holdDepth
             }
@@ -1180,5 +1229,27 @@ final class MascotPhysics {
         rng ^= rng >> 7
         rng ^= rng << 17
         return Double(rng >> 11) / Double(UInt64(1) << 53)
+    }
+
+    /// splitmix64 finaliser: any seed (also 1, 2, 3 …) starts the xorshift well mixed; never 0.
+    static func mixSeed(_ seed: UInt64) -> UInt64 {
+        var z = seed &+ 0x9E37_79B9_7F4A_7C15
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        z ^= z >> 31
+        return z == 0 ? 0x9E37_79B9_7F4A_7C15 : z
+    }
+
+    /// +1 or −1 with equal chance (roll directions).
+    private func randomSign() -> Double {
+        nextRandom() < 0.5 ? -1 : 1
+    }
+
+    /// The sign of the next rolling tap reaction: the first is random, then they alternate.
+    private func nextTapRollSign() -> Double {
+        if tapRollSign == 0 { tapRollSign = randomSign() }
+        let sign = tapRollSign
+        tapRollSign = -sign
+        return sign
     }
 }

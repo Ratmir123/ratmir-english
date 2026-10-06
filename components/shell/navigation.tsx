@@ -1,11 +1,12 @@
 'use client';
 
 import { useLayoutEffect, useRef, type CSSProperties } from 'react';
-import { ArrowRightIcon, LightningIcon } from '@phosphor-icons/react';
+import { ArrowRightIcon, ChatTeardropTextIcon } from '@phosphor-icons/react';
 import { APP_NAME } from '@/lib/app-info';
 import { useApp } from '../app/app-context';
+import { useDesktopStatus } from '../capture/use-capture';
 import { sessionStatusLabel, TAB_NAMES, TAB_ORDER, type TabId } from '../app/labels';
-import { rankProgress, RankMedal } from '../ui/rewards';
+import { rankProgress, RankMedal, RankName, RankXp } from '../ui/rewards';
 import { ElapsedTime } from '../ui/elapsed';
 import { RollingNumber } from '../ui/rolling-number';
 import { Companion } from './companion';
@@ -70,15 +71,14 @@ export function Sidebar() {
       </div>
     </nav>
     <div className="sidebar-footer">
+      {/* The rank chip (PASS-0.5.3 §8): a 40 px medal floating with a glint (2D below 48 px) in a ring of its colour. */}
       {progression && <button type="button" className="sidebar-rank" data-xp-target data-enter="side" onClick={() => app.go('progress', { progress: 'rewards' })}
         aria-label={`Ранг «${rankProgress(progression).band.title}», ${progression.xp} XP. Открыть награды`}>
-        <span className="row"><RankMedal level={progression.level} size={34} animated={false} />
-          <span className="sidebar-rank-copy"><strong>{rankProgress(progression).band.title}</strong><span className="caption tabular"><RollingNumber value={progression.xp} /> XP · ур. {progression.level}</span></span></span>
-        <span className="progress-track lime" style={{ '--value': rankProgress(progression).ratio } as CSSProperties}><span /></span>
+        <span className="row"><RankMedal level={progression.level} size={40} ring />
+          <span className="sidebar-rank-copy"><strong><RankName level={progression.level} /></strong><span className="caption tabular"><RollingNumber value={progression.xp} /> XP · ур. {progression.level}</span></span></span>
+        <RankXp value={progression} bare slim shimmer={false} />
       </button>}
-      <button type="button" className="nav-item" data-enter="side" onClick={app.launchQuick} title="Быстрый разбор фразы — Ctrl+Alt+E из любого окна" aria-keyshortcuts="Control+Alt+E">
-        <LightningIcon size={21} aria-hidden="true" /><span>Быстрый разбор</span>
-      </button>
+      <CaptureItem onOpen={app.launchQuick} />
       {(() => {
         const engine = `Sol · ${data.status ? engineOk ? data.status.brain.mode === 'siwc' ? 'подписка ChatGPT' : 'подписка Codex' : 'нужно подключение' : data.statusFailed ? 'статус недоступен' : 'проверяю…'}`;
         return <div className="engine-status" data-enter="side" role="status" title={`GPT‑6.1 ${engine}`}><i data-ok={engineOk} aria-hidden="true" /><span>{engine}</span></div>;
@@ -86,6 +86,18 @@ export function Sidebar() {
     </div>
     {lesson.starting && <span className="visually-hidden" role="status">{lesson.starting.label}</span>}
   </aside>;
+}
+
+/** «Запомнить фразу» (PASS-0.5.3 §1.6): the desktop shell opens its floating chubrik, a browser the in-app capture sheet.
+ * The shortcut shown is the one the shell actually registered. */
+function CaptureItem({ onOpen }: { onOpen: () => void }) {
+  const desktop = useDesktopStatus();
+  const shortcut = desktop?.shortcutRegistered ? desktop.shortcut.trim() : '';
+  return <button type="button" className="nav-item" data-enter="side" onClick={onOpen}
+    title={shortcut ? `Запомнить фразу — ${shortcut} из любого окна` : 'Запомнить фразу'}
+    aria-keyshortcuts={shortcut ? shortcut.replace(/\bCtrl\b/g, 'Control') : undefined}>
+    <ChatTeardropTextIcon size={21} aria-hidden="true" /><span>Запомнить фразу</span>
+  </button>;
 }
 
 export function TabBar() {

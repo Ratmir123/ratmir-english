@@ -40,7 +40,13 @@
   height: var(--mascot-size, 100%);
   transform: translate(-50%, -50%);
   pointer-events: none;
+  transition: opacity 180ms var(--ease-out, cubic-bezier(.16, 1, .3, 1));
 }
+/* 0.5.3: the WebGL context is created when the mascot is first visible and compiles off the main thread. Until its first
+   frame lands nothing is shown (no face without a body, no fallback flash); then the stage fades in. */
+.root[data-lens='pending'] .stage { opacity: 0; }
+/* The floor (shadow layers) and the body's idle wrappers fill the stage, so their percentages are fractions of S. */
+.floor, .idle, .breath { position: absolute; inset: 0; }
 /* Floor shadow layers (ambient, contact). Box, floor line and both theme fills are inline from lib/mascot/shadow.ts;
    the loop writes only transform, opacity and filter. */
 .shadow {
@@ -67,15 +73,45 @@
   height: 78%;
   border-radius: 45%;
 }
-.root[data-lens='live'] .fallback, .root[data-lens='still'] .fallback { visibility: hidden; }
+.root[data-lens='live'] .fallback, .root[data-lens='still'] .fallback, .root[data-lens='pending'] .fallback { visibility: hidden; }
 .root[data-lens='none'] .canvas { visibility: hidden; }
 .face { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 /* Sleepy z's float outside the body: violet on light backgrounds, white glow on dark ones. */
 .root[data-dark='false'] .face [data-part='zzz'] { stroke: rgba(111, 92, 242, 0.8); }
 .root[data-state='paused'] .body { filter: saturate(0.72); }
 
+/* Compositor idle (idleMode 'compositor', PASS-0.5.3 section 6): one settled upright WebGL frame, and these wrappers keep it
+   moving on the compositor while the main thread is busy (the launch preloader). Transform only. The roll turns about the
+   roll pivot (lib/mascot/constants ROLL.pivotY = 86 %) with the rolling shift (0.273*S*phi), the breath scales about the
+   floor contact (89 %) and the floor follows the shift plus the contact lean. Sine-eased quarter cycles give an exact
+   sine roll. Numbers: COMPOSITOR_IDLE (+-4 deg, 1 <-> 1.015, 4.2 s), checked by tests/mascot-roll.test.ts. */
+.idle { transform-origin: 50% 86%; }
+.breath { transform-origin: 50% 89%; }
+.idleRoll { animation: idleRoll 4.2s infinite; }
+.idleBreath { animation: idleBreath 4.2s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.idleFloor { animation: idleFloor 4.2s infinite; }
+.root[data-roll='reverse'] .idleRoll, .root[data-roll='reverse'] .idleFloor { animation-direction: reverse; }
+@keyframes idleRoll {
+  0%, 50% { transform: translateX(0%) rotate(0deg); animation-timing-function: cubic-bezier(0.61, 1, 0.88, 1); }
+  25% { transform: translateX(1.906%) rotate(4deg); animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0); }
+  75% { transform: translateX(-1.906%) rotate(-4deg); animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0); }
+  100% { transform: translateX(0%) rotate(0deg); }
+}
+@keyframes idleBreath {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.015); }
+}
+@keyframes idleFloor {
+  0%, 50% { transform: translateX(0%); animation-timing-function: cubic-bezier(0.61, 1, 0.88, 1); }
+  25% { transform: translateX(3.999%); animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0); }
+  75% { transform: translateX(-3.999%); animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0); }
+  100% { transform: translateX(0%); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .body, .shadow { will-change: auto; }
+  .stage { transition: none; }
+  .idleRoll, .idleBreath, .idleFloor { animation: none; }
 }
 @media (forced-colors: active) {
   .root:focus-visible .stage::after { box-shadow: 0 0 0 3px CanvasText; }

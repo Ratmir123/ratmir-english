@@ -240,7 +240,6 @@ extension Notification.Name {
     private var localRecording: URL?
     private var pendingSpeechTurn: String?
     private var heardTurns = Set<String>()
-    private var hintLevels: [String: Int] = [:]
     private var pendingPlaybackAcknowledgements: [String: String] = [:]
     private var voiceGeneration = UUID()
     private var speechTask: Task<Void, Never>?
@@ -628,7 +627,9 @@ extension Notification.Name {
         } else if status == nil {
             statusUnavailable = true
         }
-        if let newUsage { subscriptionUsage = newUsage }
+        // PASS-0.5.3 §2: a failed read keeps the last snapshot as history; usage is read again every minute while active.
+        if let newUsage { applyUsage(newUsage) } else { markUsageStale() }
+        startUsagePolling()
     }
 
     /// Runs after accepted actions: the learner's turn never waits for these reads (C-01).
@@ -1057,8 +1058,12 @@ extension Notification.Name {
         stopSpeaking()
         let stage = name == "complete" ? "Сохраняю результат" : name == "finish" ? "Передаю разговор на разбор" : "Обновляю занятие"
         var accepted: Conversation?
+        // «Завершить занятие» and «Отложить попытку» carry the optional comfort rating (PASS-0.5.3 §2, web review.tsx).
+        let body: [String: Any] = name == "complete"
+            ? TrainingClient.completionBody(comfort: comfort(for: conversation), deferRetry: deferRetry)
+            : (deferRetry ? ["deferRetry": true] : [:])
         await perform(stage: stage) {
-            let value: Conversation = try await request("sessions/\(conversation.id)/\(name)", body: deferRetry ? ["deferRetry": true] : [:])
+            let value: Conversation = try await request("sessions/\(conversation.id)/\(name)", body: body)
             if self.conversation?.id == conversation.id { self.conversation = value }
             accepted = value
         }
@@ -1126,20 +1131,177 @@ extension Notification.Name {
         }
     }
 
-    func getHint() async {
-        guard let conversation, let turn = conversation.turns.last(where: { $0.role == "assistant" }) else { return }
-        let level = min(3, (hintLevels[turn.id] ?? 0) + 1)
-        await perform(stage: "Подбираю опору для ответа") {
-            let result: Hint = try await request("sessions/\(conversation.id)/hint", body: ["level": level])
+    // MARK: Hints, comfort, voice budget, usage (PASS-0.5.3 §2, iPhone parity with the web)
+
+    static let hintStage = "Подбираю подсказку"
+    /// The level of the hint on screen (1 «Намёк», 2 «Конструкция», 3 «Пример»); see `selectedHintLevel`.
+    @Published private(set) var hintLevel = 0
+
+    /// The selected chip: the last requested level while its hint is shown (web `hintLevel`, reset with the hint).
+    var selectedHintLevel: Int { hint == nil ? 0 : hintLevel }
+
+    /// POST sessions/{id}/hint { level } → { text, support }: any level, in any order (web `lesson.hint`). The server
+    /// records the strongest support used for the line.
+    func getHint(level: Int) async {
+        guard let conversation, (1...3).contains(level) else { return }
+        await perform(stage: TrainingClient.hintStage) {
+            let result: Hint = try await request("sessions/\(conversation.id)/hint", body: TrainingClient.hintBody(level: level))
+            guard self.conversation?.id == conversation.id else { return }
             hint = result.text
-            hintLevels[turn.id] = level
+            hintLevel = level
         }
     }
 
-    /// The level the next hint request would ask for (1–3).
-    var nextHintLevel: Int {
-        guard let turn = conversation?.turns.last(where: { $0.role == "assistant" }) else { return 1 }
-        return min(3, (hintLevels[turn.id] ?? 0) + 1)
+    nonisolated static func hintBody(level: Int) -> [String: Any] { ["level": min(3, max(1, level))] }
+
+#if DEBUG
+    /// Previews show a hint that was already requested.
+    func showPreviewHint(_ text: String, level: Int) {
+        hint = text
+        hintLevel = min(3, max(1, level))
+    }
+#endif
+
+    /// «Как ощущалось занятие?» picked in the review dock, per session (web keeps the same map).
+    @Published private(set) var comfortRatings: [String: Int] = [:]
+
+    /// The learner's rating for this session (1–5): picked here, or already saved with the session.
+    func comfort(for value: Conversation) -> Int? { comfortRatings[value.id] ?? value.comfort }
+
+    func setComfort(_ rating: Int, for sessionID: String) {
+        guard (1...5).contains(rating) else { return }
+        comfortRatings[sessionID] = rating
+    }
+
+    /// POST sessions/{id}/complete body: `comfort` only when rated, `deferRetry` only for «Отложить попытку».
+    nonisolated static func completionBody(comfort: Int?, deferRetry: Bool) -> [String: Any] {
+        var body: [String: Any] = [:]
+        if let comfort, (1...5).contains(comfort) { body["comfort"] = comfort }
+        if deferRetry { body["deferRetry"] = true }
+        return body
+    }
+
+    /// «Бюджет голоса» saves on its own (web BudgetField): the latest profile with only the budget changed. Never the busy
+    /// flag or the shared alert: the field shows «Сохраняю…» / «Сохранено» / «Не удалось сохранить бюджет.» itself.
+    @discardableResult func saveVoiceBudget(_ amount: Double) async -> Bool {
+        guard let current = state?.profile, let budget = VoiceBudget.clamped(amount) else { return false }
+        do {
+            let updated: TrainingState = try await request("profile", body: TrainingClient.profileBody(current, budgetUsd: budget))
+            apply(updated)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Every field POST /api/profile validates, normalised like `saveProfile`; `budgetUsd` replaces the saved budget
+    /// (clamped to 1–50; the server default 50 when nothing usable is known).
+    nonisolated static func profileBody(_ profile: Learner, budgetUsd: Double? = nil) -> [String: Any] {
+        let name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let goals = profile.goals.trimmingCharacters(in: .whitespacesAndNewlines)
+        var interests: [String] = []
+        for interest in profile.interests {
+            let value = String(interest.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+            if !value.isEmpty && interests.count < 20 { interests.append(value) }
+        }
+        var body: [String: Any] = [:]
+        body["name"] = String((name.isEmpty ? "Ты" : name).prefix(80))
+        body["goals"] = String((goals.isEmpty ? "Говорить увереннее" : goals).prefix(3000))
+        body["interests"] = interests
+        body["professionalContext"] = String(profile.professionalContext.prefix(2000))
+        body["relocation"] = String(profile.relocation.prefix(1000))
+        body["dailyMinutes"] = min(60, max(5, profile.dailyMinutes))
+        body["feedback"] = String(profile.feedback.prefix(1000))
+        body["audioRetentionDays"] = min(180, max(7, profile.audioRetentionDays))
+        body["budgetUsd"] = VoiceBudget.clamped(budgetUsd ?? profile.budgetUsd) ?? VoiceBudget.fallback
+        return body
+    }
+
+    /// `/api/usage` is read again every minute while the app is active (web parity), so the limit notice and the limits
+    /// screen stay current; the loop stops when the app leaves the foreground and resumes when it returns.
+    static let usageRefreshSeconds: TimeInterval = 60
+    private var usagePolling: Task<Void, Never>?
+    private var usageActivityObservers: [NSObjectProtocol] = []
+    private var lastUsageRead: Date?
+
+    /// GET /api/usage on its own. A failed read keeps the last snapshot, marked historical (web `refreshUsage`).
+    func refreshUsage() async {
+#if DEBUG
+        // Screenshot previews keep their fixture snapshot.
+        if previewMode && PreviewFixtures.screen != nil { return }
+#endif
+        do {
+            let value: SubscriptionUsage = try await request("usage")
+            applyUsage(value)
+        } catch is CancellationError {
+            return
+        } catch let failure as URLError where failure.code == .cancelled {
+            return
+        } catch {
+            if Task.isCancelled { return }
+            markUsageStale()
+        }
+    }
+
+    private func applyUsage(_ value: SubscriptionUsage) {
+        subscriptionUsage = value
+        lastUsageRead = Date()
+    }
+
+    private func markUsageStale() {
+        guard signedIn else { return }
+        lastUsageRead = Date()
+        if let previous = subscriptionUsage {
+            subscriptionUsage = previous.markedStale(error: "Не удалось обновить лимиты. Последние данные сохранены.")
+        } else {
+            subscriptionUsage = .unavailable(error: "Лимиты временно недоступны. Попробуй обновить.")
+        }
+    }
+
+    /// Idempotent; called after every status/usage read. Follows the app: running while active, paused otherwise.
+    private func startUsagePolling() {
+#if DEBUG
+        if previewMode { return }
+#endif
+        if usageActivityObservers.isEmpty {
+            let center = NotificationCenter.default
+            usageActivityObservers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                object: nil, queue: .main) { [weak self] _ in
+                    guard let client = self else { return }
+                    Task { @MainActor [client] in client.resumeUsagePolling() }
+                })
+            usageActivityObservers.append(center.addObserver(forName: UIApplication.willResignActiveNotification,
+                object: nil, queue: .main) { [weak self] _ in
+                    guard let client = self else { return }
+                    Task { @MainActor [client] in client.pauseUsagePolling() }
+                })
+        }
+        if UIApplication.shared.applicationState == .active { resumeUsagePolling() }
+    }
+
+    private func resumeUsagePolling() {
+        guard signedIn, usagePolling == nil else { return }
+        usagePolling = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                let elapsed = Date().timeIntervalSince(self.lastUsageRead ?? .distantPast)
+                let wait = max(0, TrainingClient.usageRefreshSeconds - elapsed)
+                if wait > 0 {
+                    do { try await Task.sleep(for: .seconds(wait)) } catch { return }
+                }
+                guard !Task.isCancelled else { return }
+                guard self.signedIn else {
+                    self.usagePolling = nil
+                    return
+                }
+                await self.refreshUsage()
+            }
+        }
+    }
+
+    private func pauseUsagePolling() {
+        usagePolling?.cancel()
+        usagePolling = nil
     }
 
     // MARK: Partner text (MOTION-PASS §6)

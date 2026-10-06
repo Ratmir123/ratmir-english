@@ -89,10 +89,20 @@ export const ACHIEVEMENT_ART: Record<string, string> = {
   'pattern-improving': 'rank-mint', 'counter-offer': 'rank-gold', 'no-disclaimers': 'three-days',
   'case-first': 'ten-practices', 'dated-next-step': 'balanced-worlds', 'clean-pitch': 'first-practice',
 };
-export const achievementArt = (id: string) => `/rewards-v041/${ACHIEVEMENT_ART[id] ?? 'first-practice'}.png`;
+/** Every reward/rank picture: public/rewards-v041/<id>.png (512 px) and public/rewards-v041/256/<id>.png (256 px). */
+export const REWARD_ART_IDS = ['first-practice', 'three-days', 'ten-practices', 'own-improvement', 'balanced-worlds', 'independent-listening',
+  'four-sides', 'rank-pearl', 'rank-mint', 'rank-sky', 'rank-violet', 'rank-rose', 'rank-gold'] as const;
+/** Largest display side (CSS px) the 256 px variant still draws sharply on a 2× screen (PASS-0.5.3 §6). */
+export const REWARD_ART_SMALL_MAX = 120;
+/** Reward/rank art for a display side: ≤ 120 px → the 256 px variant, larger or unknown → the 512 px original. */
+export const rewardArtUrl = (art: string, displaySize?: number) =>
+  displaySize !== undefined && displaySize <= REWARD_ART_SMALL_MAX ? `/rewards-v041/256/${art}.png` : `/rewards-v041/${art}.png`;
+export const achievementArt = (id: string, displaySize?: number) => rewardArtUrl(ACHIEVEMENT_ART[id] ?? 'first-practice', displaySize);
 export const EXPERIENCE_BANDS = [
   { from: 1, art: 'rank-pearl', title: 'Старт' }, { from: 3, art: 'rank-mint', title: 'Разгон' },
   { from: 6, art: 'rank-sky', title: 'Ритм' }, { from: 10, art: 'rank-violet', title: 'Напор' },
   { from: 16, art: 'rank-rose', title: 'Искра' }, { from: 25, art: 'rank-gold', title: 'Огонь' },
 ] as const;
 export const experienceBand = (level: number) => [...EXPERIENCE_BANDS].reverse().find(band => level >= band.from) ?? EXPERIENCE_BANDS[0];
+/** The rank picture for a level at a display side (see `rewardArtUrl`). */
+export const rankArtUrl = (level: number, displaySize?: number) => rewardArtUrl(experienceBand(level).art, displaySize);

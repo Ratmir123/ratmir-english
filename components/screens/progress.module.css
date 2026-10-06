@@ -3,7 +3,7 @@
 .panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 /* Switching sections: the new panel settles in softly (the screen's arrival is the staircase instead). */
 .panel[data-switched] { animation: panelIn var(--reveal-ms) var(--ease-out) both; }
-@keyframes panelIn { from { opacity: 0; transform: translate3d(0, var(--reveal-rise), 0); filter: blur(var(--reveal-blur)); } }
+@keyframes panelIn { from { opacity: 0; transform: translate3d(0, var(--reveal-rise), 0); } } /* no blur: Overview and Rewards hold live 3D medals (PASS-0.5.3 §5) */
 @media (prefers-reduced-motion: reduce) { .panel[data-switched] { animation: panelFade 200ms ease-out both; } }
 @keyframes panelFade { from { opacity: 0; } }
 .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
@@ -23,14 +23,14 @@
 .pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
 @container progress (min-width: 760px) { .pair { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); } }
 
-/* Experience rank. The medal is the character of this card: it gets real room (≥ 96 px). */
+/* Experience rank. The medal is the character of this card (PASS-0.5.3 §8): 136 px with its breathing aura. */
 .rank { container: rank / inline-size; padding: 22px 22px 18px; }
 .rankGrid {
   display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: 'medal title' 'body body';
   gap: 14px 18px; align-items: center;
 }
 @container rank (min-width: 460px) { .rankGrid { grid-template-areas: 'medal title' 'medal body'; align-items: start; row-gap: 10px; } }
-.rankMedal { grid-area: medal; display: grid; place-items: center; width: 112px; height: 112px; }
+.rankMedal { grid-area: medal; display: grid; place-items: center; width: 144px; height: 144px; margin: -4px 0 -4px -6px; }
 .rankTitle { grid-area: title; display: grid; gap: 4px; min-width: 0; align-self: center; }
 .rankTitle h2 { font-size: 26px; line-height: 1.15; overflow-wrap: anywhere; }
 .rankBody { grid-area: body; display: grid; gap: 10px; min-width: 0; justify-items: stretch; }

@@ -2,14 +2,21 @@
 // Smooth Talk mascot (MASCOT-SPEC). A jelly glass body (WebGL, 32-node outline) with an SVG face,
 // driven by the deterministic reference simulation in lib/mascot/physics.ts.
 // Per-frame work never re-renders React: the loop writes styles/attributes through refs.
+// PASS-0.5.3: the body rolls about a pivot near its base (lib/mascot/roll) and never holds a lean; the WebGL context is
+// created when the mascot is first visible and not covered, and compiles off the main thread; mascots inside the app shell
+// sleep while the launch or placement layer covers it (components/ui/shell-cover) and wake one per frame; idleMode
+// 'compositor' idles on the compositor (CSS) while the main thread is busy.
 import { memo, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from 'react';
-import { BODY_RADIUS, DARK, TOUCH } from '@/lib/mascot/constants';
+import { COMPOSITOR_IDLE, DARK, TOUCH } from '@/lib/mascot/constants';
 import { STATE_LABELS, type MascotEmotion, type MascotState } from '@/lib/mascot/emotions';
 import { MASCOT_PALETTE, type MascotPaletteSpec } from '@/lib/mascot/palette';
 import { MascotPhysics, type MascotFrame, type Point } from '@/lib/mascot/physics';
+import { bodyTransform } from '@/lib/mascot/roll';
 import { SHADOW, createShadowPose, poolFill, shadowFill, shadowPose, type ShadowLayer, type ShadowLayerPose } from '@/lib/mascot/shadow';
+import { EASE_OUT } from '../ui/motion';
+import { insideShell, isShellCovered, subscribeShellCover } from '../ui/shell-cover';
 import { fireConfetti } from './confetti';
-import { FaceView, MascotFace, createFaceRefs, faceStrings } from './face-svg';
+import { FACE_GLOW_MIN_SIDE, FaceView, MascotFace, createFaceRefs, faceGlowFilter, faceStrings } from './face-svg';
 import { mascotRegistry, type MascotContender } from './registry';
 import { createMascotRenderer, renderStill, type MascotRenderInput, type MascotRenderer } from './renderer';
 import styles from './mascot.module.css';
@@ -61,6 +68,12 @@ export interface MascotProps {
   exclusive?: boolean;
   /** Always a static pose rendered through a shared WebGL context (thumbnails, galleries). */
   still?: boolean;
+  /**
+   * 0.5.3 (PASS-0.5.3 §6): 'compositor' = one upright frame drawn once, no rAF loop; the wrapper idles with a CSS roll/breath
+   * that runs on the compositor, so a busy main thread (the launch preloader) never freezes it. Switching to 'live' hands
+   * over smoothly to the physics. Default 'live'.
+   */
+  idleMode?: 'live' | 'compositor';
   /** Body material and face colours (lib/mascot/palette). The app ships MASCOT_PALETTE; the lab compares presets.
    * Pass a stable object: a new one re-binds the renderer. */
   palette?: MascotPaletteSpec;
@@ -73,6 +86,9 @@ export interface MascotProps {
 const n2 = (value: number) => Math.round(value * 100) / 100;
 const n3 = (value: number) => Math.round(value * 1000) / 1000;
 const n4 = (value: number) => Math.round(value * 10000) / 10000;
+const DEG = Math.PI / 180;
+/** The cached stage rect (pointer gaze) is re-measured at most this often, outside the frame tick. */
+const RECT_TTL_MS = 1000;
 // Floor shadow geometry and theme fills come from lib/mascot/shadow (one source with the iPhone); CSS picks the fill by
 // data-dark. The palette adds its glass colours to the floor and styles the no-WebGL fallback. Built once per palette.
 const shadowStyle = (layer: ShadowLayer, palette: MascotPaletteSpec) => ({
@@ -110,21 +126,37 @@ const level = (store?: MascotLevelStore) => {
   return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
 };
 
-interface Control { sync(): void; claim(): void; celebrate(emotion?: MascotEmotion): void; greet(): void; theme(): void; resize(): void }
+let coverBound = false;
+/** Mirrors the shell-cover flag (components/ui/shell-cover) into the registry; bound once, on the first client mount. */
+function bindShellCover() {
+  if (coverBound) return;
+  coverBound = true;
+  mascotRegistry.setCovered(isShellCovered());
+  subscribeShellCover(() => mascotRegistry.setCovered(isShellCovered()));
+}
+
+interface Control { sync(): void; claim(): void; celebrate(emotion?: MascotEmotion): void; greet(): void; theme(): void; resize(): void; mode(): void; exclusive(): void }
+type Lens = 'pending' | 'live' | 'still' | 'none';
 
 export const Mascot = memo(function Mascot(props: MascotProps) {
-  const { state = 'idle', emotion, size, interactive = true, decorative = false, statusDescription, celebrate, greeting = false, theme = 'auto', still = false, exclusive = true, palette = MASCOT_PALETTE, className, style } = props;
+  const { state = 'idle', emotion, size, interactive = true, decorative = false, statusDescription, celebrate, greeting = false, theme = 'auto', still = false, exclusive = true, idleMode = 'live', palette = MASCOT_PALETTE, className, style } = props;
   const uid = 'm' + useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const [physics] = useState(() => new MascotPhysics({ size: size && size > 0 ? size : 240, state, emotion: emotion ?? null, seed: props.seed ?? (Math.random() * 4294967296) >>> 0 }));
   const [faceRefs] = useState(createFaceRefs);
-  const [initial] = useState(() => ({ emotion: physics.emotion, face: faceStrings(physics.frame), blush: physics.frame.blush }));
+  const [initial] = useState(() => ({
+    emotion: physics.emotion, face: faceStrings(physics.frame), blush: physics.frame.blush,
+    glow: !(size && size > 0 && size < FACE_GLOW_MIN_SIDE), compositor: idleMode === 'compositor',
+  }));
   const rootRef = useRef<HTMLButtonElement & HTMLDivElement>(null);
   const stageRef = useRef<HTMLSpanElement>(null);
+  const floorRef = useRef<HTMLSpanElement>(null);
   const bodyRef = useRef<HTMLSpanElement>(null);
+  const idleRef = useRef<HTMLSpanElement>(null);
+  const breathRef = useRef<HTMLSpanElement>(null);
+  const fallbackRef = useRef<HTMLSpanElement>(null);
   const contactRef = useRef<HTMLSpanElement>(null);
   const ambientRef = useRef<HTMLSpanElement>(null);
   const poolRef = useRef<HTMLSpanElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const live = useRef(props);
   live.current = props;
   const control = useRef<Control | null>(null);
@@ -138,32 +170,92 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
   }), [physics]);
 
   useLayoutEffect(() => {
-    const root = rootRef.current, stage = stageRef.current, body = bodyRef.current, canvas = canvasRef.current;
+    const root = rootRef.current, stage = stageRef.current, floor = floorRef.current, body = bodyRef.current;
+    const idle = idleRef.current, breath = breathRef.current, fallback = fallbackRef.current;
     const contact = contactRef.current, ambient = ambientRef.current, pool = poolRef.current;
-    if (!root || !stage || !body || !contact || !ambient || !pool || !canvas) return;
+    if (!root || !stage || !floor || !body || !idle || !breath || !fallback || !contact || !ambient || !pool) return;
+    bindShellCover();
     const face = new FaceView(faceRefs, palette.face.eye);
     const shade = createShadowPose();
     let contactBlur = -1, ambientBlur = -1, poolBlur = -1;
     const point: Point = { x: 0, y: 0 }, gaze: Point = { x: 0, y: 0 };
-    const input: MascotRenderInput = { displacement: physics.frame.displacement, time: 0, energy: 0, gazeX: 0, gazeY: 0, dark: 0, tint: physics.frame.tint, tintAmount: 0 };
+    const input: MascotRenderInput = { displacement: physics.frame.displacement, time: 0, energy: 0, gazeX: 0, gazeY: 0, dark: 0, tint: physics.frame.tint, tintAmount: 0, tilt: 0 };
     const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     const themeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    // The canvas belongs to this binding (created on first paint, removed on cleanup), so a disposed context never
+    // blocks the next binding and the context is created only when the mascot is first visible and not covered.
+    let canvas: HTMLCanvasElement | null = null;
     let renderer: MascotRenderer | null = null;
-    let side = 0, raf = 0, last = 0, lastPaint = 0, hoverUntil = 0;
+    let gl: 'unborn' | 'compiling' | 'ready' | 'failed' = 'unborn';
+    let lens = (root.dataset.lens as Lens | undefined) ?? 'pending';
+    let side = 0, raf = 0, pollRaf = 0, last = 0, lastPaint = 0, hoverUntil = 0;
     let staticTimer: ReturnType<typeof setTimeout> | null = null;
-    let pageVisible = document.visibilityState === 'visible', inView = true, reduced = motionQuery.matches;
+    let pageVisible = document.visibilityState === 'visible', reduced = motionQuery.matches;
+    // Out of view until the IntersectionObserver reports (no forced layout at mount, nothing created for unseen mascots).
+    let inView = typeof IntersectionObserver === 'undefined';
     let darkTarget = 0, dark = 0, pointerId = -1, hoverDirty = false, hoverX = 0, hoverY = 0, disposed = false;
+    let mode: 'live' | 'compositor' = live.current.idleMode === 'compositor' ? 'compositor' : 'live';
+    let pendingGreet = false;
+    let glowOn = faceRefs.glow ? faceRefs.glow.hasAttribute('filter') : true;
+    // Stage rect for the pointer gaze: measured in input handlers, invalidated by scroll/resize/observers, never read in the tick.
+    let rect: DOMRect | null = null, rectAt = 0;
     let shownEmotion = physics.emotion;
     // Still mascots never animate, so they never compete for (or block) the single animated slot.
-    const contender: MascotContender = { area: 0, busy: false, boost: 0, visible: pageVisible, exclusive: exclusive && !still, primary: false, notify: () => schedule() };
+    const contender: MascotContender = {
+      area: 0, busy: false, boost: 0, visible: false, exclusive: (live.current.exclusive ?? true) && !still, primary: false,
+      inShell: insideShell(root), notify: () => schedule(),
+    };
+    const idleParts: readonly (readonly [HTMLElement, string])[] = [[idle, styles.idleRoll], [breath, styles.idleBreath], [floor, styles.idleFloor]];
 
-    const visibleNow = () => pageVisible && inView && side > 0;
-    const animating = () => !disposed && !still && !reduced && visibleNow() && contender.primary;
+    const setLens = (value: Lens) => { if (lens !== value) { lens = value; root.dataset.lens = value; } };
+    const awake = () => !contender.asleep;
+    // In view, whether or not a layer covers the shell. A covered shell mascot still prepares while the launch preloader runs:
+    // its WebGL context (the costly part, 40–200 ms on Windows) and one settled frame are made under the cover, so the
+    // hand-off only starts loops (PASS-0.5.3 §5). It never animates while covered.
+    const preparable = () => pageVisible && inView && side > 0;
+    const visibleNow = () => preparable() && awake();
+    const animating = () => !disposed && !still && !reduced && mode === 'live' && visibleNow() && contender.primary;
 
+    function ensureCanvas() {
+      if (canvas) return canvas;
+      canvas = document.createElement('canvas');
+      canvas.className = styles.canvas;
+      canvas.setAttribute('aria-hidden', 'true');
+      fallback!.after(canvas);
+      if (!still) {
+        canvas.addEventListener('webglcontextlost', onLost);
+        canvas.addEventListener('webglcontextrestored', onRestored);
+      }
+      return canvas;
+    }
+    /** True when the WebGL body can draw now. The context is created the first time the mascot is visible and awake;
+     * the shader compiles in parallel and is polled once per frame until it is ready. */
+    function glReady(): boolean {
+      if (still || gl === 'failed') return false;
+      if (gl === 'unborn') {
+        if (!preparable()) return false;
+        renderer = createMascotRenderer(ensureCanvas(), 2, palette, { parallel: true });
+        if (!renderer) { gl = 'failed'; return false; }
+        renderer.resize(side);
+        gl = 'compiling';
+      }
+      if (gl === 'compiling') {
+        const status = renderer!.status();
+        if (status === 'failed') { renderer!.dispose(); renderer = null; gl = 'failed'; return false; }
+        if (status === 'pending') {
+          if (!pollRaf) pollRaf = requestAnimationFrame(() => { pollRaf = 0; schedule(); });
+          return false;
+        }
+        gl = 'ready';
+      }
+      return true;
+    }
     function paint(frame: MascotFrame, staticPose: boolean) {
-      if (!side) return;
-      const bottom = BODY_RADIUS * side / 2; // squash is anchored at the body's floor contact
-      body!.style.transform = `translate3d(${n2(frame.x)}px,${n2(frame.y)}px,0) rotate(${n2(frame.rotation)}deg) translateY(${n2(bottom)}px) scale(${n4(frame.scaleX)},${n4(frame.scaleY)}) translateY(${n2(-bottom)}px)`;
+      if (!side || (!staticPose && !awake())) return;
+      const ready = glReady();
+      // Nothing shows until the first WebGL frame can land (or the still copy / the CSS fallback when WebGL failed).
+      if (!ready && !still && gl !== 'failed') return;
+      body!.style.transform = bodyTransform(frame, side);
       shadowPose(frame, side, shade);
       const sink = shade.floorY - SHADOW.floorY * side; // > 0 while the body is pushed below the rest floor
       contactBlur = placeShadow(contact!, shade.contact, sink, contactBlur);
@@ -171,8 +263,10 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
       poolBlur = placeShadow(pool!, shade.ambient, sink, poolBlur); // the light pool rides the ambient pose (follows, spreads, fades)
       input.time = staticPose ? 0 : frame.time;
       input.energy = frame.energy; input.gazeX = frame.gazeX; input.gazeY = frame.gazeY; input.dark = dark; input.tintAmount = frame.tintAmount;
-      if (renderer) renderer.draw(input);
-      else if (still && root!.dataset.lens !== 'none' && !renderStill(canvas!, side, input, 2, palette)) root!.dataset.lens = 'none';
+      input.tilt = frame.rotation * DEG; // keeps the key light and highlights fixed on screen while the body rolls
+      if (ready) { if (renderer!.draw(input)) setLens('live'); }
+      else if (still) { if (lens !== 'none') setLens(renderStill(ensureCanvas(), side, input, 2, palette) ? 'still' : 'none'); }
+      else setLens('none');
       face.update(frame);
       if (frame.emotion !== shownEmotion) {
         shownEmotion = frame.emotion;
@@ -180,8 +274,9 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
         live.current.onEmotionChange?.(frame.emotion);
       }
     }
+    /** Static (settled, upright) pose: non-primary and reduced-motion mascots, and the compositor-idle poster. */
     function renderStatic() {
-      if (disposed || !side) return;
+      if (disposed || !side || !preparable()) return;
       dark = darkTarget;
       paint(physics.settle(), true);
       if (staticTimer) { clearTimeout(staticTimer); staticTimer = null; }
@@ -192,7 +287,7 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
     }
     function tick(now: number) {
       raf = 0;
-      if (!animating()) { last = 0; if (visibleNow()) renderStatic(); return; }
+      if (!animating()) { last = 0; renderStatic(); return; }
       const dt = last ? Math.min(0.25, (now - last) / 1000) : 1 / 60;
       last = now;
       physics.setMicLevel(level(live.current.micLevelStore));
@@ -203,35 +298,53 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
         dark = Math.abs(darkTarget - dark) <= step ? darkTarget : dark + Math.sign(darkTarget - dark) * step;
       }
       const frame = physics.step(dt);
-      // Calm breathing paints at ~30 Hz; touch, voice, reactions and hover at the display rate.
-      if (frame.active || now < hoverUntil || dark !== darkTarget || now - lastPaint >= 32) { paint(frame, false); lastPaint = now; }
+      // Calm breathing paints at ~30 Hz; touch, voice, reactions and hover at the display rate (and every frame until
+      // the first WebGL frame has landed).
+      if (frame.active || now < hoverUntil || dark !== darkTarget || now - lastPaint >= 32 || lens === 'pending') { paint(frame, false); lastPaint = now; }
       raf = requestAnimationFrame(tick);
     }
+    /** Runs the loop when this mascot animates, otherwise stops it and shows the static pose (when visible). */
     function schedule() {
       if (disposed) return;
-      if (animating()) { if (!raf) { last = 0; raf = requestAnimationFrame(tick); } return; }
+      if (animating()) {
+        // The loop plays transients itself; a static-pose timer must not settle (and freeze) the running physics later.
+        if (staticTimer) { clearTimeout(staticTimer); staticTimer = null; }
+        if (!raf) { last = 0; raf = requestAnimationFrame(tick); }
+        return;
+      }
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
-      if (visibleNow()) renderStatic();
+      renderStatic();
     }
-    function afterInput() { if (animating()) schedule(); else if (visibleNow()) renderStatic(); }
+    function measureRect(now: number, fresh = false) {
+      if (fresh || !rect || now - rectAt > RECT_TTL_MS) { rect = stage!.getBoundingClientRect(); rectAt = now; }
+      return rect;
+    }
+    const invalidateRect = () => { rect = null; };
     function updateHover() {
-      const box = stage!.getBoundingClientRect();
-      if (!box.width) return;
-      gaze.x = (hoverX - (box.left + box.width / 2)) / TOUCH.hoverRadius;
-      gaze.y = (hoverY - (box.top + box.height / 2)) / TOUCH.hoverRadius;
+      if (!rect || !rect.width) return;
+      gaze.x = (hoverX - (rect.left + rect.width / 2)) / TOUCH.hoverRadius;
+      gaze.y = (hoverY - (rect.top + rect.height / 2)) / TOUCH.hoverRadius;
       physics.hover(gaze);
     }
     function measure(width: number, height: number) {
       const fixed = live.current.size;
       const next = Math.max(0, Math.round(fixed && fixed > 0 ? fixed : height > 0 ? Math.min(width, height) : width));
+      rect = null;
       if (next === side) return;
       side = next;
       root!.style.setProperty('--mascot-size', side + 'px');
       physics.setSize(side || 240);
       renderer?.resize(side);
+      // No SVG glow filter on small mascots (invisible at that size, and a filter pass on every face update).
+      const glow = side >= FACE_GLOW_MIN_SIDE;
+      if (glow !== glowOn && faceRefs.glow) {
+        glowOn = glow;
+        if (glow) faceRefs.glow.setAttribute('filter', faceGlowFilter(uid));
+        else faceRefs.glow.removeAttribute('filter');
+      }
       contender.area = side * side;
       mascotRegistry.elect();
-      afterInput();
+      schedule();
     }
     function resolveDark() {
       const mode = live.current.theme ?? 'auto';
@@ -244,15 +357,48 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
     function applyTheme() {
       darkTarget = resolveDark();
       root!.dataset.dark = darkTarget ? 'true' : 'false';
-      if (!animating()) { dark = darkTarget; if (visibleNow()) renderStatic(); }
+      if (!animating()) { dark = darkTarget; renderStatic(); }
     }
-    function toCanvas(event: PointerEvent) {
-      const box = stage!.getBoundingClientRect();
+    function toCanvas(event: PointerEvent, fresh: boolean) {
+      const box = measureRect(performance.now(), fresh);
       point.x = (event.clientX - box.left) * (side / (box.width || side || 1));
       point.y = (event.clientY - box.top) * (side / (box.height || side || 1));
       return point;
     }
     function claim() { contender.boost = performance.now() + 4000; mascotRegistry.elect(); }
+
+    // ── Compositor idle (PASS-0.5.3 §6) ──
+    function startCompositorIdle() {
+      if (!root!.dataset.roll || !idle!.classList.contains(styles.idleRoll)) root!.dataset.roll = Math.random() < 0.5 ? 'reverse' : 'normal';
+      for (const [element, name] of idleParts) element.classList.add(name);
+    }
+    /** Hands the compositor idle to the physics: each wrapper keeps its current transform, drops the keyframes and eases
+     * back to rest (WAAPI from the computed value, so it runs on the compositor too). */
+    function stopCompositorIdle(ease: boolean) {
+      const current = idleParts.map(([element, name]) => ease && element.classList.contains(name) ? getComputedStyle(element).transform : 'none');
+      idleParts.forEach(([element, name], index) => {
+        if (!element.classList.contains(name)) return;
+        element.classList.remove(name);
+        const from = current[index];
+        if (from && from !== 'none' && typeof element.animate === 'function') {
+          element.animate([{ transform: from }, { transform: 'none' }], { duration: COMPOSITOR_IDLE.handoffMs, easing: EASE_OUT });
+        }
+      });
+    }
+    function setMode(next: 'live' | 'compositor') {
+      if (next === mode) return;
+      mode = next;
+      if (next === 'compositor') {
+        if (raf) { cancelAnimationFrame(raf); raf = 0; }
+        startCompositorIdle();
+        schedule(); // the settled, upright poster
+        return;
+      }
+      stopCompositorIdle(!reduced);
+      // The physics starts from the settled upright poster pose; a greeting asked for during the idle plays now.
+      if (pendingGreet) { pendingGreet = false; claim(); physics.greet(); }
+      schedule();
+    }
 
     // ── Pointer play ──
     function onPointerDown(event: PointerEvent) {
@@ -262,12 +408,12 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
       try { root!.setPointerCapture(event.pointerId); } catch { /* capture is a nicety */ }
       root!.dataset.pressed = 'true';
       claim();
-      physics.pressStart(toCanvas(event));
-      afterInput();
+      physics.pressStart(toCanvas(event, true));
+      schedule();
     }
     function onPointerMove(event: PointerEvent) {
       if (event.pointerId !== pointerId) return;
-      physics.pressMove(toCanvas(event));
+      physics.pressMove(toCanvas(event, false));
     }
     function finishPointer(event: PointerEvent, cancelled: boolean) {
       if (event.pointerId !== pointerId) return;
@@ -275,7 +421,7 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
       root!.dataset.pressed = 'false';
       if (!cancelled) { try { root!.releasePointerCapture(event.pointerId); } catch { /* already released */ } }
       if (cancelled) physics.pressCancel(); else physics.pressEnd();
-      afterInput();
+      schedule();
     }
     const onPointerUp = (event: PointerEvent) => finishPointer(event, false);
     const onPointerCancel = (event: PointerEvent) => finishPointer(event, true);
@@ -284,12 +430,14 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
       if (live.current.interactive === false || event.detail !== 0) return;
       claim();
       physics.tap(true);
-      afterInput();
+      schedule();
     }
     function onContextMenu(event: Event) { if (live.current.interactive !== false) event.preventDefault(); }
     function onWindowPointerMove(event: PointerEvent) {
       if (event.pointerType === 'touch' || !animating()) return;
-      hoverX = event.clientX; hoverY = event.clientY; hoverDirty = true; hoverUntil = performance.now() + 450;
+      const now = performance.now();
+      hoverX = event.clientX; hoverY = event.clientY; hoverDirty = true; hoverUntil = now + 450;
+      measureRect(now);
     }
     function onWindowPointerOut(event: PointerEvent) { if (!event.relatedTarget && event.pointerType !== 'touch') physics.hover(null); }
     function onWindowBlur() { physics.hover(null); }
@@ -300,29 +448,28 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
       mascotRegistry.elect(); schedule();
     }
     function onMotion() { reduced = motionQuery.matches; schedule(); }
-    function onLost(event: Event) { event.preventDefault(); renderer = null; root!.dataset.lens = 'none'; afterInput(); }
+    function onLost(event: Event) { event.preventDefault(); renderer = null; gl = 'failed'; setLens('none'); schedule(); }
     function onRestored() {
-      if (still) return;
-      renderer = createMascotRenderer(canvas!, 2, palette);
-      root!.dataset.lens = renderer ? 'live' : 'none';
-      if (renderer && side) renderer.resize(side);
-      afterInput();
+      if (disposed || !canvas) return;
+      renderer = createMascotRenderer(canvas, 2, palette, { parallel: true });
+      if (!renderer) return;
+      if (side) renderer.resize(side);
+      gl = 'compiling';
+      schedule();
     }
 
-    if (still) root.dataset.lens = 'still';
-    else {
-      renderer = createMascotRenderer(canvas, 2, palette);
-      root.dataset.lens = renderer ? 'live' : 'none';
-    }
+    // A new binding starts hidden until its first frame; one that was on the CSS fallback keeps showing it while WebGL is retried.
+    if (still || lens !== 'none') setLens('pending');
+    if (mode === 'compositor') startCompositorIdle(); else stopCompositorIdle(false);
     darkTarget = dark = resolveDark();
     root.dataset.dark = darkTarget ? 'true' : 'false';
     contender.busy = state !== 'idle' && state !== 'paused';
     // Re-binding (StrictMode dev double-mount, prop changes) keeps a running reaction animated.
     if (physics.transientRemaining() > 0) contender.boost = performance.now() + 4000;
     mascotRegistry.add(contender);
-    measure(root.clientWidth, root.clientHeight);
-    // Paint synchronously before the browser's first paint: no blank glass between mount and the first frame.
-    if (visibleNow()) { if (animating()) paint(physics.frame, false); else renderStatic(); }
+    // A fixed size needs no layout read; fluid mascots get their size from the ResizeObserver's first report.
+    const fixed = live.current.size;
+    if (fixed && fixed > 0) measure(fixed, fixed);
 
     const resizeObserver = new ResizeObserver(entries => {
       const box = entries[entries.length - 1].contentRect;
@@ -331,11 +478,13 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
     resizeObserver.observe(root);
     const intersection = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver(entries => {
       inView = entries[entries.length - 1].isIntersecting;
+      rect = null;
       contender.visible = pageVisible && inView;
       if (!inView && pointerId !== -1) { pointerId = -1; physics.pressCancel(); root.dataset.pressed = 'false'; }
       mascotRegistry.elect(); schedule();
     });
     intersection?.observe(root);
+    if (!intersection) { contender.visible = pageVisible; mascotRegistry.elect(); }
     const themeObserver = new MutationObserver(applyTheme);
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
@@ -349,11 +498,11 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
     window.addEventListener('pointermove', onWindowPointerMove, { passive: true });
     window.addEventListener('pointerout', onWindowPointerOut, { passive: true });
     window.addEventListener('blur', onWindowBlur);
+    window.addEventListener('scroll', invalidateRect, { capture: true, passive: true });
+    window.addEventListener('resize', invalidateRect, { passive: true });
     document.addEventListener('visibilitychange', onVisibility);
     motionQuery.addEventListener('change', onMotion);
     themeQuery.addEventListener('change', applyTheme);
-    canvas.addEventListener('webglcontextlost', onLost);
-    canvas.addEventListener('webglcontextrestored', onRestored);
 
     control.current = {
       sync() {
@@ -362,7 +511,7 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
         physics.setEmotion(current.emotion ?? null);
         const busy = (current.state ?? 'idle') !== 'idle' && current.state !== 'paused';
         if (busy !== contender.busy) { contender.busy = busy; mascotRegistry.elect(); }
-        afterInput();
+        schedule();
       },
       claim,
       celebrate(value) {
@@ -372,18 +521,33 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
         physics.celebrate(chosen, chosen === 'joy' ? 1.5 : 2);
         if (current.confetti !== false) fireConfetti(stage);
         current.onCelebrate?.();
-        afterInput();
+        schedule();
       },
       // A greeting must animate even when a larger mascot sits underneath an overlay (IntersectionObserver
-      // cannot see occlusion), so it claims the single animated slot like a touch does.
-      greet() { claim(); physics.greet(); afterInput(); },
+      // cannot see occlusion), so it claims the single animated slot like a touch does. In the compositor idle it waits
+      // for the hand-off to the live physics.
+      greet() {
+        if (mode === 'compositor') { pendingGreet = true; return; }
+        claim(); physics.greet(); schedule();
+      },
       theme: applyTheme,
-      resize() { side = -1; measure(root.clientWidth, root.clientHeight); },
+      resize() {
+        side = -1;
+        const value = live.current.size;
+        if (value && value > 0) measure(value, value);
+        else measure(root.clientWidth, root.clientHeight);
+      },
+      mode() { setMode(live.current.idleMode === 'compositor' ? 'compositor' : 'live'); },
+      exclusive() {
+        const value = (live.current.exclusive ?? true) && !still;
+        if (value !== contender.exclusive) { contender.exclusive = value; mascotRegistry.elect(); schedule(); }
+      },
     };
 
     return () => {
       disposed = true;
       if (raf) cancelAnimationFrame(raf);
+      if (pollRaf) cancelAnimationFrame(pollRaf);
       if (staticTimer) clearTimeout(staticTimer);
       if (pointerId !== -1) physics.pressCancel();
       mascotRegistry.remove(contender);
@@ -400,20 +564,30 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
       window.removeEventListener('pointermove', onWindowPointerMove);
       window.removeEventListener('pointerout', onWindowPointerOut);
       window.removeEventListener('blur', onWindowBlur);
+      window.removeEventListener('scroll', invalidateRect, { capture: true });
+      window.removeEventListener('resize', invalidateRect);
       document.removeEventListener('visibilitychange', onVisibility);
       motionQuery.removeEventListener('change', onMotion);
       themeQuery.removeEventListener('change', applyTheme);
-      canvas.removeEventListener('webglcontextlost', onLost);
-      canvas.removeEventListener('webglcontextrestored', onRestored);
-      renderer?.dispose();
+      if (canvas) {
+        canvas.removeEventListener('webglcontextlost', onLost);
+        canvas.removeEventListener('webglcontextrestored', onRestored);
+      }
+      renderer?.dispose(); // frees the GL objects and loses the context (WEBGL_lose_context)
       renderer = null;
+      canvas?.remove();
+      canvas = null;
       control.current = null;
     };
-    // `state` is read through `live` after mount; the effect only re-binds for structural changes.
+    // `state`, `size`, `exclusive` and `idleMode` are read through `live` after mount; the effect only re-binds for
+    // structural changes (a new root element, palette or still mode).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [physics, faceRefs, still, exclusive, interactive, palette]);
+  }, [physics, faceRefs, still, interactive, decorative, palette]);
 
+  // The mode hand-off runs before the other prop effects, so a commit that switches to 'live' and greets plays the greeting live.
+  useEffect(() => { control.current?.mode(); }, [idleMode]);
   useEffect(() => { control.current?.sync(); }, [state, emotion]);
+  useEffect(() => { control.current?.exclusive(); }, [exclusive]);
   useEffect(() => { control.current?.theme(); }, [theme]);
   useEffect(() => { control.current?.resize(); }, [size]);
   const celebrated = useRef(celebrate);
@@ -432,14 +606,22 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
   const label = `Твой собеседник. ${statusDescription ?? STATE_LABELS[state] ?? ''}`.trim();
   const rootStyle = size && size > 0 ? { ...style, width: size, height: size, '--mascot-size': `${size}px` } as CSSProperties : style;
   const look = stylesFor(palette);
+  // The compositor-idle classes are rendered once from the initial mode; later switches are imperative (the hand-off must
+  // read the running transform before the keyframes go), so React never rewrites these class names.
   const content = <span ref={stageRef} className={styles.stage}>
-    <span ref={poolRef} className={styles.shadow} style={look.pool} />
-    <span ref={ambientRef} className={styles.shadow} style={look.ambient} />
-    <span ref={contactRef} className={styles.shadow} style={look.contact} />
+    <span ref={floorRef} className={initial.compositor ? `${styles.floor} ${styles.idleFloor}` : styles.floor}>
+      <span ref={poolRef} className={styles.shadow} style={look.pool} />
+      <span ref={ambientRef} className={styles.shadow} style={look.ambient} />
+      <span ref={contactRef} className={styles.shadow} style={look.contact} />
+    </span>
     <span ref={bodyRef} className={styles.body}>
-      <span className={styles.fallback} style={look.fallback} />
-      <canvas key={still ? `still-${palette.label}` : `live-${palette.label}`} ref={canvasRef} className={styles.canvas} />
-      <MascotFace uid={uid} refs={faceRefs} strings={initial.face} blush={initial.blush} colors={palette.face} className={styles.face} />
+      <span ref={idleRef} className={initial.compositor ? `${styles.idle} ${styles.idleRoll}` : styles.idle}>
+        <span ref={breathRef} className={initial.compositor ? `${styles.breath} ${styles.idleBreath}` : styles.breath}>
+          <span ref={fallbackRef} className={styles.fallback} style={look.fallback} />
+          {/* The WebGL (or still 2D) canvas is inserted here by the layout effect when the mascot is first painted. */}
+          <MascotFace uid={uid} refs={faceRefs} strings={initial.face} blush={initial.blush} glow={initial.glow} colors={palette.face} className={styles.face} />
+        </span>
+      </span>
     </span>
   </span>;
   const shared = {
@@ -449,7 +631,7 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
     'data-state': state,
     'data-emotion': initial.emotion,
     'data-interactive': interactive ? 'true' : 'false',
-    'data-lens': 'none',
+    'data-lens': 'pending',
   };
   // Decorative companions (screen headers, cards) still react to the pointer but stay out of the tab order and the
   // accessibility tree; the adjacent heading carries the meaning.

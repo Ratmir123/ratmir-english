@@ -21,55 +21,149 @@ struct JourneyProgressBar: View {
     }
 }
 
-/// Compact rank and XP inside Today's «Уровень» surface (a row, not a card of its own).
+/// The rank inside Today's «Уровень» surface (PASS 0.5.3 §8, a row, not a card of its own): the medal large, alive and
+/// spinnable on its own (never inside the button), a breathing aura in the rank colour, the rank title in that colour,
+/// the XP bar in the rank's metal with a slow shimmer and «до «Ритм» — 120 XP». The text side opens Progress.
 struct RankStrip: View {
     let progression: ProgressionState
+    var open: () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// 56 pt before PASS 0.5.3.
+    static let medalSide: CGFloat = 84
     private var rank: PracticeRank { RewardArt.practiceRank(progression.level) }
     private var next: PracticeRank? { RewardArt.nextRank(progression.level) }
     private var xpLine: String {
         guard let next else { return RuFormat.xp(progression.xp) + " · все ранги открыты" }
-        return RuFormat.xp(progression.xp) + " · до «\(next.title)» " + RuFormat.xp(max(0, next.minimumXP - progression.xp))
+        return "до «\(next.title)» — " + RuFormat.xp(max(0, next.minimumXP - progression.xp))
+    }
+    private var progress: Double {
+        guard let next else { return 1 }
+        return Double(max(0, progression.xp - rank.minimumXP)) / Double(max(1, next.minimumXP - rank.minimumXP))
     }
     var body: some View {
-        HStack(spacing: 14) {
-            RankEmblem(level: progression.level, size: 56, animated: false)
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(rank.title).font(TypeScale.title3)
-                    Text("ур. \(progression.level)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                // Large text keeps the full width: the medal sits above the words.
+                VStack(alignment: .leading, spacing: 12) {
+                    medal
+                    details
                 }
-                if let next {
-                    LiquidProgressBar(value: Double(max(0, progression.xp - rank.minimumXP)) / Double(max(1, next.minimumXP - rank.minimumXP)), height: 6)
+            } else {
+                HStack(spacing: 16) {
+                    medal
+                    details
                 }
-                Text(xpLine).font(.footnote).foregroundStyle(Theme.inkSecondary).monospacedDigit()
-                    .contentTransition(reduceMotion ? .identity : .numericText(value: Double(progression.xp)))
-                    .fixedSize(horizontal: false, vertical: true)
             }
-            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
         }
-        .foregroundStyle(Theme.ink)
         .padding(.vertical, 2)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Ранг «\(rank.title)», уровень опыта \(progression.level), \(RuFormat.xp(progression.xp))")
+    }
+
+    private var medal: some View {
+        RankEmblem(level: progression.level, size: RankStrip.medalSide, aura: true)
+    }
+
+    private var details: some View {
+        Button(action: open) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(rank.title).font(TypeScale.title3).foregroundStyle(RankPalette.ink(rank.art))
+                        Text("ур. \(progression.level)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
+                    }
+                    if next != nil {
+                        RankXPBar(value: progress, art: rank.art)
+                    }
+                    Text(xpLine).font(.footnote).foregroundStyle(Theme.inkSecondary).monospacedDigit()
+                        .contentTransition(reduceMotion ? .identity : .numericText(value: Double(progression.xp)))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
+            }
+            .foregroundStyle(Theme.ink)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressButton())
+        .accessibilityLabel("Ранг «\(rank.title)», уровень опыта \(progression.level), \(RuFormat.xp(progression.xp)), " + xpLine)
+        .accessibilityHint("Открывает вкладку «Прогресс»")
     }
 }
 
-/// The full rank card on Progress: medal, rank, XP bar and the ladder link.
+/// XP toward the next rank in the rank's own metal with a slow shimmer (PASS 0.5.3 §8). The shimmer holds still with
+/// Reduce Motion, offscreen, in the background and under the launch layer.
+struct RankXPBar: View {
+    let value: Double
+    let art: String
+    var height: CGFloat = 7
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.shellCovered) private var shellCovered
+    @State private var visible = false
+    /// One soft light sweeps along the fill in `shimmerSweep` seconds, once per `shimmerPeriod`.
+    static let shimmerPeriod = 5.6
+    static let shimmerSweep = 2.4
+    private var clamped: Double { value.isFinite ? min(1, max(0, value)) : 0 }
+    private var shimmering: Bool { !reduceMotion && visible && !shellCovered && scenePhase == .active && clamped > 0 }
+    var body: some View {
+        GeometryReader { proxy in
+            let fill = max(clamped > 0 ? height : 0, proxy.size.width * CGFloat(clamped))
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.ink.opacity(0.08))
+                Capsule()
+                    .fill(LinearGradient(colors: RankPalette.bar(art), startPoint: .leading, endPoint: .trailing))
+                    .frame(width: fill)
+                if shimmering {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                        RankXPBar.shimmer(time: context.date.timeIntervalSinceReferenceDate, fill: fill, height: height)
+                    }
+                    .frame(width: fill, alignment: .leading)
+                    .allowsHitTesting(false)
+                }
+            }
+        }
+        .frame(height: height)
+        .animation(reduceMotion ? nil : NativeMotion.progress, value: clamped)
+        .modifier(RewardVisibility(visible: $visible))
+        .accessibilityElement()
+        .accessibilityLabel("Опыт до следующего ранга")
+        .accessibilityValue("\(Int((clamped * 100).rounded())) процентов")
+    }
+
+    /// A soft light band that eases along the fill and fades in and out at its ends (no clipping or blur).
+    private static func shimmer(time: TimeInterval, fill: CGFloat, height: CGFloat) -> some View {
+        let phase = time.truncatingRemainder(dividingBy: shimmerPeriod) / shimmerSweep
+        let progress = min(1, max(0, phase))
+        let band = max(height * 3, fill * 0.3)
+        let travel = max(0, fill - band)
+        let eased = (1 - cos(Double.pi * progress)) / 2
+        let glow = phase < 1 ? sin(Double.pi * progress) : 0
+        return Capsule()
+            .fill(LinearGradient(colors: [Color.white.opacity(0), Color.white.opacity(0.5), Color.white.opacity(0)],
+                                 startPoint: .leading, endPoint: .trailing))
+            .frame(width: band, height: height)
+            .offset(x: travel * CGFloat(eased))
+            .opacity(glow)
+    }
+}
+
+/// The full rank card on Progress: medal (132 pt with its aura, PASS 0.5.3 §8), rank, XP bar and the ladder link.
 struct JourneySummary: View {
     let progression: ProgressionState
     /// Practice facts in words (web RankCard): «12 практик с разбором, 5 дней с практикой. На этой неделе — 3 из 7.»
     var facts: String? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 104 pt before PASS 0.5.3.
+    static let medalSide: CGFloat = 132
     private var rank: PracticeRank { RewardArt.practiceRank(progression.level) }
     private var nextRank: PracticeRank? { RewardArt.nextRank(progression.level) }
     var body: some View {
         LiquidCard {
             VStack(alignment: .leading, spacing: 16) {
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 14) { RankEmblem(level: progression.level, size: 104); rankHeading; Spacer(minLength: 0) }
-                    VStack(alignment: .leading, spacing: 10) { RankEmblem(level: progression.level, size: 104); rankHeading }
+                    HStack(spacing: 18) { medal; rankHeading; Spacer(minLength: 0) }
+                    VStack(alignment: .leading, spacing: 12) { medal; rankHeading }
                 }
                 if let nextRank {
                     LiquidProgressBar(value: Double(max(0, progression.xp - rank.minimumXP)) / Double(max(1, nextRank.minimumXP - rank.minimumXP)))
@@ -92,6 +186,9 @@ struct JourneySummary: View {
                 .buttonStyle(PressButton()).foregroundStyle(Theme.ink)
             }
         }
+    }
+    private var medal: some View {
+        RankEmblem(level: progression.level, size: JourneySummary.medalSide, aura: true)
     }
     private var rankHeading: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -149,16 +246,23 @@ struct RankLadder: View {
         }
     }
 
+    /// PASS 0.5.3 §8: the current rank is bigger, alive and glowing in its colour; locked ranks are muted.
+    private func medalSide(current: Bool) -> CGFloat {
+        if dynamicTypeSize.isAccessibilitySize { return current ? 88 : 72 }
+        return current ? 104 : 84
+    }
+
     private func rankRow(_ rank: PracticeRank) -> some View {
         let isCurrent = rank.id == current.id
         let isNext = rank.id == next?.id
         let unlocked = progression.level >= rank.from
         return HStack(spacing: 14) {
-            RankEmblem(level: rank.from, size: dynamicTypeSize.isAccessibilitySize ? 72 : 84, animated: isCurrent)
+            RankEmblem(level: rank.from, size: medalSide(current: isCurrent), animated: isCurrent, aura: isCurrent)
                 .saturation(unlocked ? 1 : 0)
-                .opacity(unlocked ? 1 : 0.45)
+                .opacity(unlocked ? 1 : 0.4)
             VStack(alignment: .leading, spacing: 5) {
                 Text(rank.title).font(TypeScale.title3)
+                    .foregroundStyle(isCurrent ? RankPalette.ink(rank.art) : unlocked ? Theme.ink : Theme.inkSecondary)
                 Text("от \(RuFormat.xp(rank.minimumXP))").font(.caption).foregroundStyle(Theme.inkSecondary).monospacedDigit()
                 Text(isCurrent ? "Твой ранг · \(RuFormat.xp(progression.xp)) сейчас" : isNext ? "Ещё \(RuFormat.xp(max(0, rank.minimumXP - progression.xp)))" : unlocked ? "Открыт" : "Впереди")
                     .font(.footnote.weight(isNext ? .semibold : .regular))
@@ -170,6 +274,8 @@ struct RankLadder: View {
         }
         .padding(12)
         .background(isCurrent ? Theme.solid : Color.clear, in: RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
+        // The current rank's aura glows inside its own row, never over the neighbours.
+        .clipShape(RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
         .overlay {
             if isCurrent { RoundedRectangle(cornerRadius: Radius.tile, style: .continuous).strokeBorder(Theme.violet.opacity(0.5), lineWidth: 1.5) }
         }

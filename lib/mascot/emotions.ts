@@ -1,5 +1,6 @@
 // Emotion table (MASCOT-SPEC §5) and app state → context emotion (§8).
 // Pure data: shared by the web renderer, the tests and (by value) the iPhone port.
+// PASS-0.5.3 §4: no emotion holds a fixed body tilt any more — tilts are gentle rolls centred on 0 (`body.roll`).
 import type { TintName } from './constants';
 
 export const MASCOT_EMOTIONS = [
@@ -46,14 +47,15 @@ export interface BodySpec {
   scale: number;
   /** Extra vertical scale (1 = none). */
   scaleY: number;
-  /** Body tilt target φ, degrees. */
-  tilt: number;
   /** Hop target as a fraction of S (negative = up). */
   lift: number;
   /** Breathing applied to the squash target: q += amp·sin(freq·t), freq in rad/s. */
   breath: { amp: number; freq: number };
-  /** φ += amp·sin(freq·t), freq in rad/s. */
-  sway: { amp: number; freq: number } | null;
+  /**
+   * Gentle roll (PASS-0.5.3 §4): φ += sign·amp·sin(2π·local/period), amp in degrees, period in seconds, local = time since
+   * the emotion began, so it starts upright and stays centred on 0. sign = ±1, random per entry (tap reactions alternate).
+   */
+  roll: { amp: number; period: number } | null;
   /** φ += amp·sin(2π·hz·local) while local < seconds (local = time since the emotion began). */
   shake: { amp: number; hz: number; seconds: number } | null;
   /** Squash impulse alternating ±impulse every interval seconds. */
@@ -91,10 +93,21 @@ const both = (spec: EyeSpec): readonly [EyeSpec, EyeSpec] => [spec, { ...spec }]
 const mouth = (w: number, o: number, s: number, r: number, x = 0): MouthSpec => ({ w, o, s, r, x });
 const CALM_BREATH = { amp: 0.012, freq: 1.45 };
 const body = (patch: Partial<BodySpec> = {}): BodySpec => ({
-  q: 0, scale: 1, scaleY: 1, tilt: 0, lift: 0, breath: CALM_BREATH, sway: null, shake: null, bounce: null,
+  q: 0, scale: 1, scaleY: 1, lift: 0, breath: CALM_BREATH, roll: null, shake: null, bounce: null,
   hops: null, kick: 0, nod: 0, orbit: null, pulse: null, ...patch,
 });
 const SOFT_BREATH = { amp: 0.008, freq: 1.45 };
+/** PASS-0.5.3 §4 rolls (degrees / seconds). The iPhone (MascotPhysics.swift) uses the same numbers. */
+export const EMOTION_ROLLS = {
+  curious: { amp: 6, period: 4.2 },
+  wink: { amp: 4.5, period: 3.8 },
+  shy: { amp: 4, period: 4.6 },
+  proud: { amp: 3, period: 5.2 },
+  /** The old slow sway (4.5°·sin(0.91·t)), now centred and started per entry. */
+  thinking: { amp: 4.5, period: 6.9 },
+  happy: { amp: 2.5, period: 3.4 },
+  joy: { amp: 2.5, period: 3.4 },
+} as const satisfies Partial<Record<MascotEmotion, { amp: number; period: number }>>;
 
 /** §5, row by row. */
 export const EMOTIONS: Readonly<Record<MascotEmotion, EmotionSpec>> = {
@@ -104,12 +117,12 @@ export const EMOTIONS: Readonly<Record<MascotEmotion, EmotionSpec>> = {
   },
   happy: {
     eyes: both(eye(1, 0.55)), gaze: null, mouth: mouth(0.1, 0.12, 0.85, 0), mouthWobble: null,
-    blush: 0.15, tint: 'lime', tintAmount: 0.1, body: body({ breath: SOFT_BREATH, kick: 0.6 }), duration: 0.9, transient: false,
+    blush: 0.15, tint: 'lime', tintAmount: 0.1, body: body({ breath: SOFT_BREATH, kick: 0.6, roll: EMOTION_ROLLS.happy }), duration: 0.9, transient: false,
   },
   joy: {
     eyes: both(eye(0.9, 1)), gaze: null, mouth: mouth(0.13, 0.55, 1, 0), mouthWobble: null,
     blush: 0.3, tint: 'lime', tintAmount: 0.18,
-    body: body({ breath: SOFT_BREATH, hops: { count: 2, interval: 0.15, velocity: -0.9 } }), duration: 1.2, transient: true,
+    body: body({ breath: SOFT_BREATH, hops: { count: 2, interval: 0.15, velocity: -0.9 }, roll: EMOTION_ROLLS.joy }), duration: 1.2, transient: true,
   },
   laugh: {
     eyes: both(eye(0.25, 1)), gaze: null, mouth: mouth(0.15, 0.85, 1, 0), mouthWobble: null,
@@ -120,7 +133,8 @@ export const EMOTIONS: Readonly<Record<MascotEmotion, EmotionSpec>> = {
   excited: {
     eyes: both(eye(1.2, 0.25, 0, 'star')), gaze: null, mouth: mouth(0.12, 0.6, 0.9, 0.2), mouthWobble: null,
     blush: 0.25, tint: 'lime', tintAmount: 0.22,
-    body: body({ breath: SOFT_BREATH, hops: { count: 3, interval: 0.24, velocity: -0.85 }, shake: { amp: 8, hz: 3, seconds: Infinity } }),
+    // The star-eyed shake lasts the first second only (PASS-0.5.3 §4, like the iPhone); then it stands upright.
+    body: body({ breath: SOFT_BREATH, hops: { count: 3, interval: 0.24, velocity: -0.85 }, shake: { amp: 8, hz: 3, seconds: 1 } }),
     duration: 2, transient: false,
   },
   love: {
@@ -130,7 +144,7 @@ export const EMOTIONS: Readonly<Record<MascotEmotion, EmotionSpec>> = {
   },
   proud: {
     eyes: both(eye(0.65, 0.85)), gaze: null, mouth: mouth(0.11, 0, 0.95, 0), mouthWobble: null,
-    blush: 0.2, tint: 'lime', tintAmount: 0.12, body: body({ breath: SOFT_BREATH, scale: 1.06, tilt: -4 }), duration: 2, transient: false,
+    blush: 0.2, tint: 'lime', tintAmount: 0.12, body: body({ breath: SOFT_BREATH, scale: 1.06, roll: EMOTION_ROLLS.proud }), duration: 2, transient: false,
   },
   surprised: {
     eyes: both(eye(1.35, 0, 0, 'pill', 0, 1.15)), gaze: null, mouth: mouth(0.06, 0.8, 0, 1), mouthWobble: null,
@@ -139,11 +153,11 @@ export const EMOTIONS: Readonly<Record<MascotEmotion, EmotionSpec>> = {
   },
   curious: {
     eyes: [eye(1.1, 0, 0, 'pill', -9), eye(0.72, 0, 0, 'pill', 10)], gaze: null, mouth: mouth(0.06, 0.05, 0.2, 0.35), mouthWobble: null,
-    blush: 0, tint: null, tintAmount: 0, body: body({ breath: SOFT_BREATH, tilt: 9 }), duration: 1.1, transient: false,
+    blush: 0, tint: null, tintAmount: 0, body: body({ breath: SOFT_BREATH, roll: EMOTION_ROLLS.curious }), duration: 1.1, transient: false,
   },
   thinking: {
     eyes: both(eye(0.85, 0, 0.2)), gaze: [-0.6, -0.7], mouth: mouth(0.06, 0, 0, 0, 0.03), mouthWobble: null,
-    blush: 0, tint: 'violet', tintAmount: 0.15, body: body({ breath: SOFT_BREATH, sway: { amp: 4.5, freq: 0.91 } }), duration: 2, transient: false,
+    blush: 0, tint: 'violet', tintAmount: 0.15, body: body({ breath: SOFT_BREATH, roll: EMOTION_ROLLS.thinking }), duration: 2, transient: false,
   },
   listening: {
     eyes: both(eye(1.15)), gaze: null, mouth: mouth(0.06, 0, 0.3, 0), mouthWobble: null,
@@ -169,7 +183,7 @@ export const EMOTIONS: Readonly<Record<MascotEmotion, EmotionSpec>> = {
   },
   shy: {
     eyes: both(eye(0.8, 0.3)), gaze: [0.5, 0.5], mouth: mouth(0.06, 0, 0.5, 0), mouthWobble: null,
-    blush: 0.7, tint: 'pink', tintAmount: 0.15, body: body({ breath: SOFT_BREATH, scale: 0.95, tilt: -6 }), duration: 1.5, transient: false,
+    blush: 0.7, tint: 'pink', tintAmount: 0.15, body: body({ breath: SOFT_BREATH, scale: 0.95, roll: EMOTION_ROLLS.shy }), duration: 1.5, transient: false,
   },
   annoyed: {
     eyes: both(eye(0.55, 0, 0.6)), gaze: null, mouth: mouth(0.08, 0, -0.25, 0), mouthWobble: null,
@@ -183,7 +197,7 @@ export const EMOTIONS: Readonly<Record<MascotEmotion, EmotionSpec>> = {
   wink: {
     // Right eye "closed" as the morphing ∩ arc (smile 1), so the wink morphs geometrically like every pill.
     eyes: [eye(1, 0.5), eye(1, 1)], gaze: null, mouth: mouth(0.1, 0.1, 0.8, 0), mouthWobble: null,
-    blush: 0.2, tint: null, tintAmount: 0, body: body({ breath: SOFT_BREATH, tilt: 6 }), duration: 0.75, transient: true,
+    blush: 0.2, tint: null, tintAmount: 0, body: body({ breath: SOFT_BREATH, roll: EMOTION_ROLLS.wink }), duration: 0.75, transient: true,
   },
   squeeze: {
     eyes: both(eye(1, 0, 0, 'caret')), gaze: null, mouth: mouth(0.07, 0.3, -0.3, 0), mouthWobble: null,

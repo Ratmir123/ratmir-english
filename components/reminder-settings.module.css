@@ -6,7 +6,5 @@
 .times input { font-size: var(--text-17); min-height: 46px; max-width: 200px; font-variant-numeric: tabular-nums; }
 .actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
 .message { font-size: var(--text-13); color: var(--text-secondary); }
-.head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; min-height: 32px; }
-.head h2 { margin: 0; font-size: 20px; }
 .saved { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-13); font-weight: 600; color: var(--text-secondary); }
 .saved svg { color: var(--accent-lime-ink); }

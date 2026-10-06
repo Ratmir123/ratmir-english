@@ -1,6 +1,8 @@
 // Smooth Talk mascot — deterministic jelly simulation (MASCOT-SPEC §2, §3, §5, §6, §7).
 // Pure TypeScript reference: no DOM, no React. Fixed step 1/240 s, ≤ 8 substeps per rendered frame,
 // semi-implicit Euler, preallocated buffers (no allocation per frame), injectable seeded RNG.
+// PASS-0.5.3 §4: the body never holds a lean — emotion tilts are rolls centred on 0 (random sign per entry, alternating for
+// tap reactions), calm idles with an occasional roll episode, static poses are upright, and the pointer gaze relaxes.
 import {
   AUDIO, BODY_RADIUS, C_DAMP, D_MAX, D_MIN, FACE, HOP_SPRING, IDLE, K_NEIGH, K_SPRING, MAX_SUBSTEPS, NODE_COUNT,
   POS_SPRING, SCALE_SPRING, SQUASH_SPRING, STEP_DT, TILT_SPRING, TINT_RGB, TOUCH, VOLUME_KEEP,
@@ -18,6 +20,8 @@ const ATTACK = 1 - Math.exp(-DT / AUDIO.attackSeconds);
 const RELEASE = 1 - Math.exp(-DT / AUDIO.releaseSeconds);
 const SHAPE_RATE = DT / FACE.shapeFadeSeconds;
 const DENT_DENOMINATOR = 2 * TOUCH.dentSigma * TOUCH.dentSigma;
+/** A hover gaze change at least this big (≈ 1 px of pointer travel at the 420 px hover radius) counts as pointer movement. */
+const HOVER_MOVED = 0.002;
 
 // Face spring slots.
 const OPEN = 0, SMILE = 1, SQUINT = 2, TILT = 3, WIDTH = 4, EYE_STRIDE = 5;
@@ -159,7 +163,10 @@ export class MascotPhysics {
   private secondBlinkAt = -1;
   private nextIdle: number;
   private glanceUntil = 0; private glanceX = 0;
-  private tiltUntil = 0; private tiltSign = 1;
+  /** Calm roll episode (start time, sign); −Infinity when none. */
+  private idleRollStart = -Infinity; private idleRollSign = 1;
+  /** Sign of the current emotion's roll; the next tap-reaction roll sign (0 = not drawn yet). */
+  private rollSign = 1; private tapRollSign = 0; private tapEntering = false;
   private flickerUntil = 0;
   private squintUntil = 0;
 
@@ -169,6 +176,8 @@ export class MascotPhysics {
 
   // Pointer.
   private hoverX = 0; private hoverY = 0;
+  /** Simulation time of the last pointer movement (the gaze relaxes to the centre when it rests). */
+  private hoverAt = -Infinity;
   private pressing = false; private pressStartTime = 0;
   private startX = 0; private startY = 0; private curX = 0; private curY = 0;
   private dragging = false; private maxMove = 0; private squeezed = false;
@@ -201,6 +210,7 @@ export class MascotPhysics {
     if (options.emotion) this.override = options.emotion;
     this.context = this.override ?? emotionForState(this.state);
     this.current = this.context;
+    if (EMOTIONS[this.current].body.roll) this.rollSign = this.random() < 0.5 ? -1 : 1;
     this.settle();
   }
 
@@ -236,11 +246,17 @@ export class MascotPhysics {
     this.speechLevel = clamp(finite(level), 0, 1);
     if (this.speechLevel > 0.08) this.lastActivity = this.time;
   }
-  /** Pointer gaze in −1…1 per axis, already normalised by the caller ((cursor − centre) / 420 px); null resets. */
+  /**
+   * Pointer gaze in −1…1 per axis, already normalised by the caller ((cursor − centre) / 420 px); null resets. The eyes
+   * follow it while the pointer moves; IDLE.gazeRelaxAfter s after the last movement they ease back to the centre
+   * (over IDLE.gazeRelaxSeconds) and the idle glances carry on.
+   */
   hover(gaze: Point | null) {
     if (!gaze || !Number.isFinite(gaze.x) || !Number.isFinite(gaze.y)) { this.hoverX = 0; this.hoverY = 0; return; }
     const x = clamp(gaze.x, -1, 1), y = clamp(gaze.y, -1, 1);
-    if (Math.abs(x - this.hoverX) + Math.abs(y - this.hoverY) > 0.04) this.activity();
+    const moved = Math.abs(x - this.hoverX) + Math.abs(y - this.hoverY);
+    if (moved > 0.04) this.activity();
+    if (moved >= HOVER_MOVED) this.hoverAt = this.time;
     this.hoverX = x; this.hoverY = y;
   }
   /** Convenience: pointer offset from the body centre in px → hover gaze. */
@@ -313,7 +329,10 @@ export class MascotPhysics {
     if (this.countSince(this.taps, TOUCH.rapidWindow) >= TOUCH.rapidTaps) { this.playChain(REACTIONS.rapidLaugh); return; }
     const reaction = TAP_CYCLE[this.cycleIndex % TAP_CYCLE.length];
     this.cycleIndex++;
+    // Rolling tap reactions alternate their direction (PASS-0.5.3 §4).
+    this.tapEntering = true;
     this.play(reaction.emotion, reaction.duration);
+    this.tapEntering = false;
   }
   /** Plays one transient emotion, then returns to the context emotion. */
   play(emotion: MascotEmotion, duration = EMOTIONS[emotion].duration) { this.playChain([{ emotion, duration }]); }
@@ -336,6 +355,14 @@ export class MascotPhysics {
     this.activity();
     this.vh += TOUCH.tapHop * 1.15 * this.size;
     this.playChain(REACTIONS.greeting);
+  }
+  /**
+   * Calm roll episode now (PASS-0.5.3 §4): one smooth cycle 0 → ±5° → ∓5° → 0 over 2.6 s. Idle life starts these by
+   * itself (random sign); the lab and the tests call it directly. Only shows while the mascot is calm.
+   */
+  idleRoll(sign: 1 | -1 = this.random() < 0.5 ? -1 : 1) {
+    this.idleRollStart = this.time;
+    this.idleRollSign = sign < 0 ? -1 : 1;
   }
   /** Seconds left of the current transient chain (0 when showing the context emotion). */
   transientRemaining(): number {
@@ -365,7 +392,7 @@ export class MascotPhysics {
     if (Number.isFinite(seconds) && seconds > 0) { this.time += seconds; this.resolveEmotion(); }
     return this.settle();
   }
-  /** Static pose: every spring at its target, ring at rest, no blink or oscillation. */
+  /** Static pose: every spring at its target, ring at rest, no blink or oscillation, upright (no roll, PASS-0.5.3 §4). */
   settle(): MascotFrame {
     this.resolveEmotion();
     this.computeTargets(true);
@@ -467,7 +494,16 @@ export class MascotPhysics {
     }
     this.nextBounce = body.bounce ? this.time : Infinity;
     this.bounceSign = 1;
+    // Each entry rolls from upright to a random side first; rolling tap reactions alternate sides.
+    if (body.roll) this.rollSign = this.tapEntering ? this.nextTapRollSign() : this.random() < 0.5 ? -1 : 1;
+    if (emotion !== 'calm') this.idleRollStart = -Infinity;
     if (emotion === 'calm' && previous !== 'calm') this.nextIdle = this.time + IDLE.minGap + this.random() * (IDLE.maxGap - IDLE.minGap);
+  }
+  private nextTapRollSign() {
+    if (this.tapRollSign === 0) this.tapRollSign = this.random() < 0.5 ? -1 : 1;
+    const sign = this.tapRollSign;
+    this.tapRollSign = -sign;
+    return sign;
   }
 
   private substep() {
@@ -498,7 +534,7 @@ export class MascotPhysics {
     if (pick < 0.4) this.startBlink(t, this.random() < 0.5);
     else if (pick < 0.6) { this.glanceX = this.random() < 0.5 ? -IDLE.glance : IDLE.glance; this.glanceUntil = t + IDLE.glanceSeconds; }
     else if (pick < 0.7) this.vh += IDLE.hop * this.size;
-    else if (pick < 0.85) { this.tiltSign = this.random() < 0.5 ? -1 : 1; this.tiltUntil = t + IDLE.tiltSeconds; }
+    else if (pick < 0.85) this.idleRoll(this.random() < 0.5 ? -1 : 1);
     else this.flickerUntil = t + IDLE.flickerSeconds;
   }
   private canBlink() {
@@ -562,15 +598,21 @@ export class MascotPhysics {
     const spec = EMOTIONS[this.current];
     const body = spec.body;
     const local = t - this.currentSince;
-    let q = body.q, phi = body.tilt, px = 0, py = 0;
+    // No fixed lean (PASS-0.5.3 §4): every tilt is a roll centred on 0 that starts upright.
+    let q = body.q, phi = 0, px = 0, py = 0;
     if (!still) {
       q += body.breath.amp * Math.sin(body.breath.freq * t);
-      if (body.sway) phi += body.sway.amp * Math.sin(body.sway.freq * t);
+      if (body.roll) phi += this.rollSign * body.roll.amp * Math.sin(TAU * local / body.roll.period);
       if (body.shake && local < body.shake.seconds) phi += body.shake.amp * Math.sin(TAU * body.shake.hz * local);
-      if (this.tiltUntil > t) phi += IDLE.tiltDegrees * this.tiltSign;
+      if (this.current === 'calm') {
+        const u = (t - this.idleRollStart) / IDLE.rollSeconds;
+        if (u > 0 && u < 1) phi += this.idleRollSign * IDLE.rollDegrees * Math.sin(TAU * u);
+      }
       if (body.orbit) { const angle = TAU * body.orbit.hz * local; px += body.orbit.radius * S * Math.cos(angle); py += body.orbit.radius * S * Math.sin(angle); }
     }
-    let gazeX = this.hoverX, gazeY = this.hoverY;
+    // The pointer gaze eases back to the centre once the pointer has rested for a while (web; glances carry on).
+    const attention = 1 - smoothstep(IDLE.gazeRelaxAfter, IDLE.gazeRelaxAfter + IDLE.gazeRelaxSeconds, t - this.hoverAt);
+    let gazeX = this.hoverX * attention, gazeY = this.hoverY * attention;
     if (this.pressing && this.dragging) {
       const dx = this.curX - this.startX, dy = this.curY - this.startY;
       const distance = Math.hypot(dx, dy);
@@ -581,7 +623,8 @@ export class MascotPhysics {
       if (distance > 0) { gazeX = dx / distance * reach; gazeY = dy / distance * reach; }
     } else if (spec.gaze) { gazeX = spec.gaze[0]; gazeY = spec.gaze[1]; }
     else if (!still && this.glanceUntil > t) { gazeX = this.glanceX; gazeY = 0; }
-    if (still) { gazeX = spec.gaze ? spec.gaze[0] : 0; gazeY = spec.gaze ? spec.gaze[1] : 0; }
+    // Static, settled and reduced-motion poses are upright (no roll, no drag tilt).
+    if (still) { gazeX = spec.gaze ? spec.gaze[0] : 0; gazeY = spec.gaze ? spec.gaze[1] : 0; phi = 0; }
     this.tq = clamp(q, -SQUASH_SPRING.clamp, SQUASH_SPRING.clamp);
     this.tphi = clamp(phi, -TILT_SPRING.clamp, TILT_SPRING.clamp);
     this.tpx = px; this.tpy = py;
@@ -592,14 +635,14 @@ export class MascotPhysics {
     const listeningEyes = AUDIO.micEyes * this.micEnv;
     for (let e = 0; e < 2; e++) {
       const eye = spec.eyes[e], base = e * EYE_STRIDE;
-      let open = eye.open + listeningEyes, smile = eye.smile, squint = eye.squint, tilt = eye.tilt;
+      const open = eye.open + listeningEyes;
+      let smile = eye.smile, squint = eye.squint;
       if (!still) {
         if (this.flickerUntil > t) smile = Math.max(smile, IDLE.flickerSmile);
-        if (this.tiltUntil > t) { open += e === 0 ? 0.1 : -0.18; tilt += (e === 0 ? -7 : 8) * this.tiltSign; }
         if (this.squintUntil > t) squint = Math.max(squint, 0.7);
       }
       this.ft[base + OPEN] = open; this.ft[base + SMILE] = smile; this.ft[base + SQUINT] = squint;
-      this.ft[base + TILT] = tilt; this.ft[base + WIDTH] = eye.width;
+      this.ft[base + TILT] = eye.tilt; this.ft[base + WIDTH] = eye.width;
       this.shapeTarget[e] = eye.shape;
     }
     const mouth = spec.mouth;

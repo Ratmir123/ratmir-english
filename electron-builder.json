@@ -14,7 +14,7 @@
   "beforeBuild": "scripts/desktop-before-build.cjs",
   "extraFiles": [
     {
-      "from": "public/icon-smooth-v051.ico",
+      "from": "public/icon-smooth-v053.ico",
       "to": "resources/app-icons/icon.ico"
     }
   ],
@@ -27,7 +27,7 @@
         ]
       }
     ],
-    "icon": "public/icon-smooth-v051.ico",
+    "icon": "public/icon-smooth-v053.ico",
     "executableName": "Ratmir English"
   },
   "nsis": {
@@ -38,6 +38,10 @@
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
     "shortcutName": "Smooth Talk",
-    "artifactName": "Smooth Talk Setup.${ext}"
+    "artifactName": "Smooth Talk Setup.${ext}",
+    "installerIcon": "public/icon-smooth-v053.ico",
+    "uninstallerIcon": "public/icon-smooth-v053.ico",
+    "installerHeaderIcon": "public/icon-smooth-v053.ico",
+    "include": "scripts/installer.nsh"
   }
 }

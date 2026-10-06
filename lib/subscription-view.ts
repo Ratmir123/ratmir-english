@@ -2,6 +2,8 @@ import type { SubscriptionUsage, SubscriptionWindow } from './types';
 
 const MAX_SNAPSHOT_AGE_MS = 10 * 60 * 1000;
 const MAX_CLOCK_SKEW_MS = 60 * 1000;
+/** A fresh window at or below this remaining share is «low» (lib/limit-notice.ts and iOS LimitNotice.swift use it). */
+export const SUBSCRIPTION_LOW_PERCENT = 20;
 
 export interface SubscriptionWindowView {
   key: string;
@@ -138,7 +140,7 @@ export function subscriptionView(usage: SubscriptionUsage | null, now = Date.now
       bucketLabel: meaningfulName(window.bucketName) || (bucketIds.length > 1 ? `Группа лимитов ${bucketIds.indexOf(window.bucketId) + 1}` : 'Подписка'),
       periodLabel: subscriptionPeriodLabel(window.windowDurationMins),
       remainingPercent: remaining, percentLabel: remaining === null ? null : subscriptionPercentLabel(remaining),
-      fresh, low: fresh && remaining !== null && remaining <= 20,
+      fresh, low: fresh && remaining !== null && remaining <= SUBSCRIPTION_LOW_PERCENT,
       exhausted: fresh && remaining === 0,
       resetAt: reset === null ? null : new Date(reset).toISOString(),
       resetLabel: reset === null ? null : localDate(reset, timeZone),

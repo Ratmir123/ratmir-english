@@ -14,6 +14,8 @@ export type StartOptions = {
   familyId?: string; context?: Context; topic?: string; mode?: Mode; minutes?: number;
   /** v0.5: start from a personal drill (instant, no planning call). */
   drillId?: string;
+  /** 0.5.3: a round of «Мои фразы» (POST /api/sessions { phraseRound: true }; exclusive with drillId, familyId and topic). */
+  phraseRound?: boolean;
   from?: TabId;
 };
 /** `life` (ms) overrides how long the toast stays: an undo window («Факт убран · Вернуть») ends with its action. */
@@ -255,13 +257,16 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
       return;
     }
     const mode: Mode = options.mode ?? 'learning';
-    const payload = { mode, familyId: options.familyId, context: options.context, topic: options.topic?.trim() || undefined, minutes: options.minutes, drillId: options.drillId };
+    // A phrase round is planned from the saved phrases alone (PASS-0.5.3 §1.5): no family, topic or drill goes with it.
+    const payload = options.phraseRound
+      ? { mode, phraseRound: true as const, minutes: options.minutes }
+      : { mode, familyId: options.familyId, context: options.context, topic: options.topic?.trim() || undefined, minutes: options.minutes, drillId: options.drillId };
     const optionsKey = JSON.stringify(payload);
     const attempt = lessonStart.current?.optionsKey === optionsKey ? lessonStart.current : { optionsKey, requestId: crypto.randomUUID(), pending: false };
     lessonStart.current = attempt;
     attempt.pending = true;
     const tabAtStart = navRef.current.tabRef.current;
-    const label = options.drillId ? 'Открываю тренировку' : 'Готовлю занятие';
+    const label = options.phraseRound ? 'Собираю твои фразы' : options.drillId ? 'Открываю тренировку' : 'Готовлю занятие';
     setStarting({ label, since: Date.now() });
     voiceRef.current.stop();
     try {
@@ -276,6 +281,10 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
       } else navRef.current.openSession(options.from ?? tabAtStart);
     } finally { attempt.pending = false; setStarting(null); }
   }, [action, busy, refreshState, resetSessionView]);
+
+  /** «Повторить» in «Мои фразы» (Practice, Today, the phrases sheet): a phrase round, «С опорами» by default. A 409 («Сейчас
+   *  нечего повторять…») arrives as the usual error toast. */
+  const startPhraseRound = useCallback((mode: Mode = 'learning', from?: TabId) => { void start({ phraseRound: true, mode, from }); }, [start]);
 
   const send = useCallback(async (): Promise<boolean> => {
     const current = sessionRef.current; if (!current) return false;
@@ -439,9 +448,9 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
     hintText, hintLevel, comfort: sessionComfort, setComfort, glowRetryId, lastCompletedId,
     voiceUnavailable, partnerTextShown, partnerTextForced, revealPartnerText, hidePartnerText,
     drafts, draftFor, changeDraft, discardDraft,
-    open, start, send, resend, sessionAction, finishWithDraft, hint, pushbackSpeech, pushback, deleteSession, resetAll,
+    open, start, startPhraseRound, send, resend, sessionAction, finishWithDraft, hint, pushbackSpeech, pushback, deleteSession, resetAll,
   }), [voice, session, busy, busySince, starting, sessionError, hintText, hintLevel, sessionComfort, setComfort, glowRetryId, lastCompletedId,
     voiceUnavailable, partnerTextShown, partnerTextForced, revealPartnerText, hidePartnerText, drafts, draftFor, changeDraft, discardDraft,
-    open, start, send, resend, sessionAction, finishWithDraft, hint, pushbackSpeech, pushback, deleteSession, resetAll]);
+    open, start, startPhraseRound, send, resend, sessionAction, finishWithDraft, hint, pushbackSpeech, pushback, deleteSession, resetAll]);
 }
 export type SessionController = ReturnType<typeof useSessionController>;

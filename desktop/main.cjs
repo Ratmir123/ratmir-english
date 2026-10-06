@@ -1,13 +1,14 @@
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, globalShortcut, Notification, ipcMain, clipboard, dialog, nativeImage, nativeTheme, shell, session, powerMonitor } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, Notification, ipcMain, clipboard, dialog, nativeImage, nativeTheme, shell, session, powerMonitor, screen } = require('electron');
 const { mkdirSync, writeFileSync, renameSync, readFileSync, statSync, existsSync } = require('node:fs');
 const { join } = require('node:path');
 const {
-  SHORTCUT, USAGE_URL, IPC, isAllowedExternalLink,
+  USAGE_URL, IPC, isAllowedExternalLink,
   safeClipboardText, readConfiguration, prepareRuntime, configureSessionProxy,
   validReminderMinutes, safeNetworkError, safeNotification,
   readThemePreference, writeThemePreference,
+  QUICK_OVERLAY, chooseShortcut, overlayBounds, overlayWindowOptions, pointerInWindow, trayMenuItems, trayTooltip, navigationTarget,
 } = require('./runtime.cjs');
 const { prepareCallAudio } = require('./call-audio.cjs');
 
@@ -29,13 +30,29 @@ let tray = null;
 let quitting = false;
 let ready = false;
 let shortcutRegistered = false;
+// The hotkey that actually registered ({ accelerator, label }), or null when every candidate is taken (tray only).
+let shortcut = null;
 let reminderTimer = null;
 let reminderNotification = null;
 let dailyReminders = null;
 let reminderLoadWarning = null;
 let pendingQuick = false;
-// Quick coach opened from the main window returns there when closed (not to the tray).
+// Quick overlay opened from the main window returns there when closed (not to the tray).
 let quickReturnsToMain = false;
+// A requested overlay appears only after its page answered the status handshake (never a blank layer).
+let quickShowPending = false;
+let quickPrewarmTimer = null;
+// Click-through state of the overlay (set by its page) and the shell's own cursor forwarding while it is on.
+let quickIgnoringMouse = false;
+let quickPointerTimer = null;
+let quickPointerLast = null;
+// Main → page navigation ('phrases'), sent once the main document is ready (dom-ready or its status handshake).
+let mainDocumentReady = false;
+let pendingNavigation = null;
+// The overlay's current document answered the status handshake (shown on request without waiting). Both flags reset
+// only when a new main-frame document commits (did-navigate) or the renderer dies — never on 'did-start-loading',
+// which also fires for subframes and other loads inside a document that stays ready.
+let quickDocumentReady = false;
 const callAudioJobs = new Map();
 let mainLoaded = false;
 let quickLoaded = false;
@@ -52,9 +69,11 @@ const diagnosticPath = join(userDataPath, 'desktop-status.json');
 // The in-app appearance choice, remembered here so the next start creates its window in that theme (no flash).
 const appearancePath = join(userDataPath, 'appearance.json');
 let rememberedTheme = 'system';
+// 0.5.3: the transparent multi-size chubrik (16…256 px PNG entries): window, taskbar, tray and notifications pick
+// the exact size for the current DPI. Packaged builds copy it to resources/app-icons/icon.ico (electron-builder.json).
 const iconPath = app.isPackaged
   ? join(process.resourcesPath, 'app-icons', 'icon.ico')
-  : join(app.getAppPath(), '..', 'public', 'icon-smooth-v051.ico');
+  : join(app.getAppPath(), '..', 'public', 'icon-smooth-v053.ico');
 const preloadPath = join(__dirname, 'preload.cjs');
 
 if (!app.requestSingleInstanceLock()) {
@@ -67,10 +86,14 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true;
     clearTimeout(reminderTimer);
     reminderTimer = null;
+    clearTimeout(quickPrewarmTimer);
+    clearInterval(quickPointerTimer);
+    quickPointerTimer = null;
     dailyReminders?.stop();
     stopCallAudioJobs();
     globalShortcut.unregisterAll();
     shortcutRegistered = false;
+    shortcut = null;
     if (tray) { tray.destroy(); tray = null; }
     writeDiagnostics();
   });
@@ -92,6 +115,8 @@ function writeDiagnostics() {
       ready: ready && !quitting,
       mode: applicationPolicy?.mode || 'local',
       shortcutRegistered,
+      shortcut: shortcut ? shortcut.label : null,
+      quickStyle: 'overlay',
       notificationsSupported: Notification.isSupported(),
       mainLoaded,
       quickLoaded,
@@ -203,27 +228,31 @@ function makeWindow(quick) {
   const diagnostics = windowDiagnostics[quick ? 'quick' : 'main'];
   diagnostics.event = 'creating';
   writeDiagnostics();
-  const window = new BrowserWindow({
-    title: quick ? APP_TITLE + ' · Быстрый разбор' : APP_TITLE,
-    width: quick ? 420 : 1280,
-    height: quick ? 720 : 920,
-    minWidth: quick ? 360 : 820,
-    minHeight: quick ? 480 : 600,
-    show: false,
-    autoHideMenuBar: true,
-    backgroundColor: windowBackground(),
-    icon: iconPath,
-    alwaysOnTop: quick,
-    webPreferences: {
-      preload: preloadPath,
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      webSecurity: true,
-      devTools: false,
-      partition: applicationPolicy.partition,
-    },
-  });
+  // The quick window is the 0.5.3 overlay: a transparent floating layer for the chubrik's capture card (runtime.cjs).
+  const window = new BrowserWindow(quick
+    ? overlayWindowOptions({ title: APP_TITLE + ' · Запомнить фразу', icon: iconPath, preload: preloadPath, partition: applicationPolicy.partition })
+    : {
+      title: APP_TITLE,
+      width: 1280,
+      height: 920,
+      minWidth: 820,
+      minHeight: 600,
+      show: false,
+      autoHideMenuBar: true,
+      backgroundColor: windowBackground(),
+      icon: iconPath,
+      webPreferences: {
+        preload: preloadPath,
+        contextIsolation: true,
+        sandbox: true,
+        nodeIntegration: false,
+        webSecurity: true,
+        devTools: false,
+        partition: applicationPolicy.partition,
+      },
+    });
+  // Above other always-on-top windows and fullscreen video players.
+  if (quick) window.setAlwaysOnTop(true, 'screen-saver');
   diagnostics.created = true;
   diagnostics.event = 'created';
   writeDiagnostics();
@@ -237,7 +266,17 @@ function makeWindow(quick) {
     diagnostics.bridgeConnected = false;
     writeDiagnostics();
   });
-  window.webContents.on('dom-ready', () => { diagnostics.event = 'dom-ready'; writeDiagnostics(); });
+  // A new main-frame document committed (first load, reload, recovery): its handshake and readiness start over, and a
+  // new overlay document starts out catching clicks (its page decides where they pass through).
+  window.webContents.on('did-navigate', () => {
+    if (quick) { quickDocumentReady = false; setQuickClickThrough(window, false); }
+    else mainDocumentReady = false;
+  });
+  window.webContents.on('dom-ready', () => {
+    diagnostics.event = 'dom-ready';
+    if (!quick) { mainDocumentReady = true; flushNavigation(); }
+    writeDiagnostics();
+  });
   window.webContents.on('did-finish-load', () => {
     const loaded = applicationPolicy.isAllowedPageUrl(window.webContents.getURL());
     if (quick) quickLoaded = loaded; else mainLoaded = loaded;
@@ -258,40 +297,59 @@ function makeWindow(quick) {
     const known = ['clean-exit', 'abnormal-exit', 'killed', 'crashed', 'oom', 'launch-failed', 'integrity-failure'];
     diagnostics.rendererReason = known.includes(details?.reason) ? details.reason : 'other';
     diagnostics.event = 'renderer-gone';
-    if (quick) quickLoaded = false; else mainLoaded = false;
+    if (quick) { quickLoaded = false; quickDocumentReady = false; } else { mainLoaded = false; mainDocumentReady = false; }
     writeDiagnostics();
   });
   window.on('unresponsive', () => { diagnostics.event = 'unresponsive'; writeDiagnostics(); });
   window.on('close', (event) => {
     if (!quitting) { event.preventDefault(); diagnostics.presentedOnce = true; window.hide(); }
   });
-  window.on('show', () => { diagnostics.shown = true; writeDiagnostics(); });
-  window.on('hide', () => { diagnostics.shown = false; diagnostics.presentedOnce = true; writeDiagnostics(); });
+  window.on('show', () => {
+    diagnostics.shown = true;
+    writeDiagnostics();
+    if (quick) syncQuickPointer(); else scheduleQuickPrewarm();
+  });
+  window.on('hide', () => {
+    diagnostics.shown = false;
+    diagnostics.presentedOnce = true;
+    writeDiagnostics();
+    if (quick) syncQuickPointer();
+  });
   window.on('closed', () => {
-    if (quick) { quickWindow = null; quickLoaded = false; }
-    else { mainWindow = null; mainLoaded = false; }
+    if (quick) { quickWindow = null; quickLoaded = false; quickDocumentReady = false; quickShowPending = false; quickIgnoringMouse = false; syncQuickPointer(); }
+    else { mainWindow = null; mainLoaded = false; mainDocumentReady = false; }
     diagnostics.created = false;
     diagnostics.shown = false;
     diagnostics.bridgeConnected = false;
     diagnostics.event = 'closed';
     writeDiagnostics();
   });
-  window.once('ready-to-show', () => {
+  // The overlay never presents itself on paint: it is shown on request, after its page's status handshake. It gets no
+  // ready-to-show listener at all — listening alone makes a hidden renderer count as visible (no 'hidden' first load).
+  if (!quick) window.once('ready-to-show', () => {
     diagnostics.paintReady = true;
     presentInitialWindow(window, diagnostics);
     writeDiagnostics();
   });
+  loadWindow(window, quick);
+  return window;
+}
+
+function loadWindow(window, quick) {
+  const diagnostics = windowDiagnostics[quick ? 'quick' : 'main'];
   diagnostics.event = 'load-requested';
   writeDiagnostics();
   window.loadURL(quick ? applicationPolicy.quickUrl : applicationPolicy.startupUrl).then(() => {
     if (diagnostics.event !== 'loaded') { diagnostics.event = 'load-resolved'; writeDiagnostics(); }
   }).catch(() => {
     if (diagnostics.event !== 'load-failed') { diagnostics.event = 'load-rejected'; writeDiagnostics(); }
+    // A prewarmed overlay fails quietly: the next hotkey or tray use loads it again and reports a failure then.
+    if (quick && !quickShowPending) return;
+    if (quick) quickShowPending = false;
     dialog.showErrorBox(APP_TITLE, applicationPolicy.mode === 'remote'
       ? 'Сервер тренинга не ответил. Проверь интернет и попробуй открыть приложение снова из значка рядом с часами.'
       : 'Окно тренинга не загрузилось. Попробуй открыть его снова из значка рядом с часами.');
   });
-  return window;
 }
 
 function presentInitialWindow(window, diagnostics) {
@@ -313,6 +371,7 @@ function hideWindow(window, diagnostics) {
 function showTraining() {
   if (!ready) return;
   quickReturnsToMain = false;
+  quickShowPending = false;
   hideWindow(quickWindow, windowDiagnostics.quick);
   if (!mainWindow || mainWindow.isDestroyed()) mainWindow = makeWindow(false);
   else {
@@ -323,26 +382,132 @@ function showTraining() {
   }
 }
 
+/**
+ * Summons the overlay (hotkey, tray, or the page's openQuick). It floats above everything, so the main window stays
+ * where it is. A first request creates it at once and shows it after the page's status handshake; a prewarmed one
+ * (scheduleQuickPrewarm) appears instantly.
+ */
 function showQuick(fromMain = false) {
   if (!ready) { pendingQuick = true; return; }
   quickReturnsToMain = fromMain === true;
-  hideWindow(mainWindow, windowDiagnostics.main);
-  if (!quickWindow || quickWindow.isDestroyed()) quickWindow = makeWindow(true);
-  else {
-    windowDiagnostics.quick.presentedOnce = true;
-    if (quickWindow.isMinimized()) quickWindow.restore();
-    quickWindow.show();
-    quickWindow.focus();
+  if (!quickWindow || quickWindow.isDestroyed()) {
+    quickShowPending = true;
+    quickWindow = makeWindow(true);
+    return;
   }
+  if (quickDocumentReady) { presentQuick(); return; }
+  // Still loading (prewarm in progress) or its last load failed: show it after the handshake, retrying a failed load.
+  quickShowPending = true;
+  if (['load-failed', 'load-rejected', 'renderer-gone', 'unexpected-page'].includes(windowDiagnostics.quick.event)) loadWindow(quickWindow, true);
 }
 
-function status() {
-  return {
+/** Shows the overlay with keyboard focus: the page plays its entrance on visibilitychange/focus and types at once. */
+function presentQuick() {
+  if (quitting || !quickWindow || quickWindow.isDestroyed()) return;
+  quickShowPending = false;
+  placeQuick(quickWindow);
+  quickWindow.setAlwaysOnTop(true, 'screen-saver');
+  windowDiagnostics.quick.presentedOnce = true;
+  quickWindow.show();
+  quickWindow.moveTop();
+  quickWindow.focus();
+}
+
+/** Bottom-right of the work area of the display under the cursor (12 px margin), recomputed on every show. */
+function placeQuick(window) {
+  try {
+    const bounds = overlayBounds(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea);
+    if (!bounds) return;
+    window.setBounds(bounds);
+    // Moving between displays with different scale factors can resize a window on Windows: apply once more.
+    const [width, height] = window.getSize();
+    if (width !== bounds.width || height !== bounds.height) window.setBounds(bounds);
+  } catch { }
+}
+
+/**
+ * Click-through for the overlay's transparent parts. Windows forwards mouse moves to an ignoring window only through a
+ * low-level hook that some setups never feed (injected or remote input, hook-filtering tools), and a page that stops
+ * hearing the cursor can never take clicks back. So while the overlay is visible and ignoring, the shell also sends the
+ * cursor position to the page itself (pointerInWindow, ~20 Hz, only when it moved inside the window).
+ */
+function setQuickClickThrough(window, ignore) {
+  if (!window || window.isDestroyed()) return;
+  quickIgnoringMouse = ignore === true;
+  if (quickIgnoringMouse) window.setIgnoreMouseEvents(true, { forward: true });
+  else window.setIgnoreMouseEvents(false);
+  syncQuickPointer();
+}
+
+function syncQuickPointer() {
+  const active = quickIgnoringMouse && !quitting && !!quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible();
+  if (active && !quickPointerTimer) quickPointerTimer = setInterval(forwardQuickPointer, QUICK_OVERLAY.pointerMs);
+  if (!active && quickPointerTimer) { clearInterval(quickPointerTimer); quickPointerTimer = null; }
+  if (!active) quickPointerLast = null;
+}
+
+function forwardQuickPointer() {
+  if (!quickIgnoringMouse || !quickWindow || quickWindow.isDestroyed() || !quickWindow.isVisible()) { syncQuickPointer(); return; }
+  try {
+    const point = pointerInWindow(screen.getCursorScreenPoint(), quickWindow.getContentBounds());
+    if (!point) { quickPointerLast = null; return; }
+    if (quickPointerLast && quickPointerLast.x === point.x && quickPointerLast.y === point.y) return;
+    quickPointerLast = point;
+    quickWindow.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
+  } catch { }
+}
+
+/** Hides the overlay; when it was opened from the main window, that window comes back to the front instead. */
+function dismissQuick() {
+  quickShowPending = false;
+  if (quickReturnsToMain) { showTraining(); return { hidden: true, returned: true }; }
+  hideWindow(quickWindow, windowDiagnostics.quick);
+  return { hidden: true, returned: false };
+}
+
+/** The hotkey toggles the overlay (Esc, a save timeout and focus loss are the page's own way out, via hideQuick). */
+function toggleQuick() {
+  if (quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible()) dismissQuick();
+  else showQuick(false);
+}
+
+/** Creates the overlay hidden ~6 s after the main window first appears, so it never competes with the launch. */
+function scheduleQuickPrewarm() {
+  if (quickPrewarmTimer || quitting) return;
+  quickPrewarmTimer = setTimeout(() => {
+    if (!quitting && ready && (!quickWindow || quickWindow.isDestroyed())) quickWindow = makeWindow(true);
+  }, QUICK_OVERLAY.prewarmMs);
+}
+
+/**
+ * Tray «Мои фразы» and openTraining('phrases') from a page (e.g. the overlay's capture card): the main window opens
+ * on the Practice phrases sheet (the page decides how, via onNavigate). The overlay hides on the way (showTraining).
+ */
+function openPhrases() {
+  showTraining();
+  pendingNavigation = 'phrases';
+  flushNavigation();
+}
+
+function flushNavigation() {
+  if (!pendingNavigation || !mainDocumentReady || !mainWindow || mainWindow.isDestroyed()) return;
+  const contents = mainWindow.webContents;
+  if (contents.isDestroyed() || !applicationPolicy.isAllowedPageUrl(contents.getURL())) return;
+  const target = navigationTarget(pendingNavigation);
+  pendingNavigation = null;
+  if (target) contents.send(IPC.navigate, target);
+}
+
+function status(sender) {
+  const value = {
     native: true,
-    shortcut: 'Ctrl+Alt+E',
+    // The label of the hotkey that actually registered; '' with shortcutRegistered false when every candidate was taken.
+    shortcut: shortcut ? shortcut.label : '',
     shortcutRegistered,
     notificationsSupported: Notification.isSupported(),
   };
+  if (quickWindow && !quickWindow.isDestroyed() && sender === quickWindow.webContents) value.quickStyle = 'overlay';
+  return value;
 }
 
 function scheduleReminder(minutes) {
@@ -375,37 +540,48 @@ function registerIpc() {
     if (mainWindow && event.sender === mainWindow.webContents) {
       windowDiagnostics.main.bridgeConnected = true;
       presentInitialWindow(mainWindow, windowDiagnostics.main);
+      mainDocumentReady = true;
+      flushNavigation();
     }
     if (quickWindow && event.sender === quickWindow.webContents) {
       windowDiagnostics.quick.bridgeConnected = true;
-      presentInitialWindow(quickWindow, windowDiagnostics.quick);
+      quickDocumentReady = true;
+      // The page is up: a requested overlay appears a moment after this answer, so the page has applied quickStyle.
+      if (quickShowPending) setTimeout(() => { if (quickShowPending) presentQuick(); }, 80);
     }
     writeDiagnostics();
-    return status();
+    return status(event.sender);
   });
   // Clipboard is read only for this explicit renderer request, never for a
   // global shortcut, on startup, a notification, or an automatic timer.
   handle(IPC.clipboard, () => safeClipboardText(clipboard.readText()));
-  handle(IPC.openTraining, () => {
-    showTraining();
+  // 0.5.3: an optional place to open; only the literal 'phrases' navigates, anything else just opens the main window.
+  handle(IPC.openTraining, (_event, target) => {
+    if (navigationTarget(target) === 'phrases') openPhrases();
+    else showTraining();
     return { opened: true };
   });
-  // Opened from the main window's sidebar: closing the quick coach returns to the main window.
+  // Opened from the main window: closing the overlay brings the main window back to the front.
   handle(IPC.openQuick, (event) => { showQuick(!!mainWindow && event.sender === mainWindow.webContents); return { opened: true }; });
-  handle(IPC.hideQuick, () => {
-    if (quickReturnsToMain) { showTraining(); return { hidden: true, returned: true }; }
-    hideWindow(quickWindow, windowDiagnostics.quick);
-    return { hidden: true, returned: false };
+  handle(IPC.hideQuick, () => dismissQuick());
+  // 0.5.3 overlay: clicks pass through its transparent parts (true) or land on its content (false). Mouse moves keep
+  // reaching the page (forwarded, see setQuickClickThrough), so it can switch back over its content. Never applies to
+  // the main window.
+  handle(IPC.setClickThrough, (event, ignore) => {
+    if (typeof ignore !== 'boolean') throw new Error('Expected a boolean.');
+    if (!quickWindow || quickWindow.isDestroyed() || event.sender !== quickWindow.webContents) return { applied: false };
+    setQuickClickThrough(quickWindow, ignore);
+    return { applied: true, ignore };
   });
   handle(IPC.prepareCallAudio, (event, filePath) => runCallAudioJob(event.sender, filePath));
   handle(IPC.notify, (_event, value) => showAppNotification(value));
   // The in-app appearance choice also drives the native title bar and window background (Windows follows themeSource).
   // It is remembered for the next start (applied before the first window in boot), written only when it changes.
+  // The overlay keeps its transparent background in every theme.
   handle(IPC.setTheme, (_event, value) => {
     if (!['system', 'light', 'dark'].includes(value)) throw new Error('Unknown theme.');
     nativeTheme.themeSource = value;
-    const background = windowBackground();
-    for (const window of [mainWindow, quickWindow]) if (window && !window.isDestroyed()) window.setBackgroundColor(background);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(windowBackground());
     if (value !== rememberedTheme) {
       try { writeThemePreference(appearancePath, value); rememberedTheme = value; } catch { }
     }
@@ -473,19 +649,17 @@ async function boot() {
   registerIpc();
   // No default menu in the installed app: its Ctrl+R / F5 reload would drop an unsent recording.
   if (app.isPackaged) Menu.setApplicationMenu(null);
+  // The first free hotkey of SHORTCUT_CANDIDATES toggles the overlay; the tray and the page show the one that registered.
+  shortcut = chooseShortcut((accelerator) => globalShortcut.register(accelerator, toggleQuick));
+  shortcutRegistered = shortcut !== null;
+  const shortcutText = shortcut ? shortcut.label : null;
   tray = new Tray(nativeImage.createFromPath(iconPath));
-  tray.setToolTip(APP_TITLE + ' · Ctrl+Alt+E');
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Открыть тренинг', click: showTraining },
-    { label: 'Быстрый разбор · Ctrl+Alt+E', click: () => showQuick(false) },
-    { type: 'separator' },
-    { label: 'Напомнить через 30 минут', enabled: Notification.isSupported(), click: () => scheduleReminder(30) },
-    { type: 'separator' },
-    { label: 'Выйти из приложения', click: () => app.quit() },
-  ]));
+  tray.setToolTip(trayTooltip(shortcutText, APP_TITLE));
+  const trayActions = { open: showTraining, capture: () => showQuick(false), phrases: openPhrases, remind: () => scheduleReminder(30), quit: () => app.quit() };
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenuItems({ shortcut: shortcutText, notificationsSupported: Notification.isSupported(), title: APP_TITLE })
+    .map((item) => item.type === 'separator' ? { type: 'separator' } : { label: item.label, enabled: item.enabled !== false, click: trayActions[item.id] })));
   tray.on('click', showTraining);
   ready = true;
-  try { shortcutRegistered = globalShortcut.register(SHORTCUT, () => showQuick(false)); } catch { shortcutRegistered = false; }
   writeDiagnostics();
   startupStage = 'main-window';
   showTraining();

@@ -15,7 +15,15 @@ using namespace metal;
 // lime -> lavender light along the inner bottom, and an outer band that lets the page show through.
 // Analytic shading only: no texture fetches, noise octaves or off-screen blur. Output is premultiplied.
 // Swift call order: .boundingRect, time, energy, gazeX, gazeY, .floatArray(disp),
-// dark, tintR, tintG, tintB, tintAmount.
+// dark, tintR, tintG, tintB, tintAmount, tilt.
+// PASS 0.5.3 §4: `tilt` is the body's roll in radians (clockwise on screen, y down), like u_tilt in
+// components/mascot/renderer.ts. SwiftUI rotates this layer after shading, so the key light and the highlight axes
+// enter the body frame through `mascotUnroll` (R(-tilt)): the highlights stay put on screen while the body rolls.
+
+// A screen direction v in the rolled body frame: R(-tilt) v, cs = (cos tilt, sin tilt) — web `unroll`.
+inline float2 mascotUnroll(float2 v, float2 cs) {
+    return float2(cs.x * v.x + cs.y * v.y, cs.x * v.y - cs.y * v.x);
+}
 
 // Thin-film colours (lime, lavender, cyan) cycled by three phase-shifted weights.
 inline float3 mascotFilm(float3 w) {
@@ -38,7 +46,8 @@ inline float3 mascotAurora(float phase) {
 [[ stitchable ]] half4 liquidCompanion(float2 position, half4 colour, float4 bounds,
                                       float time, float energy, float gazeX, float gazeY,
                                       device const float *disp, int count,
-                                      float dark, float tintR, float tintG, float tintB, float tintAmount) {
+                                      float dark, float tintR, float tintG, float tintB, float tintAmount,
+                                      float tilt) {
     const float R0 = 0.78;
     const float K = 38.0;
     const float exponent = 2.65;
@@ -87,16 +96,18 @@ inline float3 mascotAurora(float phase) {
 
     float darkness = clamp(dark, 0.0, 1.0);
     float2 gaze = float2(gazeX, gazeY);
+    float2 tiltCS = float2(cos(tilt), sin(tilt));
     float z = sqrt(max(0.001, 1.0 - dist * dist));
     float3 normal = normalize(float3(sign(q.x) * pow(abs(q.x), 1.5), sign(q.y) * pow(abs(q.y), 1.5), z * 0.88));
     float2 refracted = q * (0.67 + z * 0.28) + normal.xy * 0.19;
     float flow = sin(refracted.x * 3.0 + refracted.y * 2.1 + time * 0.48);
     float pool = sin(refracted.y * 3.7 - refracted.x * 1.3 - time * 0.37);
-    float3 light = normalize(float3(-0.52 + gazeX * 0.15, -0.69 + gazeY * 0.12, 0.7));
+    // The upper-left key light stays put on screen while the body rolls.
+    float3 light = normalize(float3(mascotUnroll(float2(-0.52 + gazeX * 0.15, -0.69 + gazeY * 0.12), tiltCS), 0.7));
     float fresnel = pow(1.0 - z, 2.0);
     // Dark theme: rim +15 %, body x1.08, specular x1.2, film +10 %.
     float edge = exp(-abs(dist - 0.969) * 108.0) * (1.0 + 0.15 * darkness);
-    float upper = smoothstep(0.30, 0.95, -q.y - q.x * 0.35);
+    float upper = smoothstep(0.30, 0.95, dot(q, mascotUnroll(float2(-0.35, -1.0), tiltCS)));
     float3 moodTint = float3(tintR, tintG, tintB);
     float mood = clamp(tintAmount, 0.0, 0.35);
     const float3 luma = float3(0.2126, 0.7152, 0.0722);
@@ -144,10 +155,10 @@ inline float3 mascotAurora(float phase) {
     float facing = max(0.0, dot(normal, light));
     result += float3(1.0) * pow(facing, 60.0) * (1.0 + 0.2 * darkness);
     result += float3(1.0) * smoothstep(0.78, 0.82, dist) * (1.0 - smoothstep(0.86, 0.9, dist))
-        * smoothstep(0.45, 0.75, -q.y * 0.75 - q.x * 0.65) * 0.55;
-    result += float3(0.10, 0.09, 0.15) * pow(max(0.0, dot(normal, float3(0.6, 0.55, 0.58))), 10.0);
+        * smoothstep(0.45, 0.75, dot(q, mascotUnroll(float2(-0.65, -0.75), tiltCS))) * 0.55;
+    result += float3(0.10, 0.09, 0.15) * pow(max(0.0, dot(normal, float3(mascotUnroll(float2(0.6, 0.55), tiltCS), 0.58))), 10.0);
     result += float3(0.80, 0.78, 1.0) * upper * edge;
-    result += float3(0.5, 0.7, 0.3) * edge * smoothstep(-0.25, 0.7, q.x + q.y);
+    result += float3(0.5, 0.7, 0.3) * edge * smoothstep(-0.25, 0.7, dot(q, mascotUnroll(float2(1.0, 1.0), tiltCS)));
     // Light theme: a thin deep-violet outer line keeps the silhouette solid on a pale page.
     result = mix(result, float3(0.19, 0.12, 0.42), smoothstep(0.968, 1.0, dist) * 0.65 * (1.0 - darkness));
     result += body * clamp(energy, 0.0, 1.0) * 0.06;

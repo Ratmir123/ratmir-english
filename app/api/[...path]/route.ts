@@ -7,7 +7,7 @@ import { getAppState, getSession, getSessionByRequestId, createSession, saveSess
 import { completionRequirement } from '@/lib/server/session-lifecycle';
 import { messageInputSchema, retryInputSchema, transcriptIntegrity } from '@/lib/server/transcript-integrity';
 import { correctedRecordingTiming, recordedSubmission } from '@/lib/server/speech-timing';
-import { planLesson, respond, hint, reviewRetryAssessment, pushbackLine, assessPushback, ttsInstructionsFor } from '@/lib/server/teacher';
+import { planLesson, respond, hint, reviewRetryAssessment, pushbackLine, assessPushback, ttsInstructionsFor, phraseLessonPlan, weavePhrases } from '@/lib/server/teacher';
 import { audioConfigured, setAudioKey, getAudio, transcribe, synthesize, cleanAudio, createLiveTranscriptionSession, closeLiveTranscriptionSession } from '@/lib/server/audio';
 import { checkAccess, checkOrigin, validAccessCode, accessCookie, requestIsSecure, ApiError } from '@/lib/server/security';
 import { ensureWorker, processAnalysisQueue } from '@/lib/server/worker';
@@ -19,6 +19,9 @@ import { generateBaselineReport } from '@/lib/server/baseline-report';
 import { handlePlacementRoute } from '@/lib/server/placement/routes';
 import { handleCallsRoute } from '@/lib/server/calls/routes';
 import { getDrill, linkDrillSession } from '@/lib/server/calls/state';
+import { handlePhrasesRoute } from '@/lib/server/phrases/routes';
+import { phraseRoundSelection, phraseWeaveSelection, recordPhraseResults } from '@/lib/server/phrases/service';
+import { ensurePhraseQueue, requeueStalePhrases } from '@/lib/server/phrases/queue';
 import { locked } from '@/lib/server/http';
 import { APP_CHANNEL, APP_NAME, APP_VERSION } from '@/lib/app-info';
 import type { AppState, Session, Profile } from '@/lib/types';
@@ -69,6 +72,8 @@ async function handle(req: NextRequest, route: Route) {
   }
   if (path[0] === 'placement') { ensureWorker(); return handlePlacementRoute(req, path.slice(1)); }
   if (path[0] === 'calls' || path[0] === 'patterns' || path[0] === 'facts') { ensureWorker(); return handleCallsRoute(req, path); }
+  // «Запомнить» → «Мои фразы» (PASS-0.5.3 §1.2).
+  if (path[0] === 'phrases') return handlePhrasesRoute(req, path);
   if (path[0] === 'onboarding') {
     // Introduction and cached results never start unrelated analysis or make an AI call.
     if (req.method === 'GET' && path.length === 1) return json(getAppState().onboarding);
@@ -105,9 +110,12 @@ async function handle(req: NextRequest, route: Route) {
     }
     throw new ApiError('Действие не найдено.', 404);
   }
-  ensureWorker();
+  ensureWorker(); ensurePhraseQueue();
   if (req.method === 'GET') {
-    if (path[0] === 'state') { cleanAudio(getAppState().profile.audioRetentionDays); return json(safeState(getAppState())); }
+    if (path[0] === 'state') {
+      // Saved phrases still waiting for Sol after a restart or a failed attempt go back into the queue (PASS-0.5.3 §1.3).
+      cleanAudio(getAppState().profile.audioRetentionDays); requeueStalePhrases(); return json(safeState(getAppState()));
+    }
     if (path[0] === 'status') return json({ app: { name: APP_NAME, version: APP_VERSION, channel: APP_CHANNEL }, brain: await getBrainStatus(), hosting: process.env.TRAINING_DEPLOYMENT === 'server' ? 'server' : 'local', audio: { configured: audioConfigured(), model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts' } });
     if (path[0] === 'families') return json({ families: FAMILIES, calibration: CALIBRATION_OPTIONS, catalog: familyCatalog() });
     if (path[0] === 'sessions' && path[1]) return json(safeSession(session(path[1])));
@@ -166,6 +174,8 @@ async function handle(req: NextRequest, route: Route) {
       minutes: z.number().min(1).max(240).transform(value => Math.min(30, Math.max(5, Math.round(value)))).optional(),
       intent: z.enum(['new', 'resume']).default('new'), sessionId: z.string().uuid().optional(), requestId: z.string().uuid().optional(),
       drillId: z.string().max(100).optional(),
+      // 0.5.3 «Мои фразы» round (PASS-0.5.3 §1.5.1): exclusive with drillId, familyId and topic.
+      phraseRound: z.boolean().optional(),
       baselineStepId: z.enum(['expression', 'listening', 'interaction']).optional() }).parse(await body(req));
     return locked('planning', async () => {
       if (data.intent === 'resume') {
@@ -174,6 +184,7 @@ async function handle(req: NextRequest, route: Route) {
       }
       // v0.5 replaced the three baseline probes with the placement test.
       if (data.baselineStepId) throw new ApiError('Старые стартовые пробы заменены тестом уровня. Обнови приложение.', 410);
+      if (data.phraseRound && (data.drillId || data.familyId || data.topic)) throw new ApiError('Повтор фраз запускается без темы и тренировки.', 400);
       const existing = data.requestId ? getSessionByRequestId(data.requestId) : null;
       if (existing) return json(safeSession(existing));
       const state = getAppState();
@@ -183,8 +194,12 @@ async function handle(req: NextRequest, route: Route) {
       const options = { ...data, ...(drill ? { context: drill.context, familyId: undefined, topic: undefined, drill } : {}) };
       const family = FAMILIES.find(item => item.id === options.familyId);
       options.mode = lessonMode(family?.activity, options.mode);
-      const plan = await planLesson(state, options);
-      const mode = lessonMode(plan.activity, options.mode);
+      const round = data.phraseRound ? phraseRoundSelection() : null;
+      if (round && !round.length) throw new ApiError('Сейчас нечего повторять — запомни пару фраз.', 409);
+      const planned = round ? phraseLessonPlan(state, round, { minutes: data.minutes }) : await planLesson(state, options);
+      const mode = lessonMode(planned.activity, options.mode);
+      // An ordinary speaking conversation carries up to two due saved phrases (PASS-0.5.3 §1.5.2).
+      const plan = round ? planned : weavePhrases(planned, phraseWeaveSelection(), mode);
       const value = createSession({ ...plan, id: randomUUID() }, mode, data.requestId, generation);
       value.turns.push({ id: randomUUID(), role: 'assistant', text: plan.opening, createdAt: new Date().toISOString(), source: 'text', support: 0 });
       saveSession(value);
@@ -291,8 +306,10 @@ async function handle(req: NextRequest, route: Route) {
           throw new ApiError('Для стартового разбора нужны хотя бы два своих ответа голосом без подсказок и изменения расшифровки. Оценка может быть любой.', 400);
         }
         const queued = finishConversation(id, action === 'reanalyse');
+        // Saved phrases are checked once, when the conversation first finishes; a reanalysis never counts them again.
+        const finished = action === 'finish' ? recordPhraseResults(id) ?? queued : queued;
         if (queued.status === 'analysing') void processAnalysisQueue();
-        return json(safeSession(queued));
+        return json(safeSession(finished));
       }
       if (action === 'retry') {
         if (!value.analysis) throw new ApiError('Сначала нужен разбор.');

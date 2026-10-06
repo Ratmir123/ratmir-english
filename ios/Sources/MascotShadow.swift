@@ -127,8 +127,10 @@ struct MascotShadowPose {
                                          flat: flat, width: width, lean: lean, side: s)
     }
 
+    /// The shadow follows the body's sideways roll shift too (PASS 0.5.3 §4); a resting frame has none.
     init(frame: MascotFrame, side: CGFloat) {
-        self.init(x: frame.offsetX, y: frame.offsetY, rotation: frame.rotation, scaleX: frame.scaleX,
+        let roll = MascotRollTuning.offset(rotation: frame.rotation, side: Double(side))
+        self.init(x: frame.offsetX + roll, y: frame.offsetY, rotation: frame.rotation, scaleX: frame.scaleX,
                   squash: frame.squash, side: Double(side))
     }
 
@@ -146,7 +148,31 @@ struct MascotShadowPose {
     }
 }
 
+/// A blur of `blur` pt (Gaussian σ, like CSS `filter: blur()` on the PC) over a soft elliptical gradient box of
+/// `width` × `height` pt, without a blur pass (PASS 0.5.3 §5). The shadow stops fall off like a cone, whose σ is about
+/// half its extent / √6, so the blurred extent grows in quadrature, √(w² + 24·blur²), and the peak dims by the area
+/// ratio: the same amount of ink, spread wider.
+struct MascotSoftEllipse: Equatable {
+    let width: Double
+    let height: Double
+    /// Multiplies the layer opacity (1 without blur).
+    let alpha: Double
+
+    init(width: Double, height: Double, blur: Double) {
+        let w = width.isFinite ? max(0.001, width) : 0.001
+        let h = height.isFinite ? max(0.001, height) : 0.001
+        let b = blur.isFinite ? max(0, blur) : 0
+        let spread = 24 * b * b
+        let grownW = (w * w + spread).squareRoot()
+        let grownH = (h * h + spread).squareRoot()
+        self.width = grownW
+        self.height = grownH
+        alpha = (w / grownW) * (h / grownH)
+    }
+}
+
 /// Gradient stops of both layers for the current theme; `dark` (0…1, animated with the theme) blends the palettes.
+/// `cached(dark:)` returns one shared fill per theme, so a frame never rebuilds the stops (PASS 0.5.3 §5).
 struct MascotShadowFill {
     let contact: [Gradient.Stop]
     let caustic: [Gradient.Stop]
@@ -154,6 +180,16 @@ struct MascotShadowFill {
     let pool: [Gradient.Stop]
     /// Peak alpha of the light pool (0 on light pages: the layer is skipped).
     let poolAlpha: Double
+
+    private static let lightFill = MascotShadowFill(dark: 0)
+    private static let darkFill = MascotShadowFill(dark: 1)
+
+    /// The light or dark fill from the cache; only the 0.3 s theme cross-fade computes in-between stops.
+    static func cached(dark: Double) -> MascotShadowFill {
+        guard dark.isFinite, dark > 0.001 else { return lightFill }
+        if dark >= 0.999 { return darkFill }
+        return MascotShadowFill(dark: dark)
+    }
 
     init(dark: Double) {
         let d = min(1, max(0, dark.isFinite ? dark : 0))

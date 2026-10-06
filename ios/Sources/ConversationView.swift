@@ -328,6 +328,10 @@ struct ConversationView: View {
                 }.padding(.top, 8)
             } label: { Text("Твоя задача").font(.subheadline.weight(.semibold)) }
             if !value.lesson.mustAvoid.isEmpty { AvoidChips(phrases: value.lesson.mustAvoid) }
+            if let recall = PhraseLabels.supportLine(familyId: value.lesson.familyId, languageFocus: value.lesson.languageFocus,
+                                                     phraseIds: value.lesson.phraseIds, mode: value.mode) {
+                RecallLine(label: recall.label, text: recall.text)
+            }
         }
     }
 
@@ -516,6 +520,8 @@ struct ConversationView: View {
         VStack(alignment: .leading, spacing: 18) {
             if let outcome = analysis.outcome, !outcome.what.isEmpty { outcomeCard(outcome) }
             ReviewSummaryCard(summary: analysis.summary, nextFocus: analysis.nextFocus)
+            // PASS-0.5.3 §1.5: «Фразы из копилки» right after the summary (sessions without phrase results show nothing).
+            PhraseResultsBlock(conversation: value)
             if !analysis.priorities.isEmpty {
                 LiquidSectionHeader(title: "Что меняем в следующей попытке", systemImage: "scope")
                 ForEach(Array(analysis.priorities.enumerated()), id: \.offset) { index, priority in
@@ -804,6 +810,8 @@ struct ConversationView: View {
 
     private func completeBlock(_ value: Conversation) -> some View {
         VStack(spacing: 10) {
+            // PASS-0.5.3 §2: the optional comfort rating travels with «Завершить занятие» (status `review` only).
+            ComfortRatingRow(conversation: value)
             Label("Всё сохранено. Можно завершать.", systemImage: "checkmark.circle.fill")
                 .font(.footnote).foregroundStyle(Theme.inkSecondary)
             Button { leave(.complete) } label: {
@@ -823,6 +831,8 @@ struct ConversationView: View {
 
     private func retryPrompt(_ value: Conversation) -> some View {
         VStack(spacing: 10) {
+            // PASS-0.5.3 §2: the rating also travels with «Отложить попытку» (shown only while the status is `review`).
+            ComfortRatingRow(conversation: value)
             Button { reviewComposerOpen = true } label: {
                 HStack { Text("Ответить ещё раз"); Spacer(); Image(systemName: "mic.fill") }
             }
@@ -901,7 +911,8 @@ private struct ComposerPanel: View {
             if let caption, !client.recording {
                 Text(caption).font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
             }
-            if target == .message, let hint = client.hint { hintCard(hint) }
+            // PASS-0.5.3 §2: three hint levels in «С опорами» speaking lessons (hidden in reading and writing).
+            if target == .message && conversation.offersHints { ComposerHintsPanel(conversation: conversation) }
             inputArea
             if client.pendingIsLocalOnly && !client.busy { pendingNote }
             if !client.showsLiveCaptions && (client.recordedFile != nil || client.hasUnuploadedRecording) { recordingActions }
@@ -942,19 +953,6 @@ private struct ComposerPanel: View {
                     .font(.caption).monospacedDigit().foregroundStyle(Theme.inkSecondary)
             }
         }
-    }
-
-    private func hintCard(_ hint: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "lightbulb.fill").foregroundStyle(Theme.limeInk).padding(.top, 2)
-            Text(hint).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Button { client.hint = nil } label: { Image(systemName: "xmark").font(.caption.weight(.bold)) }
-                .buttonStyle(LiquidIconButton(size: 30))
-                .accessibilityLabel("Скрыть подсказку")
-        }
-        .padding(12)
-        .background(Theme.lime.opacity(0.22), in: RoundedRectangle(cornerRadius: Radius.input, style: .continuous))
     }
 
     private var pendingNote: some View {
@@ -1038,10 +1036,9 @@ private struct ComposerPanel: View {
         }
     }
 
-    /// The learner's answer: a hint (С опорами only) and send.
+    /// The learner's answer: send (hints live in the panel above the field, PASS-0.5.3 §2).
     @ViewBuilder private var rightCluster: some View {
         HStack(spacing: 8) {
-            if target == .message && conversation.mode == "learning" { hintCircle }
             sendCircle
         }
     }
@@ -1071,13 +1068,6 @@ private struct ComposerPanel: View {
         .buttonStyle(LiquidIconButton(size: 48))
         .disabled(!client.playing && (client.busy || client.voiceLoading || client.recording))
         .accessibilityLabel(playbackLabel)
-    }
-
-    private var hintCircle: some View {
-        Button { Task { await client.getHint() } } label: { Image(systemName: "lightbulb.fill") }
-            .buttonStyle(LiquidIconButton(size: 48, tint: client.hint != nil ? Theme.lime.opacity(0.6) : nil))
-            .disabled(client.busy || client.recording)
-            .accessibilityLabel(client.hint == nil ? "Подсказка" : "Ещё подсказку")
     }
 
     /// Opens or hides the latest partner line. Absent when the line cannot be heard (its text is always shown then).
@@ -1522,6 +1512,22 @@ private struct AvoidChips: View {
                 .fixedSize(horizontal: false, vertical: true)
         } icon: {
             Image(systemName: "nosign").foregroundStyle(Theme.danger)
+        }
+        .font(.footnote)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// «Вспомни: …» / «Из твоих фраз: …» — the Russian cues of saved phrases in «С опорами» (PASS-0.5.3 §1.5), never the English.
+private struct RecallLine: View {
+    let label: String
+    let text: String
+    var body: some View {
+        Label {
+            (Text(label + ": ").fontWeight(.semibold).foregroundStyle(Theme.violet) + Text(text))
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "text.bubble").foregroundStyle(Theme.violet)
         }
         .font(.footnote)
         .accessibilityElement(children: .combine)

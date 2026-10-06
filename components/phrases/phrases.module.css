@@ -1,0 +1,95 @@
+/* «Мои фразы» (PASS-0.5.3 §1.6): the Practice card, the Today row, the phrases sheet and the review block. Opaque content
+   surfaces with hairlines; rows inside one surface, never a card in a card; pills only for chips of content. */
+
+/* ── Practice «Для тебя»: «Мои фразы» ── */
+.card {
+  display: grid; gap: 12px; min-width: 0; padding: 18px 18px 16px; border-radius: var(--radius-tile);
+  background: var(--surface-card); box-shadow: inset 0 0 0 1px var(--hairline), var(--e1);
+}
+.cardHead { display: flex; align-items: center; justify-content: space-between; gap: 4px 16px; min-width: 0; }
+.cardHead h3 { font-family: var(--font-display); font-size: 17px; font-weight: 800; line-height: 1.3; letter-spacing: -.2px; min-width: 0; }
+.count { color: var(--text-tertiary); font-weight: 700; }
+.all { flex-shrink: 0; margin-right: -4px; }
+.status { display: grid; gap: 2px; min-width: 0; }
+.waiting { font-size: var(--text-15); font-weight: 650; }
+.quiet { font-size: var(--text-15); line-height: 1.5; color: var(--text-secondary); text-wrap: pretty; }
+.chips { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.chips > li { display: flex; min-width: 0; max-width: 100%; }
+.chip {
+  display: inline-flex; align-items: center; min-height: 36px; min-width: 0; max-width: 100%; padding: 6px 14px;
+  border-radius: 18px; text-align: left; font-size: 13.5px; font-weight: 650; line-height: 1.35; color: var(--text-primary);
+  background: var(--surface-sunken); overflow-wrap: anywhere;
+  transition: background-color var(--hover-ms) var(--ease-out), transform var(--press-ms) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) { .chip:hover { background: var(--surface-sunken-2); } }
+.chip:active { transform: scale(.98); transition-duration: var(--pressed-ms); }
+.chip:focus-visible { border-radius: 18px; }
+.cardActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+
+/* ── Today: one compact row under the day's card ── */
+.today { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 6px 10px 6px 6px; border-radius: 22px; }
+.todayOpen {
+  display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; min-height: 52px; padding: 6px 10px; border-radius: 16px;
+  text-align: left; transition: background-color var(--hover-ms) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) { .todayOpen:hover { background: var(--surface-hover); } }
+.todayIcon { width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; flex-shrink: 0; background: var(--surface-sunken); color: var(--text-primary); }
+.todayCopy { min-width: 0; font-size: var(--text-15); line-height: 1.4; overflow-wrap: anywhere; }
+.todayCopy strong { font-weight: 700; }
+.todayCopy span { color: var(--text-secondary); }
+.today :global(.button) { flex-shrink: 0; }
+
+/* ── The phrases sheet ── */
+.sheet { width: min(600px, calc(100vw - 24px)); }
+.panel { display: grid; gap: 4px; min-width: 0; }
+.list { list-style: none; display: grid; min-width: 0; }
+.list > li + li { border-top: 1px solid var(--hairline); }
+.row { min-width: 0; scroll-margin: 12px; }
+.rowHead {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 10px 8px; border-radius: 14px;
+  text-align: left; transition: background-color var(--hover-ms) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) { .rowHead:hover { background: var(--surface-sunken); } }
+.rowCopy { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.rowCopy strong { font-size: var(--text-15); font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
+.rowCopy strong[lang='en'] { font-family: var(--font-display); font-size: 16px; font-weight: 800; letter-spacing: -.15px; }
+.rowCopy small { font-size: var(--text-13); line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; }
+.rowCopy small[data-working] { color: var(--accent-violet-ink); font-weight: 650; }
+.due { flex-shrink: 0; font-size: var(--text-13); font-weight: 650; color: var(--text-secondary); white-space: nowrap; }
+.due[data-tone='now'] { color: var(--accent-violet-ink); }
+.due[data-tone='done'] { color: var(--accent-lime-ink); }
+.caret { flex-shrink: 0; color: var(--text-tertiary); transition: transform var(--hover-ms) var(--ease-out); }
+.row[data-open='true'] .caret { transform: rotate(90deg); }
+.details { display: grid; gap: 10px; min-width: 0; padding: 0 8px 16px; animation: open var(--reveal-ms) var(--ease-out) both; }
+.note { font-size: var(--text-15); line-height: 1.5; }
+.example { display: grid; gap: 2px; padding: 10px 14px; border-radius: 14px; background: var(--surface-sunken); }
+.example p[lang='en'] { font-size: var(--text-15); line-height: 1.5; overflow-wrap: anywhere; }
+.history { list-style: none; display: grid; gap: 2px; font-size: var(--text-13); color: var(--text-secondary); }
+.rowActions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px; margin-left: -4px; }
+.rowActions :global(.text-button) { font-size: var(--text-13); }
+.empty { padding: 14px 4px 6px; font-size: var(--text-15); line-height: 1.5; color: var(--text-secondary); text-wrap: pretty; }
+
+/* ── Review: «Фразы из копилки» ── */
+.results { display: grid; gap: 12px; padding: 22px 24px; min-width: 0; }
+.resultList { list-style: none; display: grid; gap: 12px; }
+.resultList li { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.mark {
+  width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; margin-top: 1px;
+  background: var(--surface-sunken); color: var(--text-tertiary);
+}
+.resultList li[data-used='true'] .mark { background: var(--accent-lime-soft); color: var(--accent-lime-ink); }
+.resultCopy { display: grid; gap: 3px; min-width: 0; }
+.resultLine { font-size: var(--text-15); line-height: 1.5; overflow-wrap: anywhere; }
+.resultLine strong { font-weight: 700; }
+.resultLine span { color: var(--text-secondary); }
+.quote { font-size: 13.5px; line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; }
+.resultCopy small { font-size: var(--text-13); color: var(--text-secondary); }
+
+@keyframes open { from { opacity: 0; transform: translate3d(0, -4px, 0); } }
+@media (pointer: coarse) { .chip { min-height: 44px; } .todayOpen { min-height: 56px; } }
+@media (prefers-reduced-motion: reduce) {
+  .chip, .caret, .rowHead, .todayOpen { transition: none; }
+  .chip:active { transform: none; }
+  .details { animation: fade 200ms ease-out both; }
+}
+@keyframes fade { from { opacity: 0; } }

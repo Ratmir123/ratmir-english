@@ -74,6 +74,8 @@ export interface LessonPlanExtras {
   drillSlot?: string | null;
   mustInclude?: string[];
   mustAvoid?: string[];
+  /** 0.5.3: saved phrases this lesson practises (a phrase round) or weaves in (an ordinary session), PASS-0.5.3 §1.5. */
+  phraseIds?: string[];
   /** Snapshot of the learner context for the evaluator and hints (never sent to the partner). */
   coaching?: LessonCoaching | null;
 }
@@ -301,6 +303,15 @@ export const CALL_REPLAY_FAMILY: CuratedFamily = family({ id: 'call-replay', tit
   situationalNorms: ['The reply resolves what went wrong in the real moment.', 'The first sentence carries the main point.'],
   persona: 'The same counterpart as in the real call, reacting the way a real client or producer would.' });
 
+/** «Мои фразы» rounds (PASS-0.5.3 §1.5): the learner's saved expressions in a short conversation. Hidden: never in the catalog. */
+export const PHRASES_FAMILY: CuratedFamily = family({ id: 'my-phrases', title: 'Мои фразы', category: 'life', context: 'life',
+  format: 'conversation', minutes: 5, preferredMode: 'learning', isNew: false, hidden: true,
+  description: 'Сказать свои сохранённые фразы к месту в коротком разговоре, своими словами вокруг них.',
+  skills: ['vocabulary', 'grammar'], icon: { sf: 'text.badge.plus', phosphor: 'BookmarkSimple' },
+  situationalNorms: ['Each saved expression is used where it fits the conversation.',
+    'The learner builds an own sentence around the expression instead of repeating a memorised template.'],
+  persona: 'A friendly acquaintance in a quick, relaxed chat who opens natural moments for the learner\'s saved expressions and never says them.' });
+
 /** v0.4 ids merged into v0.5 families. Old sessions and old clients keep working through these. */
 export const FAMILY_ALIASES: Record<string, string> = {
   'work-agency': 'strategy-agency-screening', 'work-agreement': 'strategy-price', 'work-options': 'work-project',
@@ -314,9 +325,9 @@ export function findFamily(id: string | undefined | null): CuratedFamily | undef
   return FAMILIES.find(item => item.id === canonical);
 }
 
-/** Any family a stored lesson can refer to, including the hidden drill family. */
+/** Any family a stored lesson can refer to, including the hidden drill and «Мои фразы» families. */
 export function lessonFamily(id: string | undefined | null): CuratedFamily | undefined {
-  return id === CALL_REPLAY_FAMILY.id ? CALL_REPLAY_FAMILY : findFamily(id);
+  return id === CALL_REPLAY_FAMILY.id ? CALL_REPLAY_FAMILY : id === PHRASES_FAMILY.id ? PHRASES_FAMILY : findFamily(id);
 }
 
 /** Drill types with a catalog scenario. A seeded drill replays its real moment instead (call-replay). */
