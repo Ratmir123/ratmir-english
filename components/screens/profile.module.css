@@ -1,30 +1,85 @@
-.profile { container: profile / inline-size; }
-/* Two columns only when the content area (not the window) has room for the form and the settings column. */
-.grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
-@container profile (min-width: 760px) { .grid { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); } }
-.column { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
-.card { display: grid; gap: 12px; padding: 22px; min-width: 0; }
-.card h2 { font-size: 20px; }
-.head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; min-height: 32px; }
-.head h2 { margin: 0; }
-.body { font-size: var(--text-15); line-height: 1.5; }
+/* Compact profile (PASS-0.5.3 §3): one calm column, centred on wide screens — who you are, then one list of settings. */
+.profile { width: 100%; max-width: 720px; margin-inline: auto; gap: 16px; container: profile / inline-size; }
+.profile > :global(.screen-header) { margin-bottom: 8px; }
 
-/* Form */
-.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.fields > label { min-width: 0; }
-.wide { grid-column: 1 / -1; }
-.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: var(--touch); }
-.saved { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-13); font-weight: 600; color: var(--text-secondary); }
-.saved svg { color: var(--accent-lime-ink); }
+/* Summary: name, the daily plan and tone; the rest of «О тебе» on demand. */
+.summary { display: grid; gap: 6px; padding: 20px 22px 18px; min-width: 0; }
+.summaryHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }
+.name {
+  min-width: 0; font-family: var(--font-display); font-size: var(--text-28); line-height: 1.15; letter-spacing: -.45px; font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.summaryHead :global(.button) { flex-shrink: 0; }
+.meta { max-width: none; font-size: var(--text-15); line-height: 1.5; color: var(--text-secondary); }
+.more { justify-self: start; margin: 0 0 -6px -4px; font-size: var(--text-13); }
+.more svg { transition: transform var(--hover-ms) var(--ease-out); }
+.more[aria-expanded='true'] svg { transform: rotate(180deg); }
+.details { display: grid; gap: 12px; padding: 12px 0 4px; }
+.details > div { display: grid; grid-template-columns: minmax(120px, 190px) minmax(0, 1fr); gap: 2px 16px; }
+.details dt { font-size: var(--text-13); font-weight: 600; line-height: 1.55; color: var(--text-secondary); }
+.details dd { min-width: 0; font-size: var(--text-15); line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
 
-/* Voice key */
+/* Settings: one surface, rows separated by hairlines (no cards in cards); each row = title, value, caret. */
+.list { overflow: hidden; }
+.item { scroll-margin-top: 20px; }
+.itemHeading { margin: 0; font: inherit; letter-spacing: normal; }
+.itemButton, .static {
+  display: flex; align-items: center; gap: 8px 14px; width: 100%; min-height: 60px; padding: 12px 22px; text-align: left; color: var(--text-primary);
+}
+.itemButton { transition: background-color var(--hover-ms) var(--ease-out); }
+.itemButton:focus-visible { outline-offset: -4px; border-radius: 18px; }
+@media (hover: hover) and (pointer: fine) { .itemButton:hover { background: var(--surface-hover); } }
+.static { flex-wrap: wrap; }
+.itemTitle {
+  flex: 1 1 auto; min-width: 0; margin: 0; font-family: var(--font-body); font-size: var(--text-17); font-weight: 650; line-height: 1.3;
+  letter-spacing: -.1px; color: var(--text-primary);
+}
+.itemCopy { display: grid; gap: 2px; flex: 1 1 160px; min-width: 0; }
+.itemNote { font-size: var(--text-13); color: var(--text-secondary); }
+.itemValue {
+  flex: 0 1 auto; min-width: 0; font-size: var(--text-15); line-height: 1.4; color: var(--text-secondary); text-align: right;
+  overflow-wrap: anywhere; font-variant-numeric: tabular-nums;
+}
+.itemValue[data-tone='warning'] { color: var(--status-warning-ink); }
+.itemValue[data-tone='danger'] { color: var(--status-error-ink); }
+.itemValue :global(.chip) { vertical-align: middle; }
+.caret { flex-shrink: 0; color: var(--text-tertiary); transition: transform var(--hover-ms) var(--ease-out); }
+.item[data-open='true'] .itemHeading .caret { transform: rotate(180deg); }
+
+/* A row's open part: height (grid 0fr → 1fr) and opacity ease in with the reveal token, out a little faster; closed =
+   out of the layout (display transitions discretely at the end) and inert. Rows open on arrival skip the ease-in. */
+.panel {
+  display: grid; grid-template-rows: 1fr; opacity: 1;
+  transition-property: grid-template-rows, opacity, display;
+  transition-duration: var(--reveal-ms);
+  transition-timing-function: var(--ease-out);
+  transition-behavior: allow-discrete;
+}
+.panel[data-open='false'] {
+  display: none; grid-template-rows: 0fr; opacity: 0;
+  transition-duration: var(--sheet-out-ms); transition-timing-function: var(--ease-exit);
+}
+@starting-style { .profile[data-ready='true'] .panel[data-open='true'] { grid-template-rows: 0fr; opacity: 0; } }
+.panelClip { min-height: 0; overflow: hidden; }
+.panelBody { display: grid; gap: 14px; padding: 2px 22px 22px; min-width: 0; }
+
+/* Voice: key, budget, the month's spend. */
 .inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 .keyField { flex: 1 1 200px; min-width: 0; }
 .inline :global(.button) { flex-shrink: 0; }
 .usage { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-top: 12px; border-top: 1px solid var(--hairline); font-size: var(--text-13); color: var(--text-secondary); }
 .usage strong { font-size: var(--text-17); color: var(--text-primary); }
 
-/* Model: a human reason first, the technical one on demand. */
+/* Settings that save on their own (voice budget, audio retention): label, a compact control, a quiet status. */
+.setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(112px, 150px); align-items: center; gap: 4px 12px; }
+.settingLabel { display: block; font-size: var(--text-13); font-weight: 600; color: var(--text-secondary); }
+.settingInput { min-height: 40px; padding: 8px 12px; }
+.settingStatus { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 6px; min-height: 18px; font-size: var(--text-12); font-weight: 600; color: var(--text-secondary); }
+.settingStatus svg { color: var(--accent-lime-ink); }
+.settingError { grid-column: 1 / -1; }
+
+/* Coach: a human reason first, the technical one on demand. */
+.body { font-size: var(--text-15); line-height: 1.5; }
 .problem { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius-small); background: var(--status-warning-soft); }
 .problem > svg { flex-shrink: 0; margin-top: 2px; color: var(--status-warning-ink); }
 .problemCopy { display: grid; gap: 4px; min-width: 0; font-size: var(--text-13); line-height: 1.5; color: var(--text-secondary); }
@@ -37,51 +92,52 @@
 .check { justify-self: start; }
 .divider { height: 1px; margin: 4px 0; background: var(--hairline); }
 
-/* Data: plain rows; the destructive one reads as a row in error ink, details only on demand. */
-.dataCard { padding-bottom: 8px; }
-.dataCard :global(.rows) { margin: 0 -22px; border-top: 1px solid var(--hairline); }
-.row {
+/* Data: plain full-width rows at the bottom of the open row; the destructive one in error ink, details on demand. */
+.dataRows { margin: 0 -22px -22px; border-top: 1px solid var(--hairline); }
+.action {
   display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 12px 22px; font-weight: 650; color: var(--text-primary);
   cursor: pointer; transition: background-color var(--hover-ms) var(--ease-out);
 }
-.row > span { flex: 1; min-width: 0; }
-.row > svg { flex-shrink: 0; }
-@media (hover: hover) and (pointer: fine) { .row:hover { background: var(--surface-hover); } }
+.action > span { flex: 1; min-width: 0; }
+.action > svg { flex-shrink: 0; }
+.action:focus-visible { outline-offset: -4px; border-radius: 16px; }
+@media (hover: hover) and (pointer: fine) { .action:hover { background: var(--surface-hover); } }
 .danger > summary { list-style: none; color: var(--status-error-ink); }
 .danger > summary::-webkit-details-marker { display: none; }
-.caret { color: var(--text-tertiary); transition: transform var(--hover-ms) var(--ease-out); }
-.danger[open] .caret { transform: rotate(90deg); }
-.dangerBody { display: grid; gap: 12px; padding: 4px 22px 16px; }
+.dangerCaret { color: var(--text-tertiary); transition: transform var(--hover-ms) var(--ease-out); }
+.danger[open] .dangerCaret { transform: rotate(90deg); }
+.dangerBody { display: grid; gap: 12px; padding: 4px 22px 18px; }
 .dangerBody :global(.button) { justify-self: start; }
 .backup { justify-self: start; margin: -4px 0 0 -4px; }
 .danger[open] .dangerBody { animation: dangerOpen var(--reveal-ms) var(--ease-out) both; }
 @keyframes dangerOpen { from { opacity: 0; transform: translate3d(0, -6px, 0); } }
-@media (prefers-reduced-motion: reduce) { .danger[open] .dangerBody { animation: dangerFade 200ms ease-out both; } }
+
+/* «О тебе» editor in the sheet: two columns while the sheet is wide enough. */
+.editor { display: grid; gap: 14px; container: profile-editor / inline-size; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.fields > label { min-width: 0; }
+.wide { grid-column: 1 / -1; }
+@container profile-editor (max-width: 440px) { .fields { grid-template-columns: minmax(0, 1fr); } }
+
+.footer { display: grid; justify-items: center; gap: 4px; padding: 4px 0 8px; text-align: center; font-size: var(--text-12); color: var(--text-tertiary); }
+.footer p { max-width: none; }
+.kbd {
+  display: inline-block; padding: 1px 7px; border-radius: 7px; background: var(--surface-sunken); box-shadow: inset 0 0 0 1px var(--hairline);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 11.5px; line-height: 1.6; color: var(--text-secondary);
+}
+
+@container profile (max-width: 520px) {
+  .summary { padding: 18px; }
+  .details > div { grid-template-columns: minmax(0, 1fr); }
+  .itemButton, .static { padding-inline: 18px; }
+  .panelBody { padding: 2px 18px 18px; }
+  .dataRows { margin: 0 -18px -18px; }
+  .action, .dangerBody { padding-inline: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Fewer, gentler: the open part just fades; no height travel. */
+  .panel, .panel[data-open='false'] { transition-property: opacity, display; transition-duration: 200ms; transition-timing-function: ease-out; }
+  .danger[open] .dangerBody { animation: dangerFade 200ms ease-out both; }
+}
 @keyframes dangerFade { from { opacity: 0; } }
-
-.version { text-align: center; font-size: var(--text-12); color: var(--text-tertiary); padding: 4px 0 8px; }
-
-/* Settings that save on their own (voice budget, audio retention): label, a compact control, a quiet status. */
-.setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(112px, 150px); align-items: center; gap: 4px 12px; }
-.settingLabel { display: block; font-size: var(--text-13); font-weight: 600; color: var(--text-secondary); }
-.settingInput { min-height: 40px; padding: 8px 12px; }
-.settingStatus { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 6px; min-height: 18px; font-size: var(--text-12); font-weight: 600; color: var(--text-secondary); }
-.settingStatus svg { color: var(--accent-lime-ink); }
-.settingError { grid-column: 1 / -1; }
-
-/* «Мой плейбук» lives in Созвоны; Profile keeps one row that goes there. */
-.linkCard { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; color: var(--text-primary); }
-.linkCopy { display: grid; gap: 3px; flex: 1; min-width: 0; }
-.linkCopy strong { font-family: var(--font-display); font-size: 20px; font-weight: 750; }
-.linkCopy span { font-size: var(--text-13); color: var(--text-secondary); line-height: 1.45; }
-.linkAction { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; font-weight: 650; color: var(--accent-violet-ink); }
-
-@container profile (max-width: 560px) {
-  .fields { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 560px) {
-  .card { padding: 18px; }
-  .dataCard :global(.rows) { margin: 0 -18px; }
-  .row { padding-inline: 18px; }
-  .dangerBody { padding-inline: 18px; }
-}

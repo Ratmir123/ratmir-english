@@ -220,7 +220,7 @@
 .bubbleText { display: block; animation: bubbleReveal 420ms var(--k-ease, cubic-bezier(.16, 1, .3, 1)) both; }
 .bubbleHidden { display: block; font-size: 15px; line-height: 1.5; color: var(--k-text-2); animation: bubbleQuiet 320ms var(--k-ease, cubic-bezier(.16, 1, .3, 1)) both; }
 .bubbleToggle { margin: 8px 0 -6px -14px; }
-@keyframes bubbleReveal { from { opacity: 0; transform: translate3d(0, 6px, 0); filter: blur(4px); } }
+@keyframes bubbleReveal { from { opacity: 0; transform: translate3d(0, 6px, 0); filter: blur(4px); } 55% { filter: none; } }
 @keyframes bubbleQuiet { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .bubbleText { animation: bubbleQuiet 200ms linear both; } }
 
@@ -235,5 +235,5 @@
 
 /* Screen change: the app-wide reveal (0.5.2) — a soft rise that settles with a little blur; no spring. */
 .fadeKey { animation: screenIn var(--k-reveal-ms) var(--k-ease) both; }
-@keyframes screenIn { from { opacity: 0; transform: translate3d(0, var(--k-rise), 0); filter: blur(var(--k-blur)); } }
+@keyframes screenIn { from { opacity: 0; transform: translate3d(0, var(--k-rise), 0); filter: blur(var(--k-blur)); } 55% { filter: none; } }
 @media (prefers-reduced-motion: reduce) { .fadeKey { animation-duration: 160ms; } .recDot { animation: none; } .recBar > span, .dot { transition: none; } }

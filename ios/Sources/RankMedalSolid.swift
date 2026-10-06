@@ -1,8 +1,9 @@
 import SwiftUI
 import CoreMotion
 
-/// Rank medal as a physical object (DESIGN-PASS-0.5.1 «Медали рангов — объём»).
-/// Same constants as `MEDAL` in components/ui/medal-3d.ts — change both together.
+/// Rank medal as a physical object (DESIGN-PASS-0.5.1 «Медали рангов — объём»), turning slowly and smoothly
+/// (PASS 0.5.3 §8). Every turn is an eased curve with a known end, so nothing whips round or creeps for long.
+/// Same constants and model as `MEDAL` in components/ui/medal-3d.ts — change both together.
 enum MedalTuning {
     /// Below this side the medal is flat art: no thickness, light, foil or gestures.
     static let solidMin: CGFloat = 48
@@ -12,21 +13,43 @@ enum MedalTuning {
     static let tiltPitch = 12.0
     /// Horizontal drag across the full medal width turns it this many degrees.
     static let dragDegrees = 200.0
-    static let maxSpeed = 2000.0
-    /// Free spin decays as v·e^(−friction·t); per throw it is bent within [min, max] to land face-front.
-    static let friction = 2.4
-    static let minFriction = 1.5
-    static let maxFriction = 4.5
-    /// Slower than this the face-front spring ramps in over `ramp` seconds.
-    static let settleSpeed = 300.0
-    static let stiffness = 50.0
-    static let damping = 8.5
-    static let ramp = 0.4
-    /// A tap adds one decelerating turn; rank-up starts back-facing and makes 1.5 turns.
+    /// Tap: one turn over `tapSeconds` (ease-in-out cubic) that runs `tapSettle`° past face-front and springs back.
     static let tapTurn = 360.0
-    static let entranceTurn = 540.0
+    static let tapSeconds = 2.4
+    static let tapSettle = 1.5
+    /// The glint crosses the face at this share of a tap turn (it faces front again).
+    static let tapGlint = 0.82
+    /// Rank-up: from −720° to face-front over `entranceSeconds` (ease-out quint), glint at `entranceGlint` of it.
+    static let entranceTurn = 720.0
+    static let entranceSeconds = 3.6
+    static let entranceGlint = 0.6
+    /// Drag release, capped at `maxSpeed` °/s. From `throwMinSpeed` up it decays as an ease-out cubic that starts at the
+    /// release speed (no jump) and stops exactly on a face ahead: of the faces whose landing time 3·distance/speed lies in
+    /// [throwMinSeconds, throwMaxSeconds], the one nearest `throwSeconds`. Slower releases, or no face in range, spring.
+    static let maxSpeed = 720.0
+    static let throwMinSpeed = 120.0
+    static let throwMinSeconds = 0.9
+    static let throwSeconds = 2.4
+    static let throwMaxSeconds = 4.5
+    /// The face spring (slow releases and the tap settle): target = the face nearest angle + speed·coast.
+    static let coast = 0.4
+    static let stiffness = 20.0
+    static let damping = 8.0
+    static let springMaxSeconds = 3.0
+    /// Showcase: a visible idle hero medal (≥ `showcaseMin` pt, untouched for `showcaseIdle` s) turns once by
+    /// `showcaseTurn`° over `showcaseSeconds` (ease-in-out sine), starts `showcaseEveryMin`–`showcaseEveryMax` s apart,
+    /// alternating direction (the first one positive); the glint crosses at `showcaseGlint` of the turn.
+    static let showcaseMin: CGFloat = 64
+    static let showcaseIdle = 8.0
+    static let showcaseEveryMin = 11.0
+    static let showcaseEveryMax = 16.0
+    static let showcaseTurn = 360.0
+    static let showcaseSeconds = 3.4
+    static let showcaseGlint = 0.86
+    /// Spring integration step.
     static let step = 1.0 / 240
-    /// Idle: ±yaw over `turnPeriod` seconds each way, a glint crossing the face once per `glintPeriod`.
+    /// iPhone idle look (the PC draws it in CSS): ±yaw over `turnPeriod` seconds each way; a medal too small for the
+    /// showcase glints once per `glintPeriod`; one glint crosses the face in `flashDuration`.
     static let turnPeriod = 9.6
     static let glintPeriod = 7.2
     static let glintShare = 0.14
@@ -64,59 +87,180 @@ enum MedalTuning {
     }
 }
 
-/// One throw: free spin with friction bent to land face-front, then a ramped spring with a small overshoot.
-struct MedalThrow {
-    var angle: Double
-    var velocity: Double
-    var target: Double
-    var friction: Double
-    var settling: Double?
-    var age = 0.0
+/// Easing curves of medal turns: progress (0 → 1) and its slope d/ds (web `MEDAL_EASE`).
+enum MedalEase: Equatable, CaseIterable {
+    case inOutCubic, outQuint, inOutSine, outCubic
 
-    init(angle: Double, velocity: Double) {
-        let speed = max(-MedalTuning.maxSpeed, min(MedalTuning.maxSpeed, velocity))
-        var face = ((angle + speed / MedalTuning.friction) / 360).rounded() * 360
-        var decay = MedalTuning.friction
-        if abs(speed) > MedalTuning.settleSpeed {
-            let options = [face - 360, face, face + 360]
-                .filter { ($0 - angle) * speed > 0 }
-                .map { candidate -> (face: Double, friction: Double) in (candidate, speed / (candidate - angle)) }
-                .filter { $0.friction >= MedalTuning.minFriction && $0.friction <= MedalTuning.maxFriction }
-            if let best = options.min(by: { abs($0.friction - MedalTuning.friction) < abs($1.friction - MedalTuning.friction) }) {
-                face = best.face
-                decay = best.friction
-            }
+    func at(_ s: Double) -> Double {
+        switch self {
+        case .inOutCubic: return s < 0.5 ? 4 * s * s * s : 1 - pow(2 - 2 * s, 3) / 2
+        case .outQuint: return 1 - pow(1 - s, 5)
+        case .inOutSine: return (1 - cos(Double.pi * s)) / 2
+        case .outCubic: return 1 - pow(1 - s, 3)
         }
-        self.angle = angle
-        self.velocity = speed
-        self.target = face
-        self.friction = decay
-        self.settling = nil
     }
 
-    /// Returns true once the medal rests face-front (angle snapped to the target).
-    mutating func step(_ dt: Double) -> Bool {
-        var left = min(max(dt, 0), 0.1)
-        while left > 1e-6 {
-            let h = min(MedalTuning.step, left)
-            if settling == nil && abs(velocity) < MedalTuning.settleSpeed { settling = age }
-            var acceleration = -friction * velocity
-            if let settling {
-                let weight = min(1, (age - settling) / MedalTuning.ramp)
-                acceleration += weight * (MedalTuning.stiffness * (target - angle) - MedalTuning.damping * velocity)
+    func slope(_ s: Double) -> Double {
+        switch self {
+        case .inOutCubic: return s < 0.5 ? 12 * s * s : 3 * pow(2 - 2 * s, 2)
+        case .outQuint: return 5 * pow(1 - s, 4)
+        case .inOutSine: return Double.pi * sin(Double.pi * s) / 2
+        case .outCubic: return 3 * pow(1 - s, 2)
+        }
+    }
+}
+
+/// One eased turn from `from` by `delta` over `seconds` (web `MedalTurn`). A turn that takes over a moving medal starts
+/// at `v0` °/s: an ease-out cubic carries v0·T/3 of the distance, the eased curve the rest — position and speed stay
+/// continuous. It rests on `face`; when `delta` ends past it (the tap settle) the face spring brings it back.
+struct MedalTurn: Equatable {
+    var from: Double
+    var delta: Double
+    var seconds: Double
+    var ease: MedalEase
+    var v0: Double
+    var elapsed: Double
+    var face: Double
+    /// Share of `seconds` at which the glint crosses the face; nil = no glint.
+    var glintAt: Double?
+
+    /// Angle and speed (°/s) `t` seconds in (web `turnAt`).
+    func at(_ t: Double) -> (angle: Double, velocity: Double) {
+        let total = seconds
+        let s = min(1, max(0, t / total))
+        let carry = v0 * total / 3
+        let angle = from + carry * MedalEase.outCubic.at(s) + (delta - carry) * ease.at(s)
+        let velocity = s >= 1 ? 0 : v0 * (1 - s) * (1 - s) + (delta - carry) * ease.slope(s) / total
+        return (angle, velocity)
+    }
+}
+
+/// The face spring (web `MedalSpring`).
+struct MedalSpring: Equatable {
+    var target: Double
+    var velocity: Double
+    var age: Double
+}
+
+/// What turns the medal right now (web `MedalMotion`; `MedalMotion` here is the device-tilt reader below).
+enum MedalMove: Equatable {
+    case turn(MedalTurn)
+    case spring(MedalSpring)
+}
+
+/// One step of a move: the angle and speed, the move that continues (nil once it rests, the angle exactly on its face)
+/// and whether the glint is due in this step.
+struct MedalStep: Equatable {
+    var angle: Double
+    var velocity: Double
+    var next: MedalMove?
+    var glint: Bool
+}
+
+/// The pure medal model: the same functions as components/ui/medal-3d.ts (vectors in ios/Tests/MotionTests.swift,
+/// mirroring tests/medal-turns.test.ts).
+enum MedalTurns {
+    /// Face-front angles are whole turns: JS `Math.round` (a half rounds up), never −0.
+    static func nearestFace(_ angle: Double) -> Double {
+        (angle / 360 + 0.5).rounded(.down) * 360 + 0
+    }
+
+    /// The face a move rests on (the nearest one when there is no move) — web `motionFace`.
+    static func restFace(_ move: MedalMove?, angle: Double) -> Double {
+        switch move {
+        case .none: return nearestFace(angle)
+        case .turn(let turn)?: return turn.face
+        case .spring(let spring)?: return spring.target
+        }
+    }
+
+    /// A tap at rest turns once towards the tapped `side` (±1). On a moving medal it adds one turn in the direction it
+    /// already moves, keeping its speed; at most one turn is queued (nil while more than a turn remains) — web `tapTurn`.
+    static func tap(angle: Double, velocity: Double, side: Double, current: MedalMove?) -> MedalTurn? {
+        let moving = current != nil && abs(velocity) > 20
+        let direction: Double = moving ? (velocity > 0 ? 1 : -1) : (side < 0 ? -1 : 1)
+        let base = restFace(current, angle: angle)
+        if moving && abs(base - angle) > MedalTuning.tapTurn { return nil }
+        let face = base + direction * MedalTuning.tapTurn
+        let delta = face + direction * MedalTuning.tapSettle - angle
+        let v0 = moving ? velocity : 0
+        // A fast medal would overshoot inside the eased curve: then the whole rest is its own ease-out (still lands at rest).
+        let seconds = v0 != 0 && abs(v0) * MedalTuning.tapSeconds / 3 > abs(delta) ? 3 * delta / v0 : MedalTuning.tapSeconds
+        return MedalTurn(from: angle, delta: delta, seconds: seconds, ease: .inOutCubic, v0: v0, elapsed: 0, face: face,
+                         glintAt: MedalTuning.tapGlint)
+    }
+
+    /// Rank-up: two turns from behind, decelerating onto the face — web `entranceTurn`.
+    static func entrance() -> MedalTurn {
+        MedalTurn(from: -MedalTuning.entranceTurn, delta: MedalTuning.entranceTurn, seconds: MedalTuning.entranceSeconds,
+                  ease: .outQuint, v0: 0, elapsed: 0, face: 0, glintAt: MedalTuning.entranceGlint)
+    }
+
+    /// The idle showcase: one slow turn from rest — web `showcaseTurn`.
+    static func showcase(angle: Double, direction: Double) -> MedalTurn {
+        let face = nearestFace(angle) + (direction < 0 ? -1 : 1) * MedalTuning.showcaseTurn
+        return MedalTurn(from: angle, delta: face - angle, seconds: MedalTuning.showcaseSeconds, ease: .inOutSine, v0: 0,
+                         elapsed: 0, face: face, glintAt: MedalTuning.showcaseGlint)
+    }
+
+    /// A drag release: a decelerating turn onto a face ahead, or the face spring for a slow release — web `releaseThrow`.
+    static func release(angle: Double, velocity: Double) -> MedalMove {
+        let speed = max(-MedalTuning.maxSpeed, min(MedalTuning.maxSpeed, velocity.isFinite ? velocity : 0))
+        if abs(speed) >= MedalTuning.throwMinSpeed {
+            let direction: Double = speed > 0 ? 1 : -1
+            var first = direction > 0 ? (angle / 360).rounded(.up) * 360 : (angle / 360).rounded(.down) * 360
+            if abs(first - angle) < 1e-6 { first += direction * 360 }
+            var best: (face: Double, seconds: Double)?
+            for turn in 0..<3 {
+                let face = first + direction * 360 * Double(turn)
+                let seconds = 3 * abs(face - angle) / abs(speed)
+                if seconds < MedalTuning.throwMinSeconds || seconds > MedalTuning.throwMaxSeconds { continue }
+                if let chosen = best, abs(seconds - MedalTuning.throwSeconds) >= abs(chosen.seconds - MedalTuning.throwSeconds) { continue }
+                best = (face, seconds)
             }
-            velocity += acceleration * h
-            angle += velocity * h
-            age += h
-            left -= h
+            if let best {
+                return .turn(MedalTurn(from: angle, delta: best.face - angle, seconds: best.seconds, ease: .outCubic, v0: 0,
+                                       elapsed: 0, face: best.face, glintAt: nil))
+            }
         }
-        let rested = settling != nil && abs(angle - target) < 0.25 && abs(velocity) < 4
-        if rested || age > 4 {
-            angle = target
-            velocity = 0
-            return true
+        return .spring(MedalSpring(target: nearestFace(angle + speed * MedalTuning.coast), velocity: speed, age: 0))
+    }
+
+    /// Advances a move by `dt` seconds — web `stepMotion`.
+    static func step(_ move: MedalMove, angle start: Double, dt: Double) -> MedalStep {
+        switch move {
+        case .turn(var turn):
+            let before = turn.elapsed
+            turn.elapsed += dt
+            var glint = false
+            if let share = turn.glintAt {
+                let moment = share * turn.seconds
+                glint = before < moment && turn.elapsed >= moment
+            }
+            if turn.elapsed < turn.seconds {
+                let now = turn.at(turn.elapsed)
+                return MedalStep(angle: now.angle, velocity: now.velocity, next: .turn(turn), glint: glint)
+            }
+            let end = turn.from + turn.delta
+            if abs(end - turn.face) < 1e-6 { return MedalStep(angle: turn.face, velocity: 0, next: nil, glint: glint) }
+            return MedalStep(angle: end, velocity: 0, next: .spring(MedalSpring(target: turn.face, velocity: 0, age: 0)), glint: glint)
+        case .spring(var spring):
+            var angle = start
+            var velocity = spring.velocity
+            var left = dt
+            while left > 1e-9 {
+                let h = min(MedalTuning.step, left)
+                velocity += (MedalTuning.stiffness * (spring.target - angle) - MedalTuning.damping * velocity) * h
+                angle += velocity * h
+                left -= MedalTuning.step
+            }
+            spring.velocity = velocity
+            spring.age += dt
+            if (abs(angle - spring.target) < 0.05 && abs(velocity) < 1) || spring.age > MedalTuning.springMaxSeconds {
+                return MedalStep(angle: spring.target, velocity: 0, next: nil, glint: false)
+            }
+            return MedalStep(angle: angle, velocity: velocity, next: .spring(spring), glint: false)
         }
-        return false
     }
 }
 
@@ -224,8 +368,8 @@ final class MedalMotion {
     }
 }
 
-/// Touch tilt, drag-spin with inertia, tap-turn and the rank-up entrance for one medal. Main thread only;
-/// advanced by the medal's TimelineView, so it never schedules work of its own.
+/// Touch tilt, drag-spin, tap-turn, the rank-up entrance and the idle showcase for one medal (web `useMedal3D`, the same
+/// `MedalTurns` model). Main thread only; advanced by the medal's TimelineView, so it never schedules work of its own.
 final class MedalSpinModel {
     private struct Drag {
         var x0: CGFloat
@@ -235,27 +379,36 @@ final class MedalSpinModel {
         var samples: [(time: TimeInterval, angle: Double)] = []
     }
 
-    private var angle = 0.0
-    private var spin: MedalThrow?
+    private(set) var angle = 0.0
+    private(set) var velocity = 0.0
+    private(set) var move: MedalMove?
     private var drag: Drag?
     private var touching = false
     private var lastTime: TimeInterval = 0
     private var tilt: (yaw: Double, pitch: Double) = (0, 0)
     private var aim: (yaw: Double, pitch: Double) = (0, 0)
     private var flashStart: TimeInterval?
+    /// The last touch: a showcase waits `showcaseIdle` after it.
+    private var touched = -Double.infinity
+    /// Showcases alternate direction; the first one turns positive.
+    private var showcaseDirection = -1.0
+    private var rng: UInt64
+
+    init(seed: UInt64 = UInt64.random(in: 1...UInt64.max)) {
+        rng = MascotPhysics.mixSeed(seed)
+    }
 
     /// Yaw and pitch in degrees at `time` (sway is added by the caller).
     func advance(to time: TimeInterval) -> (yaw: Double, pitch: Double) {
         let dt = lastTime == 0 ? 1.0 / 60 : min(0.05, max(0, time - lastTime))
         lastTime = time
-        if var current = spin {
-            if current.step(dt) {
-                angle = 0
-                spin = nil
-            } else {
-                angle = current.angle
-                spin = current
-            }
+        if let current = move {
+            let step = MedalTurns.step(current, angle: angle, dt: dt)
+            angle = step.angle
+            velocity = step.velocity
+            move = step.next
+            if step.glint { flashStart = time }
+            if move == nil { settle() }
         }
         let follow = 1 - exp(-dt * 14)
         tilt.yaw += (aim.yaw - tilt.yaw) * follow
@@ -264,7 +417,7 @@ final class MedalSpinModel {
     }
 
     func isBusy(at time: TimeInterval) -> Bool {
-        spin != nil || touching || abs(tilt.yaw) > 0.05 || abs(tilt.pitch) > 0.05
+        move != nil || touching || abs(tilt.yaw) > 0.05 || abs(tilt.pitch) > 0.05
             || (flashStart.map { time < $0 + MedalTuning.flashDuration } ?? false)
     }
 
@@ -275,31 +428,67 @@ final class MedalSpinModel {
         return progress >= 0 && progress <= 1 ? progress : nil
     }
 
-    func enter(at time: TimeInterval) {
-        angle = -MedalTuning.entranceTurn
-        spin = MedalThrow(angle: angle, velocity: MedalTuning.entranceTurn * MedalTuning.friction)
-        flashStart = time + 0.62
-        lastTime = 0
+    /// Ends a move in flight on its face at once (offscreen, backgrounded, covered, Reduce Motion): web `finish`.
+    func finish() {
+        guard let current = move else { return }
+        angle = MedalTurns.restFace(current, angle: angle)
+        settle()
     }
 
-    func touchBegan(_ point: CGPoint, side: CGFloat) {
+    /// Rank-up: two decelerating turns from behind onto the face; the glint crosses as it lands.
+    func enter(at time: TimeInterval) {
+        let turn = MedalTurns.entrance()
+        angle = turn.from
+        velocity = 0
+        run(.turn(turn))
+    }
+
+    // MARK: Showcase (web: the `showcase` effect of useMedal3D)
+
+    /// Seconds before the first showcase attempt once the medal shows (11–16 s).
+    func showcaseDelay() -> Double {
+        between(MedalTuning.showcaseEveryMin, MedalTuning.showcaseEveryMax)
+    }
+
+    /// One attempt: an idle medal untouched for `showcaseIdle` turns once (unless `sleeping`); a busy or recently touched
+    /// one tries again a little later. Returns whether a turn started and the seconds to the next attempt.
+    func attemptShowcase(at time: TimeInterval, sleeping: Bool) -> (started: Bool, next: Double) {
+        let idle = time - touched
+        let active = touching || abs(tilt.yaw) > 0.05 || abs(tilt.pitch) > 0.05
+        if move != nil || drag != nil || active || idle < MedalTuning.showcaseIdle {
+            return (false, max(1, MedalTuning.showcaseIdle - idle) + between(0, 2))
+        }
+        var started = false
+        if !sleeping {
+            showcaseDirection = showcaseDirection == 1 ? -1 : 1
+            run(.turn(MedalTurns.showcase(angle: angle, direction: showcaseDirection)))
+            started = true
+        }
+        return (started, between(MedalTuning.showcaseEveryMin, MedalTuning.showcaseEveryMax))
+    }
+
+    // MARK: Touch
+
+    func touchBegan(_ point: CGPoint, side: CGFloat, time: TimeInterval) {
         touching = true
+        touched = time
         lean(toward: point, side: side)
         drag = Drag(x0: point.x, y0: point.y)
     }
 
     func touchMoved(_ point: CGPoint, side: CGFloat, time: TimeInterval) {
+        touched = time
         guard var current = drag else { return }
         let dx = point.x - current.x0, dy = point.y - current.y0
         if !current.moved {
             if abs(dx) >= 6 && abs(dx) > abs(dy) {
-                // A caught throw keeps its angle; the touch yaw folds into the spin so nothing jumps.
+                // A caught turn keeps its angle; the touch yaw folds into the spin so nothing jumps.
                 current.moved = true
-                if let caught = spin { angle = caught.angle }
-                spin = nil
                 angle += tilt.yaw
                 tilt.yaw = 0
                 aim.yaw = 0
+                move = nil
+                velocity = 0
                 current.a0 = angle
                 current.x0 = point.x
             } else if abs(dy) > 10 {
@@ -323,36 +512,62 @@ final class MedalSpinModel {
 
     func touchEnded(_ point: CGPoint, side: CGFloat, time: TimeInterval, quick: Bool) {
         touching = false
+        touched = time
         aim = (0, 0)
         guard let current = drag else { return }
         drag = nil
         if current.moved {
-            var velocity = 0.0
+            var release = 0.0
             if let first = current.samples.first, let last = current.samples.last, time - last.time <= 0.07, last.time > first.time {
-                velocity = (last.angle - first.angle) / (last.time - first.time)
+                release = (last.angle - first.angle) / (last.time - first.time)
             }
-            spin = MedalThrow(angle: angle, velocity: velocity)
+            run(MedalTurns.release(angle: angle, velocity: release))
         } else if quick {
-            let direction: Double = point.x < side / 2 ? -1 : 1
-            let carried = spin?.velocity ?? 0
-            if let running = spin { angle = running.angle }
+            // One slow turn towards the tapped side; on a moving medal one more turn the way it already goes.
+            let tapped: Double = point.x < side / 2 ? -1 : 1
             angle += tilt.yaw
             tilt.yaw = 0
-            spin = MedalThrow(angle: angle, velocity: carried + direction * MedalTuning.tapTurn * MedalTuning.friction)
+            if let turn = MedalTurns.tap(angle: angle, velocity: velocity, side: tapped, current: move) {
+                run(.turn(turn))
+            }
         }
     }
 
     func touchCancelled() {
         touching = false
         aim = (0, 0)
-        if let current = drag, current.moved { spin = MedalThrow(angle: angle, velocity: 0) }
+        if let current = drag, current.moved { run(MedalTurns.release(angle: angle, velocity: 0)) }
         drag = nil
+    }
+
+    // MARK: Private
+
+    /// Starts a move from the medal's current angle (web `run`): the next frame steps 1/60 s.
+    private func run(_ next: MedalMove) {
+        move = next
+        lastTime = 0
+    }
+
+    /// At rest face-front: faces are whole turns, so the angle is 0 again (web `settle`).
+    private func settle() {
+        move = nil
+        angle = 0
+        velocity = 0
     }
 
     private func lean(toward point: CGPoint, side: CGFloat) {
         let x = max(-0.5, min(0.5, Double(point.x / max(side, 1)) - 0.5))
         let y = max(-0.5, min(0.5, Double(point.y / max(side, 1)) - 0.5))
         aim = (x * 2 * MedalTuning.tiltYaw, -y * 2 * MedalTuning.tiltPitch)
+    }
+
+    /// xorshift64 in [min, max): the showcase timing.
+    private func between(_ lower: Double, _ upper: Double) -> Double {
+        rng ^= rng << 13
+        rng ^= rng >> 7
+        rng ^= rng << 17
+        let unit = Double(rng >> 11) / Double(UInt64(1) << 53)
+        return lower + (upper - lower) * unit
     }
 }
 
@@ -370,6 +585,8 @@ struct MedalSolid: View {
     let glint: Double?
 
     private var asset: String { "reward-" + art + "-v041" }
+    /// The art decoded during the launch (`ImagePrewarm`), or the asset catalog.
+    private var artImage: Image { ImagePrewarm.image(asset) }
     private var depth: CGFloat { size * MedalTuning.depth }
     private var distance: Double { Double(size * MedalTuning.perspective) }
     private static let foil: [Color] = {
@@ -420,12 +637,12 @@ struct MedalSolid: View {
     }
 
     private var plate: some View {
-        Image(asset).resizable().scaledToFit().frame(width: size, height: size)
+        artImage.resizable().scaledToFit().frame(width: size, height: size)
     }
 
     /// The art's alpha only: rim layers are flat metal with no detail of the face to double.
     private var silhouette: some View {
-        Image(asset).renderingMode(.template).resizable().scaledToFit().frame(width: size, height: size)
+        artImage.renderingMode(.template).resizable().scaledToFit().frame(width: size, height: size)
     }
 
     private var rim: (dark: SIMD3<Double>, light: SIMD3<Double>) { MedalTuning.rim(for: art) }
@@ -451,7 +668,7 @@ struct MedalSolid: View {
             .frame(width: depth, height: size)
             .mask {
                 ZStack {
-                    ForEach(0..<3, id: \.self) { _ in Image(asset).resizable().frame(width: depth * 3.2, height: size) }
+                    ForEach(0..<3, id: \.self) { _ in artImage.resizable().frame(width: depth * 3.2, height: size) }
                 }
             }
             .projectionEffect(MedalProjection.plane(origin: SIMD3(0, 0, 0), a: SIMD3(0, 0, 1), b: SIMD3(0, 1, 0), yaw: yaw, pitch: pitch,
@@ -460,7 +677,7 @@ struct MedalSolid: View {
 
     private var face: some View {
         let light = MedalLight(yaw: lightYaw, pitch: lightPitch, size: size)
-        let artwork = Image(asset).resizable().scaledToFit()
+        let artwork = artImage.resizable().scaledToFit()
         return artwork
             .overlay {
                 RadialGradient(stops: [.init(color: .white.opacity(0.9), location: 0), .init(color: .white.opacity(0.3), location: 0.5),

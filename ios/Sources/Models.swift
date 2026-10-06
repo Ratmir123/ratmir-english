@@ -67,7 +67,7 @@ struct Learner: Decodable {
     let budgetUsd: Double
 
     init(name: String, dailyMinutes: Int, goals: String = "", interests: [String] = [], professionalContext: String = "",
-         relocation: String = "", feedback: String = "", audioRetentionDays: Int = 30, budgetUsd: Double = 35) {
+         relocation: String = "", feedback: String = "", audioRetentionDays: Int = 30, budgetUsd: Double = 50) {
         self.name = name
         self.dailyMinutes = dailyMinutes
         self.goals = goals
@@ -94,7 +94,8 @@ struct Learner: Decodable {
         relocation = ((try? c.decodeIfPresent(String.self, forKey: .relocation)) ?? nil) ?? ""
         feedback = ((try? c.decodeIfPresent(String.self, forKey: .feedback)) ?? nil) ?? ""
         audioRetentionDays = LenientNumber.int(c, .audioRetentionDays) ?? 30
-        budgetUsd = LenientNumber.double(c, .budgetUsd) ?? 35
+        // The server's default voice budget (lib/server/profile.ts), PASS-0.5.3 §2.
+        budgetUsd = LenientNumber.double(c, .budgetUsd) ?? 50
     }
 }
 
@@ -160,6 +161,8 @@ struct TrainingState: Decodable {
     let patterns: [CommunicationPattern]?
     let drills: [PersonalDrill]?
     let profileFacts: [ProfileFact]?
+    /// 0.5.3 «Мои фразы» (PhrasesModels.swift): newest first, archived included. Absent or unreadable → nil.
+    let phrases: [SavedPhrase]?
     // The shell's own small views of the same JSON, used for the Today decision order.
     let placementSignal: TodayPlacementSignal?
     let callSignals: [TodayCallSignal]
@@ -169,6 +172,7 @@ struct TrainingState: Decodable {
     private enum CodingKeys: String, CodingKey {
         case profile, sessions, skills, xp, completed, audioUsage, progression, app
         case placement, calls, patterns, drills, profileFacts
+        case phrases
     }
 
     init(from decoder: Decoder) throws {
@@ -188,6 +192,7 @@ struct TrainingState: Decodable {
         patterns = ((try? c.decodeIfPresent(TolerantList<CommunicationPattern>.self, forKey: .patterns)) ?? nil)?.values
         drills = ((try? c.decodeIfPresent(TolerantList<PersonalDrill>.self, forKey: .drills)) ?? nil)?.values
         profileFacts = ((try? c.decodeIfPresent(TolerantList<ProfileFact>.self, forKey: .profileFacts)) ?? nil)?.values
+        phrases = ((try? c.decodeIfPresent(TolerantList<SavedPhrase>.self, forKey: .phrases)) ?? nil)?.values
         placementSignal = (try? c.decodeIfPresent(TodayPlacementSignal.self, forKey: .placement)) ?? nil
         callSignals = ((try? c.decodeIfPresent(TolerantList<TodayCallSignal>.self, forKey: .calls)) ?? nil)?.values ?? []
         drillSignals = ((try? c.decodeIfPresent(TolerantList<TodayDrillSignal>.self, forKey: .drills)) ?? nil)?.values ?? []
@@ -407,10 +412,15 @@ struct Lesson: Decodable {
     let moves: [String]
     let mustInclude: [String]
     let mustAvoid: [String]
+    /// 0.5.3: saved phrases this lesson practises (a phrase round) or weaves in (PASS-0.5.3 §1.5).
+    let phraseIds: [String]
+    /// The plan's language focus; a phrase round keeps its Russian cues here («Вспомни: …»).
+    let languageFocus: String
 
     private enum CodingKeys: String, CodingKey {
         case title, goal, why, minutes, context, track, activity, kind, familyId, format, drillId, targetSkills, material
         case seed, persona, speechLevel, pressureTier, situationalNorms, patternIds, moves, mustInclude, mustAvoid
+        case phraseIds, languageFocus
     }
 }
 
@@ -439,6 +449,8 @@ extension Lesson {
         moves = Lesson.strings(c, .moves)
         mustInclude = Lesson.strings(c, .mustInclude)
         mustAvoid = Lesson.strings(c, .mustAvoid)
+        phraseIds = Lesson.strings(c, .phraseIds)
+        languageFocus = ((try? c.decodeIfPresent(String.self, forKey: .languageFocus)) ?? nil) ?? ""
     }
 
     private static func strings(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> [String] {
@@ -707,12 +719,18 @@ struct Conversation: Decodable, Identifiable {
     let processing: Processing?
     let completion: Completion?
     let retryDeferred: Bool?
+    /// «Как ощущалось занятие?» saved with the completion: 1 (сложно) … 5 (комфортно), PASS-0.5.3 §2.
+    let comfort: Int?
     /// A removed v0.4 baseline probe: never Today's step (web `inProgressSessions`).
     let isBaseline: Bool
+    /// 0.5.3: which saved phrases this conversation used, set when it finishes (PASS-0.5.3 §1.5). Old sessions: nil.
+    let phraseResults: [PhraseResult]?
 
     private enum CodingKeys: String, CodingKey {
         case id, lesson, mode, status, turns, analysis, retries, error, createdAt, updatedAt, completedAt, processing, completion, retryDeferred
+        case comfort
         case baseline
+        case phraseResults
     }
 }
 
@@ -733,7 +751,9 @@ extension Conversation {
         processing = (try? c.decodeIfPresent(Processing.self, forKey: .processing)) ?? nil
         completion = (try? c.decodeIfPresent(Completion.self, forKey: .completion)) ?? nil
         retryDeferred = (try? c.decodeIfPresent(Bool.self, forKey: .retryDeferred)) ?? nil
+        comfort = LenientNumber.int(c, .comfort).flatMap { (1...5).contains($0) ? $0 : nil }
         isBaseline = c.contains(.baseline) && ((try? c.decodeNil(forKey: .baseline)) == false)
+        phraseResults = ((try? c.decodeIfPresent(TolerantList<PhraseResult>.self, forKey: .phraseResults)) ?? nil)?.values
     }
 
     var userTurnCount: Int { turns.filter { $0.role == "user" }.count }
@@ -775,6 +795,8 @@ struct Completion: Decodable { let canComplete: Bool; let needsRetry: Bool; let 
 struct SubscriptionUsage: Decodable {
     struct Window: Decodable, Identifiable {
         let id: String
+        /// The limit group a window belongs to; windows without one are never shown (web `subscriptionView`, PASS-0.5.3 §2).
+        let bucketId: String?
         let bucketName: String?
         /// `primary` (short rolling window) or `secondary` (weekly) from the server.
         let kind: String
@@ -820,7 +842,8 @@ struct SubscriptionUsage: Decodable {
 }
 struct Transcription: Decodable { let text: String; let audioFile: String }
 struct Speech: Decodable { let file: String }
-struct Hint: Decodable { let text: String }
+/// POST sessions/{id}/hint → `{ text, support }`: `support` is the strongest level used for the line so far.
+struct Hint: Decodable { let text: String; let support: Int? }
 struct Confirmation: Decodable { let ok: Bool }
 struct ServerStatus: Decodable {
     struct Identity: Decodable { let name: String?; let version: String?; let channel: String? }

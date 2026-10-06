@@ -371,7 +371,9 @@ final class NativeFlowTests: XCTestCase {
     func testOpeningGreetingAndTodayHeadingFollowTheWeb() throws {
         let placeholder = try state(["profile": ["name": "Ты", "dailyMinutes": 15]])
         XCTAssertEqual(OpeningGreeting(state: placeholder).greeting, "Привет.", "A placeholder name is never greeted")
-        XCTAssertEqual(OpeningGreeting(state: placeholder).motivation, "Начнём с одного короткого шага.")
+        // PASS 0.5.3 §6: with nothing to point at, the line is the day-of-year pool line (the old fallback is gone).
+        let moment = Date()
+        XCTAssertEqual(OpeningGreeting(state: placeholder, now: moment).motivation, LaunchMotivation.boot(now: moment))
         XCTAssertEqual(OpeningGreeting(state: try state(["profile": ["dailyMinutes": 15]])).greeting, "Привет.")
         let unfinished = try state(["sessions": [session("s1", status: "active")]])
         XCTAssertEqual(OpeningGreeting(state: unfinished).greeting, "Привет, Test.")

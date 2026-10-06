@@ -17,8 +17,11 @@ struct MascotRenderView: View {
 }
 
 /// Floor layers (MascotShadow.swift): a soft ambient shadow and a tight contact shadow with a faint glass caustic,
-/// plus a light pool in front of the body on dark pages. All follow the body sideways and shrink, fade and soften
-/// as it rises.
+/// plus a light pool in front of the body on dark pages. All follow the body sideways (its roll included) and shrink,
+/// fade and soften as it rises.
+/// PASS 0.5.3 §5: no blur pass. Each layer is a gradient ellipse drawn once at its base box; softening is the same
+/// gradient grown and dimmed (`MascotSoftEllipse`), so a frame only changes transforms and opacity, and the gradient
+/// stops come from a per-theme cache.
 /// Reduce Motion renders the resting frame, so the shadow sits still at its rest pose.
 struct MascotFloorShadow: View {
     let pose: MascotFrame
@@ -26,61 +29,64 @@ struct MascotFloorShadow: View {
 
     var body: some View {
         let shadow = MascotShadowPose(frame: pose, side: side)
-        let fill = MascotShadowFill(dark: Double(pose.dark))
+        let fill = MascotShadowFill.cached(dark: Double(pose.dark))
         let floor = CGFloat(shadow.floorY) - side / 2
+        let pool = CGSize(width: side * CGFloat(MascotShadowTuning.poolWidth), height: side * CGFloat(MascotShadowTuning.poolHeight))
+        let ambient = CGSize(width: side * CGFloat(MascotShadowTuning.ambient.width), height: side * CGFloat(MascotShadowTuning.ambient.height))
+        let contact = CGSize(width: side * CGFloat(MascotShadowTuning.contact.width), height: side * CGFloat(MascotShadowTuning.contact.height))
         return ZStack {
             if fill.poolAlpha > 0.001 {
                 Ellipse()
                     .fill(EllipticalGradient(stops: fill.pool))
-                    .frame(width: side * CGFloat(MascotShadowTuning.poolWidth),
-                           height: side * CGFloat(MascotShadowTuning.poolHeight))
-                    .modifier(MascotShadowLayerEffect(layer: shadow.ambient,
+                    .frame(width: pool.width, height: pool.height)
+                    .modifier(MascotShadowLayerEffect(layer: shadow.ambient, box: pool,
                                                       floor: floor + side * CGFloat(MascotShadowTuning.poolOffsetY)))
             }
             Ellipse()
                 .fill(EllipticalGradient(stops: fill.ambient))
-                .frame(width: side * CGFloat(MascotShadowTuning.ambient.width),
-                       height: side * CGFloat(MascotShadowTuning.ambient.height))
-                .modifier(MascotShadowLayerEffect(layer: shadow.ambient, floor: floor))
-            contactLayer(fill)
-                .modifier(MascotShadowLayerEffect(layer: shadow.contact, floor: floor))
+                .frame(width: ambient.width, height: ambient.height)
+                .modifier(MascotShadowLayerEffect(layer: shadow.ambient, box: ambient, floor: floor))
+            contactLayer(fill, box: contact)
+                .modifier(MascotShadowLayerEffect(layer: shadow.contact, box: contact, floor: floor))
         }
         .allowsHitTesting(false)
     }
 
     /// Ink ellipse filling its box, with the caustic well inside the core (no coloured ring).
-    private func contactLayer(_ fill: MascotShadowFill) -> some View {
-        let width = side * CGFloat(MascotShadowTuning.contact.width)
-        let height = side * CGFloat(MascotShadowTuning.contact.height)
-        return ZStack {
+    private func contactLayer(_ fill: MascotShadowFill, box: CGSize) -> some View {
+        ZStack {
             Ellipse()
                 .fill(EllipticalGradient(stops: fill.contact))
             Ellipse()
                 .fill(EllipticalGradient(stops: fill.caustic))
-                .frame(width: width * CGFloat(2 * MascotShadowTuning.causticRadiusX),
-                       height: height * CGFloat(2 * MascotShadowTuning.causticRadiusY))
-                .offset(y: height * CGFloat(MascotShadowTuning.causticCenterY - 0.5))
+                .frame(width: box.width * CGFloat(2 * MascotShadowTuning.causticRadiusX),
+                       height: box.height * CGFloat(2 * MascotShadowTuning.causticRadiusY))
+                .offset(y: box.height * CGFloat(MascotShadowTuning.causticCenterY - 0.5))
         }
-        .frame(width: width, height: height)
+        .frame(width: box.width, height: box.height)
     }
 }
 
-/// Blur in the layer's own space, then scale (same order as CSS filter + transform on the PC), placed on the floor.
+/// Softening in the layer's own space, then its scale (the order of CSS filter + transform on the PC), placed on the
+/// floor. Only a transform and an opacity: no compositing group and no blur pass per frame.
 private struct MascotShadowLayerEffect: ViewModifier {
     let layer: MascotShadowLayerPose
+    /// The layer's unblurred box in pt (the size its gradient is drawn at).
+    let box: CGSize
     let floor: CGFloat
 
     func body(content: Content) -> some View {
-        content
-            .compositingGroup()
-            .blur(radius: CGFloat(layer.blur))
-            .scaleEffect(x: CGFloat(layer.scaleX), y: CGFloat(layer.scaleY))
-            .opacity(layer.opacity)
+        let soft = MascotSoftEllipse(width: Double(box.width), height: Double(box.height), blur: layer.blur)
+        let width = max(0.001, Double(box.width))
+        let height = max(0.001, Double(box.height))
+        return content
+            .scaleEffect(x: CGFloat(layer.scaleX * soft.width / width), y: CGFloat(layer.scaleY * soft.height / height))
+            .opacity(layer.opacity * soft.alpha)
             .offset(x: CGFloat(layer.x), y: floor)
     }
 }
 
-/// Liquid-glass body (Metal) with the face riding along the same squash, tilt and offset.
+/// Liquid-glass body (Metal) with the face riding along the same squash, roll and offset.
 struct MascotBodyView: View {
     let pose: MascotFrame
     let side: CGFloat
@@ -95,11 +101,14 @@ struct MascotBodyView: View {
         .frame(width: side, height: side)
         // Squash is anchored at the bottom of the body (R0 = 0.78 of the half canvas).
         .scaleEffect(x: CGFloat(pose.scaleX), y: CGFloat(pose.scaleY), anchor: UnitPoint(x: 0.5, y: 0.89))
-        .rotationEffect(.degrees(pose.rotation), anchor: UnitPoint(x: 0.5, y: 0.62))
-        .offset(x: CGFloat(pose.offsetX), y: CGFloat(pose.offsetY))
+        // PASS 0.5.3 §4: it rolls like an egg on its base — the pivot near the bottom, the body shifting with the tilt.
+        .rotationEffect(.degrees(pose.rotation), anchor: UnitPoint(x: 0.5, y: CGFloat(MascotRollTuning.pivotY)))
+        .offset(x: CGFloat(pose.offsetX + MascotRollTuning.offset(rotation: pose.rotation, side: Double(side))),
+                y: CGFloat(pose.offsetY))
     }
 
-    /// Argument order matches `liquidCompanion` in LiquidCompanion.metal exactly.
+    /// Argument order matches `liquidCompanion` in LiquidCompanion.metal exactly. The last argument is the roll in
+    /// radians (clockwise, the web's u_tilt): the shader keeps its light still on screen while the body turns.
     private var liquidShader: Shader {
         ShaderLibrary.liquidCompanion(
             .boundingRect,
@@ -112,7 +121,8 @@ struct MascotBodyView: View {
             .float(pose.tintR),
             .float(pose.tintG),
             .float(pose.tintB),
-            .float(pose.tintAmount)
+            .float(pose.tintAmount),
+            .float(Float(pose.rotation * Double.pi / 180))
         )
     }
 }
@@ -154,14 +164,22 @@ struct MascotFaceView: View {
         CGFloat(pose.gazeY) * side * 0.024
     }
 
+    /// A soft pink spot: the 0.075 × 0.042 · S ellipse blurred by 0.012 · S, drawn as one gradient (no blur pass).
     private func blushSpot(x: CGFloat) -> some View {
         Ellipse()
-            .fill(MascotPalette.pink)
-            .frame(width: side * 0.075, height: side * 0.042)
-            .blur(radius: side * 0.012)
+            .fill(EllipticalGradient(stops: MascotFaceView.blushStops))
+            .frame(width: side * 0.123, height: side * 0.09)
             .opacity(pose.blush)
             .offset(x: side * x, y: side * 0.06)
     }
+
+    private static let blushStops: [Gradient.Stop] = [
+        Gradient.Stop(color: MascotPalette.pink.opacity(0.92), location: 0),
+        Gradient.Stop(color: MascotPalette.pink.opacity(0.85), location: 0.35),
+        Gradient.Stop(color: MascotPalette.pink.opacity(0.5), location: 0.6),
+        Gradient.Stop(color: MascotPalette.pink.opacity(0.15), location: 0.82),
+        Gradient.Stop(color: MascotPalette.pink.opacity(0), location: 1),
+    ]
 
     private func sleepLetter(phase: Double, scale: CGFloat) -> some View {
         let rise = CGFloat(phase)
@@ -202,7 +220,7 @@ struct MascotEyeView: View {
         }
         .frame(width: side * 0.17, height: side * 0.17)
         .rotationEffect(.degrees(eye.tilt))
-        .shadow(color: MascotPalette.faceGlow, radius: side * 0.014)
+        .modifier(MascotFaceGlow(side: side))
     }
 
     private var pillOpacity: Double {
@@ -269,7 +287,7 @@ struct MascotMouthView: View {
             outline
                 .stroke(MascotPalette.eyeWhite, style: StrokeStyle(lineWidth: max(0.8, side * 0.006), lineCap: .round, lineJoin: .round))
         }
-        .shadow(color: MascotPalette.faceGlow, radius: side * 0.014)
+        .modifier(MascotFaceGlow(side: side))
         .frame(width: side, height: side)
         .offset(x: CGFloat(mouth.offsetX) * side, y: side * 0.105)
     }
@@ -285,6 +303,20 @@ struct MascotMouthView: View {
         let green = 0.996 + (10.0 / 255.0 - 0.996) * k
         let blue = 1.0 + (34.0 / 255.0 - 1.0) * k
         return Color(red: red, green: green, blue: blue).opacity(1.0 - 0.05 * k)
+    }
+}
+
+/// The soft halo around eyes and mouth costs an offscreen pass per frame, and below 80 pt it is invisible:
+/// only large companions draw it (PASS 0.5.3 §5).
+private struct MascotFaceGlow: ViewModifier {
+    let side: CGFloat
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if side >= MascotMetrics.fullRateSide {
+            content.shadow(color: MascotPalette.faceGlow, radius: side * 0.014)
+        } else {
+            content
+        }
     }
 }
 

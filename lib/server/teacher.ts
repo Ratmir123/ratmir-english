@@ -1,6 +1,9 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { FAMILIES, familyForDrill, findFamily, lessonCoaching, lessonFamily, shorten, summaryContext, type CuratedFamily, type LessonFormat, type LessonPlanV05 } from '../training';
+import { FAMILIES, PHRASES_FAMILY, familyForDrill, findFamily, lessonCoaching, lessonFamily, shorten, summaryContext, type CuratedFamily, type LessonFormat, type LessonPlanV05 } from '../training';
+import { PHRASE_ROUND_LIMIT, PHRASE_WEAVE_LIMIT, type SavedPhrase } from '../phrases/types';
+import { phraseIsUsable, phraseTarget } from '../phrases/schedule';
+import { phraseLeaks } from '../phrases/usage';
 import { SKILLS, type Analysis, type AppState, type Context, type Mode, type Priority, type Profile, type Session, type SkillId } from '../types';
 import { BRAIN_MODEL, codexJson, codexText } from './codex';
 import { lessonBudget } from '../lesson-budget';
@@ -646,6 +649,106 @@ export function validateDrillPlan(plan: LessonPlanV05, drill: PersonalDrill): vo
     throw new Error('Собеседник тренировки не совпадает с реальным собеседником. Повтори запуск.');
   }
   if (!plan.successCriteria.length || !plan.hiddenFacts.length) throw new Error('У тренировки нет наблюдаемого критерия успеха.');
+}
+
+// «Мои фразы» (PASS-0.5.3 §1.5): saved expressions come back in a dedicated round and woven into ordinary conversations.
+const PHRASE_ROUND_ROLE = 'A friendly acquaintance in a quick, relaxed chat';
+const PHRASE_ROUND_OPENING = 'Hey, good to see you! How has your week been going so far?';
+/** The caps of lessonOutputSchema: a woven note never pushes a brief or a focus past them. */
+const NPC_BRIEF_LIMIT = 4500;
+const LANGUAGE_FOCUS_LIMIT = 1000;
+const NO_PHRASES = 'Сейчас нечего повторять — запомни пару фраз.';
+
+interface PhraseItem { id: string; target: string; cue: string | null; situation: string | null; dueAt: string }
+
+/** Usable phrases with their English target. A cue or partner line that gives away any of these targets is not used. */
+function phraseItems(phrases: readonly SavedPhrase[]): PhraseItem[] {
+  const usable = phrases.filter((phrase, index) => phraseIsUsable(phrase) && phrases.findIndex(other => other.id === phrase.id) === index)
+    .map(phrase => ({ phrase, target: phraseTarget(phrase)! }));
+  const targets = usable.map(item => item.target);
+  const safe = (text: string | null | undefined, limit: number) => {
+    const value = clean(text);
+    return value && !targets.some(target => phraseLeaks(target, value)) ? shorten(value, limit) : null;
+  };
+  return usable.map(({ phrase, target }) => ({ id: phrase.id, target, cue: safe(phrase.cue, 160), situation: safe(phrase.situation, 240), dueAt: phrase.dueAt }));
+}
+
+/** The same phrases at the same due dates are the same opportunity (no repeated XP); a new due date is a new one. */
+function phraseSlot(items: PhraseItem[]): string {
+  return `phrases-${createHash('sha256').update(items.map(item => `${item.id}@${item.dueAt}`).join('|')).digest('hex').slice(0, 16)}`;
+}
+
+/**
+ * A «Мои фразы» round (§1.5.1): an instant plan, no Sol call. The partner opens with the first saved situation line, gives each
+ * phrase one natural moment in order and never says the targets; the Russian cues are the only visible help.
+ */
+export function phraseLessonPlan(state: AppState, phrases: readonly SavedPhrase[], options: { minutes?: number } = {}): LessonPlanV05 {
+  const items = phraseItems(phrases).slice(0, PHRASE_ROUND_LIMIT);
+  if (!items.length) throw new Error(NO_PHRASES);
+  const lead = items.findIndex(item => item.situation);
+  if (lead > 0) items.unshift(...items.splice(lead, 1));
+  const family = PHRASES_FAMILY;
+  const speechLevel = partnerSpeechLevel(state);
+  const targets = items.map(item => item.target);
+  const cues = items.flatMap(item => item.cue ? [item.cue] : []);
+  const recall = cues.length ? shorten(`Вспомни: ${cues.join(' · ')}`, LANGUAGE_FOCUS_LIMIT) : '';
+  const languageFocus = recall && !targets.some(target => phraseLeaks(target, recall)) ? recall : 'Вспомни свои фразы из копилки.';
+  const opening = items[0].situation ?? PHRASE_ROUND_OPENING;
+  const moments = items.map((item, index) => !item.situation ? `${index + 1}) create a natural moment that invites target expression ${index + 1}.`
+    : index === 0 ? `1) "${item.situation}" (your opening line, already said).` : `${index + 1}) "${item.situation}"`).join(' ');
+  const plan: LessonPlanV05 = {
+    id: randomUUID(), familyId: family.id, title: `${family.title} · ${items.length}`, context: family.context,
+    goal: 'Сказать свои фразы к месту, своими словами вокруг них.',
+    why: 'Фраза становится твоей, когда ты сам говоришь её в разговоре.',
+    minutes: Math.min(lessonBudget(state.profile.dailyMinutes, options.minutes), 2 + items.length), targetSkills: [...family.skills],
+    languageFocus, opening, role: PHRASE_ROUND_ROLE,
+    npcBrief: `You are ${PHRASE_ROUND_ROLE.toLowerCase()} with the learner. Keep it a short "use it" conversation. ${items[0].situation ? '' : `You opened with "${PHRASE_ROUND_OPENING}". `}Give the learner one natural moment for each of their saved expressions, in this order: ${moments} For each moment say its line naturally (light rewording is fine), wait for the learner's reply, then react in one short natural sentence without the target expression and without grading. If the learner avoided the expression, give at most one gentle in-scene nudge (a follow-up that opens the same moment again), then move on to the next moment. After the last one close the chat in one sentence. Never say the target expressions yourself, never mention a test, a list or saved phrases, and never coach, praise or grade. ${speechNote(speechLevel)}`,
+    hiddenFacts: [`Target expressions, never to be said by you: ${targets.map(target => `"${target}"`).join('; ')}.`],
+    successCriteria: ['Каждая фраза прозвучала к месту', 'Вокруг фразы — своё предложение, а не заученный шаблон'],
+    difficulty: 'Собеседник даёт повод, фразу вспоминаешь сам.', kind: 'practice', track: family.track, activity: 'speaking', material: null,
+    format: 'conversation', seed: null, persona: PHRASE_ROUND_ROLE, speechLevel, pressureTier: null, pushback: [],
+    situationalNorms: [...family.situationalNorms], patternIds: [], moves: [], drillId: null, drillType: null, drillSlot: phraseSlot(items),
+    mustInclude: targets, mustAvoid: [], phraseIds: items.map(item => item.id), coaching: lessonCoaching(state, []),
+  };
+  validatePhrasePlan(plan);
+  return plan;
+}
+
+/** A round stays a round: the hidden family, a conversation, and no target in its opening line or its visible cues. */
+export function validatePhrasePlan(plan: LessonPlanV05): void {
+  if (plan.familyId !== PHRASES_FAMILY.id || plan.format !== 'conversation' || plan.kind !== 'practice' || plan.activity !== 'speaking') {
+    throw new Error('Повтор фраз собран неверно. Повтори запуск.');
+  }
+  const targets = plan.mustInclude ?? [];
+  if (!targets.length || targets.length !== (plan.phraseIds ?? []).length) throw new Error(NO_PHRASES);
+  if (targets.some(target => phraseLeaks(target, plan.opening) || phraseLeaks(target, plan.languageFocus))) {
+    throw new Error('Первая реплика или подсказка выдаёт фразу. Повтори запуск.');
+  }
+}
+
+/** Ordinary speaking conversations only: not a drill, a phrase round, a text or listening task, or a scripted format. */
+export function canWeavePhrases(plan: LessonPlanV05): boolean {
+  return (plan.activity ?? 'speaking') === 'speaking' && (plan.format ?? 'conversation') === 'conversation' && !plan.drillId && !plan.material
+    && plan.kind !== 'calibration' && plan.familyId !== PHRASES_FAMILY.id && !plan.phraseIds?.length;
+}
+
+/**
+ * §1.5.2: up to two due phrases woven into an ordinary practice session. The partner brief asks for one natural opening each (within
+ * the brief's cap; fewer phrases when it would not fit); in learning mode («С опорами») the focus gains their Russian cues.
+ */
+export function weavePhrases(plan: LessonPlanV05, phrases: readonly SavedPhrase[], mode: Mode): LessonPlanV05 {
+  if (!canWeavePhrases(plan)) return plan;
+  // The partner's first line is already written: a phrase it happens to contain is not woven in.
+  for (let items = phraseItems(phrases).filter(item => !phraseLeaks(item.target, plan.opening)).slice(0, PHRASE_WEAVE_LIMIT); items.length; items = items.slice(0, -1)) {
+    const note = `When the conversation allows it naturally, give the learner one opening each to use these expressions; never say them yourself and never mention a test: ${items.map(item => `"${item.target}"`).join('; ')}.`;
+    const npcBrief = plan.npcBrief.trim() ? `${plan.npcBrief.trimEnd()} ${note}` : note;
+    if (npcBrief.length > NPC_BRIEF_LIMIT) continue;
+    const cues = items.flatMap(item => item.cue ? [item.cue] : []);
+    const extra = `Из твоих фраз: ${cues.join(' · ')}`;
+    const focus = mode !== 'learning' || !cues.length ? plan.languageFocus : plan.languageFocus.trim() ? `${plan.languageFocus.trimEnd()} · ${extra}` : extra;
+    return { ...plan, npcBrief, languageFocus: focus.length <= LANGUAGE_FOCUS_LIMIT ? focus : plan.languageFocus, phraseIds: items.map(item => item.id) };
+  }
+  return plan;
 }
 
 /** Pure roleplay prompt, kept separate from the learner's Russian coach manner. */

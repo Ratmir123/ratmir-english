@@ -1,16 +1,32 @@
-/* Rank medals (DESIGN-PASS-0.5.1 «объём»): the raster art becomes a solid — stacked silhouettes in
-   preserve-3d form the rim, light and foil move against the turn. medal-3d.ts writes the variables;
-   idle motion stays in CSS. Achievement art keeps a gentle float. */
-.rankEmblem { --rank-accent: #bcc2df; --rank-lift: -5px; --rank-sway: 3deg; --rank-period: 5.4s; --rank-yaw: 10deg; --rank-turn: 9.6s;
+/* Rank medals (DESIGN-PASS-0.5.1 «объём», PASS-0.5.3 §8): the raster art becomes a solid — stacked silhouettes in
+   preserve-3d form the rim, light and foil move against the turn. medal-3d.ts writes the variables and runs the slow
+   turns; idle motion stays in CSS. Achievement art keeps a gentle float. */
+.rankEmblem { --rank-lift: -5px; --rank-sway: 3deg; --rank-period: 5.4s; --rank-yaw: 10deg; --rank-turn: 9.6s;
   --tilt-x: 0deg; --tilt-y: 0deg; --spin: 0deg; --glare-x: 0px; --glare-y: 0px; --holo-x: 0px; --holo-y: 0px; --shadow-x: 0px; --shadow-w: 1; --edge-glint: 0; --face-on: 1;
-  --rim-dark: #5f6374; --rim-light: #dde0ea;
+  --medal-scale: 1; --rim-dark: #5f6374; --rim-light: #dde0ea;
   --sway-ease: cubic-bezier(.45, 0, .55, 1);
   display: inline-block; flex: 0 0 auto; position: relative; isolation: isolate; user-select: none; -webkit-user-select: none; }
-.rankEmblem[data-rank='mint'] { --rim-dark: #1d6450; --rim-light: #9be8cc; --rank-accent: #43cda2; --rank-lift: -6px; --rank-sway: 3.5deg; --rank-period: 4.6s; }
-.rankEmblem[data-rank='sky'] { --rim-dark: #1b557f; --rim-light: #9ad3f6; --rank-accent: #54baf1; --rank-lift: -8px; --rank-sway: 4deg; --rank-period: 4.8s; --rank-yaw: 11deg; }
-.rankEmblem[data-rank='violet'] { --rim-dark: #412a7c; --rim-light: #c8b0ff; --rank-accent: var(--accent-lavender); --rank-lift: -6px; --rank-sway: 4.5deg; --rank-period: 4.2s; }
-.rankEmblem[data-rank='rose'] { --rim-dark: #7c2640; --rim-light: #f3a7bd; --rank-accent: #f47c9c; --rank-lift: -7px; --rank-sway: 5deg; --rank-period: 3.8s; --rank-yaw: 12deg; }
-.rankEmblem[data-rank='gold'] { --rim-dark: #6e420f; --rim-light: #f2c873; --rank-accent: #fac65f; --rank-lift: -8px; --rank-sway: 4deg; --rank-period: 4s; --rank-yaw: 12deg; }
+
+/* Rank colours, shared by the medal, its title (.rankName), the XP bar and the ladder row (.tone):
+   --rank-accent — atmosphere, aura, ring; --rank-ink — text on cards, ≥ 4.5:1 on light and dark cards and on the sunken
+   ladder rows; --rank-from/--rank-to — the XP fill. */
+.rankEmblem, .tone { --rank-accent: #b3adf0; --ink-light: #565d7c; --ink-dark: #cdd2ec; --rank-from: #8088ad; --rank-to: #c6cbe4; --rank-ink: var(--ink-light); }
+.rankEmblem[data-rank='mint'], .tone[data-rank='mint'] { --rank-accent: #43cda2; --ink-light: #0f7558; --ink-dark: #5fdcb4; --rank-from: #17a07a; --rank-to: #6fe3bd; }
+.rankEmblem[data-rank='sky'], .tone[data-rank='sky'] { --rank-accent: #54baf1; --ink-light: #1468a3; --ink-dark: #7cc9f4; --rank-from: #2a8fd6; --rank-to: #8dd5fa; }
+.rankEmblem[data-rank='violet'], .tone[data-rank='violet'] { --rank-accent: var(--accent-lavender); --ink-light: #5543df; --ink-dark: #b9adff; --rank-from: #6f5cf2; --rank-to: #b9a8ff; }
+.rankEmblem[data-rank='rose'], .tone[data-rank='rose'] { --rank-accent: #f47c9c; --ink-light: #b02a53; --ink-dark: #ff9bb7; --rank-from: #de4b75; --rank-to: #ff9fbb; }
+.rankEmblem[data-rank='gold'], .tone[data-rank='gold'] { --rank-accent: #fac65f; --ink-light: #875600; --ink-dark: #f8c55a; --rank-from: #e09615; --rank-to: #fdd77c; }
+@media (prefers-color-scheme: dark) {
+  :global(:root:not([data-theme='light'])) .rankEmblem, :global(:root:not([data-theme='light'])) .tone { --rank-ink: var(--ink-dark); }
+}
+:global(:root[data-theme='dark']) .rankEmblem, :global(:root[data-theme='dark']) .tone { --rank-ink: var(--ink-dark); }
+.rankName { color: var(--rank-ink); }
+
+.rankEmblem[data-rank='mint'] { --rim-dark: #1d6450; --rim-light: #9be8cc; --rank-lift: -6px; --rank-sway: 3.5deg; --rank-period: 4.6s; }
+.rankEmblem[data-rank='sky'] { --rim-dark: #1b557f; --rim-light: #9ad3f6; --rank-lift: -8px; --rank-sway: 4deg; --rank-period: 4.8s; --rank-yaw: 11deg; }
+.rankEmblem[data-rank='violet'] { --rim-dark: #412a7c; --rim-light: #c8b0ff; --rank-lift: -6px; --rank-sway: 4.5deg; --rank-period: 4.2s; }
+.rankEmblem[data-rank='rose'] { --rim-dark: #7c2640; --rim-light: #f3a7bd; --rank-lift: -7px; --rank-sway: 5deg; --rank-period: 3.8s; --rank-yaw: 12deg; }
+.rankEmblem[data-rank='gold'] { --rim-dark: #6e420f; --rim-light: #f2c873; --rank-lift: -8px; --rank-sway: 4deg; --rank-period: 4s; --rank-yaw: 12deg; }
 .rankTouch, .rankStatic { display: block; position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 24%; background: transparent; color: inherit; }
 .rankTouch { cursor: pointer; touch-action: manipulation; }
 .rankEmblem[data-gestures='true'], .rankEmblem[data-gestures='true'] .rankTouch { cursor: grab; touch-action: pan-y; }
@@ -21,7 +37,16 @@
 .rankFloat { transform-origin: 50% 64%; }
 .rankEmblem[data-moving='true'] .rankFloat { animation: rank-float var(--rank-period) var(--sway-ease) infinite; }
 .rankArt { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; -webkit-user-drag: none; }
-.rankEmblem:not([data-solid='true']) .rankArt { filter: drop-shadow(0 6px 10px rgb(0 0 0 / .22)); }
+.rankEmblem:not([data-solid='true']) .rankArt { filter: drop-shadow(0 calc(6px * var(--medal-scale)) calc(10px * var(--medal-scale)) rgb(0 0 0 / .22)); }
+
+/* Hero medals breathe their rank colour behind them (Today, Progress, the current ladder rank, rank-up). */
+.rankAura { position: absolute; inset: -22%; z-index: -1; display: block; border-radius: 50%; pointer-events: none; opacity: .78; transform: scale(.94);
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--rank-accent) 60%, transparent), color-mix(in oklab, var(--rank-accent) 22%, transparent) 56%, transparent); }
+.rankEmblem[data-moving='true'] .rankAura { animation: rank-aura 5.2s var(--sway-ease) infinite; }
+/* The sidebar chip: a thin ring in the rank colour around the small medal. */
+.rankRing { position: absolute; inset: -4px; z-index: -1; display: block; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--rank-accent) 24%, transparent), transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--rank-accent) 80%, transparent); }
 
 /* The solid: face at +depth/2, flat-metal silhouettes behind it, a mirrored back. */
 .rankEmblem[data-solid='true'] .rankFloat { perspective: calc(var(--medal-size) * 4); }
@@ -70,7 +95,7 @@
 .rankEmblem[data-moving='true'] .rankFloor > i { animation: rank-ground var(--rank-period) var(--sway-ease) infinite; }
 .rankEmblem[data-moving='true'][data-solid='true'] .rankFloor > i { animation: rank-ground var(--rank-period) var(--sway-ease) infinite, rank-shadow-yaw var(--rank-turn) var(--sway-ease) infinite alternate; }
 
-/* A hand on the medal (hover, drag, a throw) holds the idle yaw where it is; a throw has no transitions. */
+/* A hand on the medal (hover, drag, a turn) holds the idle yaw where it is; a turn has no transitions. */
 .rankEmblem[data-active='true'] .rankSway, .rankEmblem[data-active='true'] .rankLight > i, .rankEmblem[data-active='true'] .rankHolo > i { animation-play-state: paused; }
 .rankEmblem[data-active='true'] .rankFloor > i { animation-play-state: running, paused; }
 .rankEmblem[data-spinning='true'] .rankBody, .rankEmblem[data-spinning='true'] .rankLight > i, .rankEmblem[data-spinning='true'] .rankHolo > i,
@@ -95,11 +120,11 @@
 .rankEmblem[data-rank='rose'] .rankAtmosphere i, .rankEmblem[data-rank='gold'] .rankAtmosphere i { top: 52%; left: 50%; width: 10%; height: 1.8px; border-radius: 3px; background: var(--rank-accent); transform-origin: left center; transform: rotate(var(--angle)) translateX(var(--rank-radius)); opacity: .3; }
 .rankEmblem[data-rank='rose'][data-moving='true'] .rankAtmosphere i { animation: rank-flare 3.4s cubic-bezier(.45, 0, .55, 1) infinite; }
 .rankEmblem[data-rank='gold'][data-moving='true'] .rankAtmosphere i { height: 2px; animation: rank-radiance 4s cubic-bezier(.45, 0, .55, 1) infinite; }
-/* Rank-up: drops in with a jelly landing while medal-3d.ts turns it 1.5 times from the back; the shadow lands with it. */
+/* Rank-up: drops in with a jelly landing while medal-3d.ts turns it twice from behind; the shadow lands with it. */
 .rankEmblem[data-drop='true'] .rankFeedback { animation: medal-drop var(--spring-jelly-ms) var(--spring-jelly) both; }
 .rankEmblem[data-drop='true'] .rankFloor { animation: rank-floor-drop var(--spring-jelly-ms) var(--ease-out) both; }
 
-@keyframes rank-float { 0%, 100% { transform: translateY(0) rotate(calc(var(--rank-sway) * -.45)) scale(1); } 50% { transform: translateY(var(--rank-lift)) rotate(var(--rank-sway)) scale(1.025); } }
+@keyframes rank-float { 0%, 100% { transform: translateY(0) rotate(calc(var(--rank-sway) * -.45)) scale(1); } 50% { transform: translateY(calc(var(--rank-lift) * var(--medal-scale))) rotate(var(--rank-sway)) scale(1.025); } }
 @keyframes rank-ground { 0%, 100% { transform: scaleX(1); opacity: .65; } 50% { transform: scaleX(.84); opacity: .4; } }
 @keyframes rank-glint { 0% { transform: translateX(0) rotate(24deg); animation-timing-function: cubic-bezier(.45, 0, .55, 1); } 14%, 100% { transform: translateX(770%) rotate(24deg); } }
 @keyframes rank-yaw { from { transform: rotateY(calc(var(--rank-yaw) * -1)); } to { transform: rotateY(var(--rank-yaw)); } }
@@ -107,6 +132,7 @@
 @keyframes rank-holo-yaw { from { translate: calc(var(--medal-size) * .6 * sin(var(--rank-yaw))) 0; } to { translate: calc(var(--medal-size) * -.6 * sin(var(--rank-yaw))) 0; } }
 @keyframes rank-shadow-yaw { from { translate: calc(var(--medal-size) * .07 * sin(var(--rank-yaw))) 0; } to { translate: calc(var(--medal-size) * -.07 * sin(var(--rank-yaw))) 0; } }
 @keyframes rank-floor-drop { from, 35% { opacity: 0; scale: .3 1; } }
+@keyframes rank-aura { 0%, 100% { opacity: .6; transform: scale(.9); } 50% { opacity: 1; transform: scale(1.06); } }
 @keyframes rank-spark { 0%, 100% { transform: scale(.82); opacity: .18; } 50% { transform: scale(1.24); opacity: .65; } }
 @keyframes rank-rhythm { 0% { transform: scale(.85, .66); opacity: .35; } 100% { transform: scale(1.58, 1.23); opacity: 0; } }
 @keyframes rank-air { 0% { transform: translateY(20px) rotate(-12deg); opacity: 0; } 45% { opacity: .38; } 100% { transform: translateY(-28px) rotate(-12deg); opacity: 0; } }
@@ -127,23 +153,42 @@
 @keyframes reward-goal { 0%, 82%, 100% { transform: rotate(0); } 86% { transform: rotate(-7deg); } 90% { transform: rotate(6deg); } 94% { transform: rotate(-3deg); } }
 @keyframes medal-flip { from { transform: perspective(500px) rotateY(-180deg) scale(.7); } }
 
-/* Rank ladder */
+/* Rank ladder: the current rank is bigger and tinted in its colour; ranks still ahead are muted. */
 .ladder { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 8px; }
-.ladder > li { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 12px 10px 6px; border-radius: 20px; background: var(--surface-sunken); }
-.ladder > li[data-current='true'] { background: var(--accent-violet-soft); box-shadow: inset 0 0 0 1px var(--accent-lavender); }
-.ladder > li[data-unlocked='false'] { opacity: .72; }
+.ladder > li { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 10px 12px 10px 2px; border-radius: 20px; background: var(--surface-sunken); }
+.ladder > li[data-current='true'] { padding-block: 12px; background: color-mix(in oklab, var(--rank-accent) 14%, var(--surface-card));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rank-accent) 55%, transparent); }
+.ladderMedal { display: grid; place-items: center; flex: 0 0 auto; width: 84px; }
+.ladder > li[data-unlocked='false'] .ladderMedal { filter: grayscale(1); opacity: .45; }
+.ladder > li[data-unlocked='false'] .ladderCopy { opacity: .7; }
 .ladderCopy { min-width: 0; display: grid; gap: 2px; }
 .ladderCopy strong { font-family: var(--font-display); font-size: 17px; font-weight: 800; }
+.ladder > li[data-current='true'] .ladderCopy strong { font-size: 19px; color: var(--rank-ink); }
 .ladderCopy span, .ladderCopy small { font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.ladder > li[data-current='true'] .ladderCopy small { color: var(--accent-violet-ink); font-weight: 650; }
+.ladder > li[data-current='true'] .ladderCopy small { color: var(--rank-ink); font-weight: 650; }
 .ladderStatus { margin-left: auto; color: var(--text-tertiary); flex-shrink: 0; }
+.ladder > li[data-current='true'] .ladderStatus { color: var(--rank-ink); }
 
-/* XP bar block */
+/* XP block */
 .xp { display: grid; gap: 8px; }
 .xpTop { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .xpValue { font-family: var(--font-display); font-weight: 900; font-size: 22px; font-variant-numeric: tabular-nums; }
 .xpValue small { font-size: 13px; font-weight: 750; color: var(--text-secondary); margin-left: 3px; }
-.xpLabels { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+/* XP bar in the rank's colours (PASS-0.5.3 §8): the fill grows by scaleX; a soft light crosses the filled part now
+   and then (transform only, clipped to the fill). */
+.rankXp { display: grid; gap: 6px; min-width: 0; }
+.rankXpTrack { position: relative; display: block; height: 8px; border-radius: var(--radius-pill); background: var(--surface-sunken-2); overflow: hidden; }
+.rankXp[data-slim] .rankXpTrack { height: 6px; }
+.rankXpFill { position: absolute; inset: 0; display: block; border-radius: inherit; transform-origin: left center; transform: scaleX(var(--value, 0));
+  background: linear-gradient(90deg, var(--rank-from), var(--rank-to)); transition: transform var(--fill-ms) var(--ease-out); }
+.rankXpShine { position: absolute; inset: 0; display: block; overflow: hidden; border-radius: inherit; pointer-events: none;
+  clip-path: inset(0 calc(100% - var(--value, 0) * 100%) 0 0 round 99px); }
+.rankXpShine > i { position: absolute; top: 0; bottom: 0; left: 0; display: block; width: 38%; transform: translateX(-110%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / .55), transparent); }
+.rankXp[data-moving='true'] .rankXpShine > i { animation: rank-xp-shine 5.6s cubic-bezier(.45, 0, .55, 1) infinite; animation-delay: 1.2s; }
+@keyframes rank-xp-shine { 0% { transform: translateX(-110%); } 42%, 100% { transform: translateX(280%); } }
+.rankXpLabel { font-size: var(--text-13); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 
 /* Achievements */
 .achievements { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; }
@@ -160,7 +205,13 @@
 .targetTail svg { display: inline-block; margin-left: 5px; vertical-align: -2px; }
 .unlockedChip { justify-self: start; }
 
+/* The shell under the launch or placement layer sleeps (PASS-0.5.3 §5, components/ui/shell-cover.ts): medals, auras and
+   shimmers in it hold still until it is revealed. A rank-up sheet (a top-layer dialog) is never under the cover. */
+:global(html[data-shell-covered]) :global([data-shell]) .rankEmblem:not(dialog *) *,
+:global(html[data-shell-covered]) :global([data-shell]) .achievementEmblem:not(dialog *) *,
+:global(html[data-shell-covered]) :global([data-shell]) .rankXp:not(dialog *) * { animation-play-state: paused !important; }
+
 @media (prefers-reduced-motion: reduce) {
-  .rankEmblem *, .achievementEmblem * { animation: none !important; }
+  .rankEmblem *, .achievementEmblem *, .rankXp * { animation: none !important; }
   .rankFeedback { transition: none; }
 }

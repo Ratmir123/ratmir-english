@@ -2,7 +2,9 @@
 // Light from above-front; the floor is the body's rest bottom. Two layers: a tight contact shadow that
 // vanishes quickly with height and a soft ambient one that fades slowly. Pure: no DOM, no allocation per
 // frame. The iPhone mirrors every number in ios/Sources/MascotShadow.swift.
+// PASS-0.5.3 §4: a tilted body rolls sideways by Δx (lib/mascot/roll); the shadow follows Δx on top of its lean.
 import { BODY_RADIUS, SQUASH_SPRING } from './constants';
+import { rollShift } from './roll';
 
 export type ShadowLayer = 'contact' | 'ambient';
 export type ShadowTheme = 'light' | 'dark';
@@ -103,11 +105,12 @@ function placeLayer(out: ShadowLayerPose, t: ShadowLayerTuning, x: number, lift:
 /**
  * Shadow for one frame. Height = upward body offset (drag up + hop, y < 0): the shadow stays on the rest floor and
  * shrinks, fades and softens. Pushed down (y > 0) the floor follows the body's lowest point (continuous at y = 0),
- * so the shadow is never hidden behind the body, and the contact tightens, widens and darkens. Writes into `out`.
+ * so the shadow is never hidden behind the body, and the contact tightens, widens and darkens. A tilt rolls the body
+ * sideways by Δx = rollShift(rotation, S) and the shadow moves with it (plus its lean). Writes into `out`.
  */
 export function shadowPose(frame: ShadowSource, side: number, out: MascotShadowPose = createShadowPose()): MascotShadowPose {
   const S = Number.isFinite(side) && side > 0 ? side : 1;
-  const x = finite(frame.x), y = finite(frame.y);
+  const x = finite(frame.x) + rollShift(finite(frame.rotation), S), y = finite(frame.y);
   const lift = Math.max(0, -y) / S;
   const press = clamp(y / (SHADOW.pressSpan * S), 0, 1);
   const flat = clamp(finite(frame.squash), 0, SQUASH_SPRING.clamp);

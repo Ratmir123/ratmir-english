@@ -8,7 +8,7 @@ import {
 import type { AppState, Mode, Session } from '@/lib/types';
 import type { PlacementView } from '@/lib/placement/types';
 import { lessonBudget } from '@/lib/lesson-budget';
-import { subscriptionView } from '@/lib/subscription-view';
+import { LimitBanner } from '../app/limit-banner';
 import { PlacementLevelCard } from '../placement/placement-result';
 import { PatternsPanel } from '../calls/patterns-panel';
 import { CallUploadCard } from '../calls/upload-call';
@@ -17,12 +17,13 @@ import { messageOf, request } from '../app/api';
 import { greeting, MODE_HINT, MODE_LABEL, sessionStatusLabel, sessionTone, shortDate } from '../app/labels';
 import { failedCalls, processingCalls, todayPrimary, weeklyRhythm, type TodayPrimary } from '../app/today-plan';
 import { drillTile } from '../practice/for-you-model';
+import { TodayPhrases } from '../phrases/today-phrases';
 import { WeeklyRhythm } from './weekly-rhythm';
 import { Companion, type MascotEmotion } from '../shell/companion';
 import type { ToastAction } from '../shell/toasts';
 import { useShellRevealed } from '../ui/entrance';
 import { Segmented } from '../ui/segmented';
-import { rankProgress, RankMedal } from '../ui/rewards';
+import { RankMedal, RankName, RankXp } from '../ui/rewards';
 import styles from './today.module.css';
 
 let greetedThisLaunch = false;
@@ -299,20 +300,22 @@ function LevelCard() {
   const app = useApp();
   const state = app.data.state!;
   const progression = state.progression;
-  const rank = progression ? rankProgress(progression) : null;
-  return <section className={`surface ${styles.side}`} aria-labelledby="today-level" data-enter>
+  // The rank is this card's character (PASS-0.5.3 §8): a big medal you can turn, breathing its colour, the title and
+  // the XP bar in the rank's colours. The card is not a button (the medal is spinnable); «Награды» opens the rewards.
+  // A live 3D medal inside: the staircase lane without blur.
+  return <section className={`surface ${styles.side}`} aria-labelledby="today-level" data-enter="live">
     <div className="section-title"><h2 id="today-level" className={styles.blockTitle}>Уровень</h2><button type="button" className="text-button" onClick={() => app.go('progress')}>Прогресс<ArrowRightIcon size={15} /></button></div>
     {/* Before the first result the test is Today's primary card; its own «Начать» here would compete with it. */}
     {state.placement?.result && <PlacementLevelCard view={state.placement} onOpen={() => app.go('progress', { progress: 'report' })} onStart={app.openPlacement} embedded />}
-    {progression && rank && <button type="button" className={styles.rank} onClick={() => app.go('progress', { progress: 'rewards' })}
-      aria-label={`Ранг «${rank.band.title}», уровень опыта ${progression.level}, ${progression.xp} XP. Открыть награды`}>
-      <RankMedal level={progression.level} size={64} />
-      <span className={styles.rankCopy}>
-        <strong>{rank.band.title}<small> · ур. {progression.level}</small></strong>
-        <span className="progress-track lime" aria-hidden="true" style={{ '--value': rank.ratio } as CSSProperties}><span /></span>
-        <small className="tabular">{progression.xp} XP{rank.next ? ` · до «${rank.next.title}» ${rank.toNext}` : ''}</small>
-      </span>
-    </button>}
+    {progression && <div className={styles.rank}>
+      <span className={styles.rankMedal}><RankMedal level={progression.level} size={96} interactive aura /></span>
+      <div className={styles.rankCopy}>
+        <strong className={styles.rankTitle}><RankName level={progression.level} /></strong>
+        <small className="tabular">Уровень опыта {progression.level} · {progression.xp.toLocaleString('ru-RU')} XP</small>
+        <RankXp value={progression} />
+        <button type="button" className={`text-button ${styles.rewardsLink}`} onClick={() => app.go('progress', { progress: 'rewards' })}>Награды<ArrowRightIcon size={15} /></button>
+      </div>
+    </div>}
     {progression && <p className="footnote">Опыт — за практику, не за язык. Языковой уровень меняет только тест.</p>}
   </section>;
 }
@@ -327,16 +330,6 @@ function WorkingOn() {
   return <div data-enter>
     <PatternsPanel patterns={patterns} drills={state.drills ?? []} onStartDrill={app.startDrill} compact onChanged={() => void app.data.refresh()} onOpenAll={() => app.go('calls', { calls: 'patterns' })} />
   </div>;
-}
-
-function LimitsWarning() {
-  const app = useApp();
-  const view = subscriptionView(app.data.usage);
-  const low = view.windows.find(window => window.low);
-  if (!low) return null;
-  return <button type="button" className={`banner warning ${styles.limits}`} onClick={() => app.go('profile')} data-enter>
-    <WarningCircleIcon size={18} weight="fill" /><span className="banner-copy"><strong>{low.exhausted ? 'Лимит подписки исчерпан' : 'Лимит подписки почти исчерпан'}</strong><span className="caption">{low.resetRelative || 'Подробности в профиле'}</span></span>
-  </button>;
 }
 
 export function TodayScreen() {
@@ -370,12 +363,13 @@ export function TodayScreen() {
     <div className={styles.grid}>
       <div className={styles.main}>
         <PrimaryCard key={primaryKey} primary={primary} />
+        <TodayPhrases />
         <StatusStrip primary={primary} />
         <QuickActions />
         <LaterList primary={primary} />
       </div>
       <aside className={styles.aside} aria-label="Твой прогресс">
-        <LimitsWarning />
+        <LimitBanner />
         <LevelCard />
         <WorkingOn />
         <WeeklyRhythm state={state} headingId="today-rhythm" />

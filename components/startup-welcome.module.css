@@ -1,7 +1,13 @@
-/* Launch layer (MOTION-PASS-0.5.2 §4): one opaque layer from the first paint to the hand-off. The companion holds one
-   place throughout (no jump when the words arrive: they hang below it), then the layer fades while the shell rises. */
+/* Launch layer (MOTION-PASS-0.5.2 §4, PASS-0.5.3 §6): one opaque layer from the first paint to the hand-off. Boot is the
+   preloader: the companion idles on the compositor with one motivation line under it (a hairline progress joins it after
+   0.9 s); at the greeting «Привет, …» rises into the room above the line, then the layer fades while the shell rises.
+   The companion holds one place throughout. Only transform and opacity move here (text sheds a little blur early on),
+   so a busy main thread cannot stall anything on this layer. */
 .layer {
   --launch-fade: 600ms;
+  --greet-size: 44px; --greet-leading: 1.12; --greet-gap: 12px;
+  /* The greeting's room above the line: one heading line plus the gap. */
+  --greet-room: calc(var(--greet-size) * var(--greet-leading) + var(--greet-gap));
   position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; overflow: hidden;
   padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
   background: radial-gradient(60% 50% at 50% 38%, var(--ambient-1), transparent 70%), var(--bg-base); color: var(--text-primary);
@@ -15,7 +21,8 @@
   transition: transform var(--launch-fade) var(--ease-exit);
 }
 .layer[data-phase='leaving'] .stage { transform: translate3d(0, calc(-8vh - 18px), 0) scale(.97); }
-/* Fades in only after ~150 ms, so a fast load never flashes it; breathing is the companion's own calm idle. */
+/* Rises in after ~150 ms, so a fast load never flashes it. No blur: it holds a live canvas. Its idle (breath and a gentle
+   roll) is the companion's own compositor idle while booting, its live physics from the greeting on. */
 .mascot { position: absolute; inset: 0; opacity: 0; animation: mascot-in 760ms var(--ease-out) 150ms forwards; }
 /* Handing off before it ever appeared: it stays hidden instead of ghosting in over the fade. */
 .layer[data-phase='leaving'] .mascot { animation-play-state: paused; }
@@ -24,13 +31,46 @@
   position: absolute; top: calc(100% + 12px); left: 50%; width: min(640px, calc(100vw - 40px)); transform: translateX(-50%);
   display: grid; justify-items: center; text-align: center;
 }
-.hello, .problem { display: grid; justify-items: center; gap: 12px; min-width: 0; width: 100%; }
-.hello h1 { margin: 0; font-size: 44px; overflow-wrap: anywhere; animation: arrive 760ms var(--ease-out) 100ms both; }
-.hello p { max-width: 36ch; margin: 0 auto; color: var(--text-secondary); font-size: 19px; line-height: 1.5; text-wrap: balance; }
-/* Words settle one after another — soft deceleration with a little blur, no bounce (that belongs to the companion). */
-.hello p span { display: inline-block; white-space: pre; animation: word 640ms var(--ease-out) var(--word-delay) both; }
-.wordmark { margin-top: 8px; font-family: var(--font-display); font-weight: 850; color: var(--text-tertiary); font-size: 15px; letter-spacing: .02em; animation: arrive 760ms var(--ease-out) 780ms both; }
-.problem { animation: arrive 620ms var(--ease-out) both; }
+/* While booting the line sits right under the companion, up in the greeting's room; when the greeting comes it glides
+   down as «Привет, …» rises in above it. */
+.hello {
+  display: grid; justify-items: center; gap: var(--greet-gap); min-width: 0; width: 100%;
+  transform: translate3d(0, calc(var(--greet-room) * -1), 0);
+  transition: transform 900ms var(--ease-out);
+}
+.hello[data-greeted] { transform: none; }
+/* A fixed one-line room: a longer greeting grows upwards, never pushing the line. */
+.greeting { position: relative; width: 100%; height: calc(var(--greet-size) * var(--greet-leading)); }
+.greeting h1 {
+  position: absolute; left: 0; right: 0; bottom: 0; margin: 0;
+  font-size: var(--greet-size); line-height: var(--greet-leading); overflow-wrap: anywhere; text-wrap: balance;
+  animation: arrive 760ms var(--ease-out) 120ms both;
+}
+.line {
+  display: grid; max-width: 36ch; margin: 0 auto; color: var(--text-secondary); font-size: 19px; line-height: 1.5; text-wrap: balance;
+  animation: arrive 700ms var(--ease-out) 300ms both;
+}
+/* The boot line and the personal one share a cell: the old one fades out, the new one settles in where it was. */
+.line > span { grid-area: 1 / 1; transition: opacity 520ms var(--ease-out) 160ms, transform 620ms var(--ease-out) 160ms; }
+.line > span[data-leaving] { opacity: 0; transition: opacity 300ms var(--ease-exit); }
+@starting-style { .line > span[data-arriving] { opacity: 0; transform: translate3d(0, 6px, 0); } }
+.foot { display: grid; justify-items: center; align-items: center; height: 22px; }
+.foot > * { grid-area: 1 / 1; }
+/* Only when loading takes longer than 0.9 s; an indeterminate glide (transform only). Fades away at the greeting. */
+.progress {
+  position: relative; display: block; width: 88px; height: 2px; border-radius: 1px; overflow: hidden; background: var(--surface-sunken-2);
+  opacity: 1; transition: opacity 500ms ease-out 900ms;
+}
+@starting-style { .progress { opacity: 0; } }
+.progress i {
+  position: absolute; inset: 0; width: 40%; border-radius: inherit; background: var(--accent-violet); opacity: .75;
+  transform: translate3d(-100%, 0, 0); animation: progress-run 1400ms cubic-bezier(.45, 0, .55, 1) 900ms infinite;
+}
+.hello[data-greeted] .progress { opacity: 0; transition: opacity 240ms ease-out; }
+.hello[data-greeted] .progress i { animation-play-state: paused; }
+.wordmark { font-family: var(--font-display); font-weight: 850; color: var(--text-tertiary); font-size: 15px; letter-spacing: .02em; opacity: 0; }
+.hello[data-greeted] .wordmark { animation: arrive 760ms var(--ease-out) 700ms both; opacity: 1; }
+.problem { display: grid; justify-items: center; gap: 12px; min-width: 0; width: 100%; animation: arrive 620ms var(--ease-out) both; }
 .problem h1 { margin: 0; font-size: 26px; }
 .problem p { max-width: 44ch; margin: 0 auto; color: var(--text-secondary); font-size: 15px; line-height: 1.5; }
 .problem :global(.button) { margin-top: 4px; }
@@ -38,20 +78,25 @@
 .skip { position: absolute; top: max(16px, env(safe-area-inset-top)); right: 20px; width: 1px; height: 1px; padding: 0; opacity: 0; overflow: hidden; }
 .skip:focus-visible { width: auto; height: auto; min-height: 44px; padding: 10px 18px; border-radius: var(--radius-pill); background: var(--cta-bg); color: var(--cta-fg); opacity: 1; }
 
-@keyframes mascot-in { from { opacity: 0; transform: translate3d(0, 14px, 0) scale(.92); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
-@keyframes arrive { from { opacity: 0; transform: translate3d(0, 14px, 0); filter: blur(6px); } }
-@keyframes word { from { opacity: 0; transform: translate3d(0, 8px, 0); filter: blur(4px); } }
+@keyframes mascot-in { from { opacity: 0; transform: translate3d(0, 14px, 0) scale(.92); } to { opacity: 1; transform: none; } }
+/* Text settles with a soft blur that is gone by 55 % of the way (PASS-0.5.3 §5). */
+@keyframes arrive { from { opacity: 0; transform: translate3d(0, 12px, 0); filter: blur(6px); } 55% { filter: none; } }
+@keyframes progress-run { to { transform: translate3d(250%, 0, 0); } }
 
 @media (max-width: 600px) {
+  .layer { --greet-size: 32px; }
   .stage { width: 156px; height: 156px; }
-  .hello h1 { font-size: 32px; }
-  .hello p { font-size: 17px; max-width: 30ch; }
+  .line { font-size: 17px; max-width: 30ch; }
 }
 @media (prefers-reduced-motion: reduce) {
-  /* No choreography: the companion simply fades in, the layer simply fades out. */
+  /* No choreography: the companion and its line simply fade in, the layer simply fades out. */
   .layer { --launch-fade: 240ms; }
   .stage, .layer[data-phase='leaving'] .stage { transform: translate3d(0, -8vh, 0); transition: none; }
-  .mascot { animation: mascot-fade 240ms ease-out 150ms forwards; }
-  .hello h1, .hello p span, .wordmark, .problem { animation: none; }
+  .mascot { animation: fade-in 240ms ease-out 150ms forwards; }
+  .line { animation: fade-in 240ms ease-out 150ms both; }
+  .hello, .line > span { transition: none; }
+  .greeting h1, .wordmark, .hello[data-greeted] .wordmark, .problem { animation: none; }
+  .progress i { width: 100%; transform: none; animation: breathe 1600ms ease-in-out 900ms infinite alternate; }
 }
-@keyframes mascot-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes breathe { from { opacity: .3; } to { opacity: .8; } }

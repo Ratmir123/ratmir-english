@@ -4,7 +4,8 @@
  * «Для тебя» on Practice (planning/v05/MOTION-PASS-0.5.2.md §7 with the §8 fixes). Full width and lighter than the catalog:
  * today's plan and the drills from calls as compact tiles (one tap starts the default mode, a small text action starts the other
  * one, the speaker plays the partner's line), the costliest patterns as chips, «Все тренировки · N» opens every drill in a sheet. When
- * nothing is pending, one quiet line with a curious companion asks for a call. iPhone: ios/Sources/PracticeForYou.swift.
+ * nothing is pending, one quiet line with a curious companion asks for a call. 0.5.3: the «Мои фразы» card sits between the
+ * drills and the patterns (components/phrases/phrases-card.tsx). iPhone: ios/Sources/PracticeForYou.swift.
  */
 import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { ArrowRightIcon, CaretRightIcon, TargetIcon, UploadSimpleIcon } from '@phosphor-icons/react';
@@ -13,6 +14,7 @@ import type { CatalogFamily } from '@/lib/training';
 import { useApp } from '../app/app-context';
 import { MODE_LABEL } from '../app/labels';
 import { cx, kit, Spinner, TtsButton } from '../calls/kit';
+import { PhrasesCard } from '../phrases/phrases-card';
 import { ScreenMascot } from '../shell/screen-mascot';
 import { Sheet } from '../ui/sheet';
 import { forYouModel, type ForYouModel, type ForYouTile } from './for-you-model';
@@ -133,6 +135,9 @@ export function PracticeForYou({ onOpenFamily }: { onOpenFamily: (family: Catalo
         <p>Загрузи запись созвона — после разбора здесь появятся тренировки из твоих моментов.</p>
         <button type="button" className="button secondary small" onClick={() => app.go('calls')}><UploadSimpleIcon size={16} />Загрузить созвон</button>
       </div>}
+
+      {/* 0.5.3 «Мои фразы» (PASS-0.5.3 §1.6): what he saved with «Запомнить» comes back here. */}
+      <PhrasesCard />
 
       {model.suggestions.length > 0 && <div className={styles.patterns} data-enter>
         <h3 className={styles.patternsTitle} id="practice-patterns">Против твоих паттернов</h3>

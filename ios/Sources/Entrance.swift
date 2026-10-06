@@ -3,16 +3,32 @@ import SwiftUI
 // MARK: - Staircase entrance (MOTION-PASS-0.5.2 §2)
 
 /// One entrance for every screen («лесенкой»): blocks marked `.entrance(n)` rise in order the first time their
-/// screen appears (Today: after the launch hand-off). Opacity + 18 pt rise + blur 7 → 0, decelerating on
-/// (0.16, 1, 0.3, 1). Taps never wait for it. Reduce Motion: a short cross-fade without movement.
+/// screen appears (Today: after the launch hand-off). Opacity + 18 pt rise, decelerating on (0.16, 1, 0.3, 1).
+/// PASS 0.5.3 §5 (no freezes): a light blur 4 → 0 only on the first five blocks, gone by 60 % of the rise, and never on
+/// a block holding a live companion or a 3D medal (a blur over a live layer is redrawn every frame).
+/// Taps never wait for it. Reduce Motion: a short cross-fade without movement.
 enum NativeEntrance {
     static let duration = 0.82
     static let step = 0.075
     static let maxSteps = 9
     static let distance: CGFloat = 18
-    static let blur: CGFloat = 7
+    static let blur: CGFloat = 4
+    /// Blocks 0…4 may blur; later blocks travel and fade only.
+    static let blurredSteps = 5
+    /// The blur resolves within this share of `duration`.
+    static let blurShare = 0.6
+    static func delay(_ index: Int) -> Double {
+        Double(min(max(index, 0), maxSteps)) * step
+    }
     static func animation(_ index: Int) -> Animation {
-        .timingCurve(0.16, 1, 0.3, 1, duration: duration).delay(Double(min(max(index, 0), maxSteps)) * step)
+        .timingCurve(0.16, 1, 0.3, 1, duration: duration).delay(delay(index))
+    }
+    static func blurAnimation(_ index: Int) -> Animation {
+        .timingCurve(0.16, 1, 0.3, 1, duration: duration * blurShare).delay(delay(index))
+    }
+    /// The hidden state's blur of block `index`: 0 for live content and for blocks past the first five.
+    static func hiddenBlur(index: Int, holdsLiveContent: Bool) -> CGFloat {
+        holdsLiveContent || index >= blurredSteps ? 0 : blur
     }
     /// Reduce Motion: the shared gentle cross-fade, no travel or blur.
     static let reduced = NativeMotion.crossFade
@@ -20,11 +36,28 @@ enum NativeEntrance {
 
 private struct EntranceVisibleKey: EnvironmentKey { static let defaultValue = true }
 
+/// PASS 0.5.3 §5: true while the launch layer (or the placement test) covers the shell. Companions, rank medals and the
+/// ambient backdrop underneath hold still, so only the launch companion animates; they wake when the layer leaves.
+private struct ShellCoveredKey: EnvironmentKey { static let defaultValue = false }
+
 extension EnvironmentValues {
     /// False until the owning screen's first appearance; blocks outside any stage are always visible.
     var entranceVisible: Bool {
         get { self[EntranceVisibleKey.self] }
         set { self[EntranceVisibleKey.self] = newValue }
+    }
+
+    var shellCovered: Bool {
+        get { self[ShellCoveredKey.self] }
+        set { self[ShellCoveredKey.self] = newValue }
+    }
+}
+
+/// Raised by live companions and 3D medals; the entrance block that holds one never blurs.
+struct EntranceLiveContentKey: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) {
+        value = value || nextValue()
     }
 }
 
@@ -33,12 +66,17 @@ struct EntranceStep: ViewModifier {
     let index: Int
     @Environment(\.entranceVisible) private var visible
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var holdsLiveContent = false
     func body(content: Content) -> some View {
         content
+            .blur(radius: visible || reduceMotion ? 0 : NativeEntrance.hiddenBlur(index: index, holdsLiveContent: holdsLiveContent))
+            .animation(reduceMotion ? NativeEntrance.reduced : NativeEntrance.blurAnimation(index), value: visible)
             .opacity(visible ? 1 : 0)
             .offset(y: visible || reduceMotion ? 0 : NativeEntrance.distance)
-            .blur(radius: visible || reduceMotion ? 0 : NativeEntrance.blur)
             .animation(reduceMotion ? NativeEntrance.reduced : NativeEntrance.animation(index), value: visible)
+            .onPreferenceChange(EntranceLiveContentKey.self) { [binding = $holdsLiveContent] live in
+                if binding.wrappedValue != live { binding.wrappedValue = live }
+            }
     }
 }
 
@@ -111,6 +149,8 @@ extension View {
     }
     /// Light reveal cascade for rows and late content (capped at six steps).
     func rowReveal(_ index: Int = 0) -> some View { modifier(RowReveal(index: index)) }
+    /// Marks a live companion or a 3D medal: the staircase block around it rises and fades without a blur.
+    func entranceLiveContent() -> some View { preference(key: EntranceLiveContentKey.self, value: true) }
 }
 
 // MARK: - Screen mascot (MOTION-PASS-0.5.2 §3)

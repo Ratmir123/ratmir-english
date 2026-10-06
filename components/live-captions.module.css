@@ -36,10 +36,10 @@
 .caption .words { margin: 0; min-height: 0; color: var(--text-primary); font-size: var(--text-17); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* A word settles in place: up 3 px out of a 3 px blur. No overshoot (reserved for the mascot and rewards). */
 .word { position: relative; display: inline-block; max-width: 100%; vertical-align: baseline; animation: word-in 260ms var(--ease-out) both; }
-@keyframes word-in { from { opacity: 0; transform: translate3d(0, 3px, 0); filter: blur(3px); } }
+@keyframes word-in { from { opacity: 0; transform: translate3d(0, 3px, 0); filter: blur(3px); } 55% { filter: none; } }
 /* A revised word cross-fades in place: the new text sharpens in while the replaced text dissolves over it. */
 .revised { display: inline-block; animation: word-revise 200ms var(--ease-out) both; }
-@keyframes word-revise { from { opacity: 0; filter: blur(2px); } }
+@keyframes word-revise { from { opacity: 0; filter: blur(2px); } 55% { filter: none; } }
 .ghost { position: absolute; left: 0; top: 0; white-space: pre; pointer-events: none; animation: word-ghost 200ms var(--ease-out) both; }
 @keyframes word-ghost { to { opacity: 0; filter: blur(2px); } }
 .placeholder { color: var(--text-tertiary); font-size: var(--text-15); animation: fade 240ms var(--ease-out) both; }

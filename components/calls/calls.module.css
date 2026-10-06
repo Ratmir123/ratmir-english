@@ -7,7 +7,7 @@
 .panel { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
 /* A section picked here settles in softly (the screen's arrival is the staircase). */
 .panel[data-switched] { animation: panelIn var(--k-reveal-ms) var(--k-ease) both; }
-@keyframes panelIn { from { opacity: 0; transform: translate3d(0, var(--k-rise), 0); filter: blur(var(--k-blur)); } }
+@keyframes panelIn { from { opacity: 0; transform: translate3d(0, var(--k-rise), 0); } } /* no blur: panels hold glass and the live companion (PASS-0.5.3 §5) */
 .playbook { padding: 22px; }
 @media (max-width: 560px) { .playbook { padding: 18px; } }
 /* «Звонки»: one column; with a call open, master–detail on wide content areas and the call alone otherwise. */

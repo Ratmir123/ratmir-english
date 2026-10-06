@@ -18,6 +18,14 @@ type Options = {
   onSessionSettled?: (session: Session) => void;
   /** A call left processing (ready / needs-speaker / error). */
   onCallSettled?: (call: CallSummary) => void;
+  /**
+   * How results the app fetched on its own land — the first load, focus refreshes, polls, status and limits (PASS-0.5.3
+   * §5): the app passes React's `startTransition`, so they render in slices instead of one long task under an animation.
+   * An explicit `refresh()` lands at once (its callers navigate with the result). Default: at once.
+   */
+  background?: (apply: () => void) => void;
+  /** Limits wait while the launch plays (components/ui/entrance `afterLaunch`): a late banner never lands mid-staircase. */
+  afterLaunch?: (key: string, apply: () => void) => void;
 };
 const POLL_MS = 3000;
 const FOCUS_REFRESH_MS = 10_000;
@@ -35,8 +43,9 @@ export function voiceAvailability(status: ServerStatus | null, statusFailed: boo
 /** State, status and limits with freshness: focus/visibility refresh and background polls (audit U-09, C-05, C-13). */
 export function useAppData(options: Options) {
   const [state, setStateValue] = useState<AppState | null>(null);
+  // Always the newest value set (it may lead the rendered one while a background update is still rendering): written
+  // only where the state is set, never from render, so an urgent render in between cannot roll it back.
   const stateRef = useRef(state);
-  stateRef.current = state;
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [statusFailed, setStatusFailed] = useState(false);
   const [usage, setUsage] = useState<SubscriptionUsage | null>(null);
@@ -63,12 +72,23 @@ export function useAppData(options: Options) {
     }
   }, []);
 
+  /** Background results land through the app's scheduler (a transition); without one, at once. */
+  const land = useCallback((apply: () => void) => {
+    const schedule = callbacks.current.background;
+    if (schedule) schedule(apply); else apply();
+  }, []);
+  /** Results that may wait for the launch to settle (limits); a newer result for the same key replaces a waiting one. */
+  const landAfterLaunch = useCallback((key: string, apply: () => void) => {
+    const hold = callbacks.current.afterLaunch;
+    if (hold) hold(key, () => land(apply)); else land(apply);
+  }, [land]);
+
   const setState = useCallback((update: AppState | ((previous: AppState | null) => AppState | null)) => {
     const next = typeof update === 'function' ? update(stateRef.current) : update;
     stateRef.current = next; setStateValue(next);
   }, []);
 
-  const refresh = useCallback(async (): Promise<AppState | null> => {
+  const load = useCallback(async (background: boolean): Promise<AppState | null> => {
     const ticket = ++sequence.current;
     try {
       const next = await request<AppState>('state');
@@ -76,8 +96,9 @@ export function useAppData(options: Options) {
       if (ticket < applied.current) return stateRef.current;
       applied.current = ticket; lastRefresh.current = Date.now();
       const previous = stateRef.current;
-      stateRef.current = next; setStateValue(next);
-      setNeedLogin(false); setLoadError('');
+      stateRef.current = next;
+      const apply = () => { setStateValue(next); setNeedLogin(false); setLoadError(''); };
+      if (background) land(apply); else apply();
       settle(previous, next);
       return next;
     } catch (error) {
@@ -85,12 +106,13 @@ export function useAppData(options: Options) {
       else setLoadError(messageOf(error, 'Не удалось загрузить данные.'));
       return null;
     }
-  }, [settle]);
+  }, [settle, land]);
+  const refresh = useCallback(() => load(false), [load]);
 
   const refreshStatus = useCallback(async () => {
-    try { setStatus(await request<ServerStatus>('status')); setStatusFailed(false); }
-    catch (error) { if (statusOf(error) === 401) setNeedLogin(true); else setStatusFailed(true); }
-  }, []);
+    try { const value = await request<ServerStatus>('status'); land(() => { setStatus(value); setStatusFailed(false); }); }
+    catch (error) { if (statusOf(error) === 401) setNeedLogin(true); else land(() => setStatusFailed(true)); }
+  }, [land]);
 
   const refreshUsage = useCallback((force = false) => {
     if (usageRequest.current) return usageRequest.current;
@@ -98,26 +120,30 @@ export function useAppData(options: Options) {
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), 45_000);
     const work = (async () => {
-      try { setUsage(await request<SubscriptionUsage>('usage' + (force ? '?refresh=1' : ''), undefined, 'GET', controller.signal)); }
-      catch (error) {
+      let apply: () => void = () => undefined;
+      try {
+        const value = await request<SubscriptionUsage>('usage' + (force ? '?refresh=1' : ''), undefined, 'GET', controller.signal);
+        apply = () => setUsage(value);
+      } catch (error) {
         if (statusOf(error) === 401) { setUsage(null); setNeedLogin(true); }
-        else setUsage(previous => previous
+        else apply = () => setUsage(previous => previous
           ? { ...previous, stale: true, error: 'Не удалось обновить лимиты. Последние данные сохранены.' }
           : { source: 'codex', scope: 'unknown', available: false, checkedAt: null, stale: true, windows: [], plan: null, error: 'Лимиты временно недоступны. Попробуй обновить.' });
-      } finally { clearTimeout(deadline); usageRequest.current = null; setUsageLoading(false); }
+      } finally { clearTimeout(deadline); usageRequest.current = null; }
+      landAfterLaunch('usage', () => { apply(); setUsageLoading(false); });
     })();
     usageRequest.current = work;
     return work;
-  }, []);
+  }, [landAfterLaunch]);
 
-  useEffect(() => { void refresh(); void refreshStatus(); }, [refresh, refreshStatus]);
+  useEffect(() => { void load(true); void refreshStatus(); }, [load, refreshStatus]);
 
   // Freshness: the desktop window lives for days in the tray and the phone shares the same history.
   useEffect(() => {
     const update = (initial = false) => {
       if (document.visibilityState !== 'visible') return;
       // The mount effect above already loaded the state; only later focus/visibility changes refetch it.
-      if (!initial && Date.now() - lastRefresh.current >= FOCUS_REFRESH_MS) void refresh();
+      if (!initial && Date.now() - lastRefresh.current >= FOCUS_REFRESH_MS) void load(true);
       void refreshUsage();
     };
     update(true);
@@ -126,7 +152,7 @@ export function useAppData(options: Options) {
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onFocus);
     return () => { clearInterval(timer); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onFocus); };
-  }, [refresh, refreshUsage]);
+  }, [load, refreshUsage]);
 
   // Background polls while something is being prepared elsewhere (3 s, paused while hidden).
   const analysing = state?.sessions.filter(session => session.status === 'analysing' || !!session.processing).map(session => session.id) ?? [];
@@ -160,20 +186,20 @@ export function useAppData(options: Options) {
           const { calls } = await request<{ calls: CallSummary[] }>('calls');
           const previous = stateRef.current?.calls ?? [];
           if (calls.some(call => !CALL_BUSY.includes(call.status) && CALL_BUSY.includes(previous.find(item => item.id === call.id)?.status ?? 'ready'))) changed = true;
-          else if (!disposed) setState(current => current ? { ...current, calls } : current);
+          else if (!disposed) land(() => setState(current => current ? { ...current, calls } : current));
         }
         if (watchPlacement) {
           const view = await request<PlacementView>('placement');
           if (view.status !== 'scoring') changed = true;
-          else if (!disposed) setState(current => current ? { ...current, placement: view } : current);
+          else if (!disposed) land(() => setState(current => current ? { ...current, placement: view } : current));
         }
-        if (changed && !disposed) await refresh();
+        if (changed && !disposed) await load(true);
       } catch { /* The next tick retries quietly; explicit actions report their own errors. */ }
       finally { running = false; schedule(); }
     };
     schedule();
     return () => { disposed = true; if (timer) clearTimeout(timer); };
-  }, [pollKey, refresh, setState]);
+  }, [pollKey, load, land, setState]);
 
   // Memoised: a new object (and with it a new app context) only when one of these values changes, not on every render
   // of the shell (toasts, celebrations, launch phases). Setters, refs and the refresh callbacks are stable.

@@ -155,8 +155,14 @@ struct TodayScreen: View {
                 VStack(alignment: .leading, spacing: 20) {
                     TodayHeader(completedToday: completedToday, placementFirst: placementFirst, mood: heroMood)
                         .entrance(0)
+                    // PASS-0.5.3 §2: a limit notice (subscription or voice) under the header; a tap opens Profile there.
+                    TodayLimitBanner(select: select)
+                        .entrance(1)
                     heroSection
                         .entrance(1)
+                    // PASS-0.5.3 §1.6: «Мои фразы · N ждут повторения» → «Повторить» under the primary card (hidden when none wait).
+                    TodayPhrasesRow()
+                        .entrance(2)
                     TodayStatusRows(select: select)
                         .entrance(2)
                     TodayUploadProgress()
@@ -959,9 +965,8 @@ private struct TodayLevelSection: View {
                 }
                 if let progression {
                     if placement != nil { RowDivider(inset: 0) }
-                    Button { select(.progress) } label: { RankStrip(progression: progression) }
-                        .buttonStyle(PressButton())
-                        .accessibilityHint("Открывает вкладку «Прогресс»")
+                    // PASS 0.5.3 §8: the medal itself spins (it is not inside a button); its text side opens Progress.
+                    RankStrip(progression: progression, open: { select(.progress) })
                     Text("Опыт — за практику, не за язык. Языковой уровень меняет только тест.")
                         .font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
                 }

@@ -53,26 +53,37 @@ enum RewardArt {
 
 /// The rank art as a physical medal (DESIGN-PASS-0.5.1, RankMedalSolid.swift): a rim when it turns, light
 /// and foil that move against the turn and the phone's tilt, a floor shadow that slides and shrinks.
-/// The current rank sways and floats; a drag spins it with inertia, a tap turns it once. Locked and small
-/// medals stay still. Decorative (navigation wraps it where useful, L-08).
+/// PASS 0.5.3 §8: every turn is slow and smooth (`MedalTurns`, the web model) — a tap turns it once over 2.4 s, a drag
+/// release lands face-front within 4.5 s, the rank-up decelerates from two turns back. A hero medal (≥ 64 pt, animated)
+/// shows itself with one slow turn every 11–16 s while nobody touches it; `aura` adds a breathing glow in the rank colour.
+/// The current rank sways and floats. Locked and small medals stay still; offscreen, in the background or under the
+/// launch layer a turn in flight stops face-front. Decorative (navigation wraps it where useful, L-08).
 struct RankEmblem: View {
     let level: Int
     var size: CGFloat = 124
     var animated = true
-    /// Rank-up: starts back-facing and lands face-front after 1.5 decelerating turns with a flash.
+    /// Rank-up: starts two turns back and decelerates onto the face (3.6 s), the glint crossing as it lands.
     var entrance = false
+    /// A breathing glow in the rank colour behind the medal (Today, Progress, the current rank of the ladder).
+    var aura = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.shellCovered) private var shellCovered
     @State private var visible = false
     @State private var spin = MedalSpinModel()
-    /// A finger or a throw is on the medal: full frame rate until it rests.
+    /// A finger or a turn is on the medal: full frame rate until it rests.
     @State private var handling = false
     @State private var motionHeld = false
     private var rank: PracticeRank { RewardArt.practiceRank(level) }
-    private var moving: Bool { animated && !reduceMotion && contrast != .increased && visible && scenePhase == .active }
+    /// Offscreen, in the background or covered by the launch layer.
+    private var sleeping: Bool { !visible || scenePhase != .active || shellCovered }
+    private var moving: Bool { animated && !reduceMotion && contrast != .increased && !sleeping }
     private var lit: Bool { size >= MedalTuning.solidMin }
     private var gestures: Bool { lit && animated && !reduceMotion }
+    private var hero: Bool { lit && size >= MedalTuning.showcaseMin }
+    private var showcases: Bool { moving && hero }
     var body: some View {
         TimelineView(.animation(minimumInterval: handling ? nil : 1.0 / 30, paused: !(moving || handling))) { context in
             emblem(time: context.date.timeIntervalSinceReferenceDate)
@@ -83,6 +94,7 @@ struct RankEmblem: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Ранг «\(rank.title)»")
+        .entranceLiveContent()
         .modifier(RewardVisibility(visible: $visible))
         .onAppear {
             guard entrance, lit, !reduceMotion else { return }
@@ -90,8 +102,14 @@ struct RankEmblem: View {
             handling = true
         }
         .onChange(of: moving, initial: true) { _, value in holdMotion(value) }
-        .onDisappear { holdMotion(false) }
+        .onChange(of: sleeping) { _, asleep in if asleep { spin.finish() } }
+        .onChange(of: reduceMotion) { _, reduced in if reduced { spin.finish() } }
+        .onDisappear {
+            holdMotion(false)
+            spin.finish()
+        }
         .task(id: handling) { await releaseFrames() }
+        .task(id: showcases) { await runShowcases() }
     }
     private func emblem(time: TimeInterval) -> some View {
         let idle = moving ? time : 0
@@ -103,7 +121,12 @@ struct RankEmblem: View {
         let pitch = lit ? hand.pitch : 0
         let device = moving && lit ? MedalMotion.shared.light(at: time) : (yaw: 0.0, pitch: 0.0)
         let shape = MedalLight(yaw: yaw, pitch: pitch, size: size)
+        // A hero medal glints when a turn brings it face-front; a smaller one keeps the occasional idle glint.
+        let sheen = spin.flash(at: time) ?? (hero ? nil : glint(idle))
         return ZStack {
+            if aura && lit {
+                RankAura(art: rank.art, size: size, time: idle, breathing: moving, dark: colorScheme == .dark)
+            }
             Ellipse().fill(Theme.ink.opacity(pose.shadowOpacity))
                 .frame(width: size * 0.43, height: size * 0.075)
                 .scaleEffect(x: pose.shadowScale * shape.shadowWidth, y: 1)
@@ -112,9 +135,9 @@ struct RankEmblem: View {
                 if lit { RankAtmosphere(art: rank.art, time: idle) }
                 if lit {
                     MedalSolid(art: rank.art, size: size, yaw: yaw, pitch: pitch, lightYaw: yaw + device.yaw, lightPitch: pitch + device.pitch,
-                               holo: ["rank-violet", "rank-rose", "rank-gold"].contains(rank.art), glint: spin.flash(at: time) ?? glint(idle))
+                               holo: ["rank-violet", "rank-rose", "rank-gold"].contains(rank.art), glint: sheen)
                 } else {
-                    Image("reward-" + rank.art + "-v041").resizable().scaledToFit()
+                    ImagePrewarm.image("reward-" + rank.art + "-v041").resizable().scaledToFit()
                 }
             }.scaleEffect(pose.scale).rotationEffect(.degrees(pose.rotation), anchor: UnitPoint(x: 0.5, y: 0.64)).offset(y: pose.lift)
         }.frame(width: size, height: size)
@@ -129,7 +152,7 @@ struct RankEmblem: View {
     private func touch(_ event: MascotTouchEvent) {
         let now = Date().timeIntervalSinceReferenceDate
         switch event {
-        case .began(let point, let side): spin.touchBegan(point, side: side)
+        case .began(let point, let side): spin.touchBegan(point, side: side, time: now)
         case .moved(let point, let side): spin.touchMoved(point, side: side, time: now)
         case .ended(let point, let side, let quick): spin.touchEnded(point, side: side, time: now, quick: quick)
         case .cancelled: spin.touchCancelled()
@@ -142,6 +165,18 @@ struct RankEmblem: View {
         while !Task.isCancelled {
             do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
             if !spin.isBusy(at: Date().timeIntervalSinceReferenceDate) { handling = false; return }
+        }
+    }
+    /// The showcase schedule (web `useMedal3D`): the first attempt 11–16 s after the medal shows, then one slow turn
+    /// every 11–16 s; a touch postpones it until the medal has been left alone for 8 s. Full frame rate while it turns.
+    private func runShowcases() async {
+        guard showcases else { return }
+        var wait = spin.showcaseDelay()
+        while !Task.isCancelled {
+            do { try await Task.sleep(for: .seconds(wait)) } catch { return }
+            let attempt = spin.attemptShowcase(at: Date().timeIntervalSinceReferenceDate, sleeping: sleeping)
+            if attempt.started && !handling { handling = true }
+            wait = attempt.next
         }
     }
     private func holdMotion(_ on: Bool) {
@@ -189,7 +224,8 @@ struct RewardMotionPose {
     }
 }
 
-private struct RewardVisibility: ViewModifier {
+/// On screen or not (a ScrollView keeps offscreen rows alive): reward motion runs only while visible.
+struct RewardVisibility: ViewModifier {
     @Binding var visible: Bool
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
@@ -216,10 +252,10 @@ struct RewardArtPressStyle: ButtonStyle {
     }
 }
 
-private struct RankAtmosphere: View {
-    let art: String
-    let time: TimeInterval
-    private var accent: Color {
+/// Rank colours (PASS 0.5.3 §8): the accent of the rank's atmosphere for auras and bars, and a title ink — the dark rim
+/// metal on light surfaces, the light rim metal on dark ones (at least 5.4 : 1 against the card in both themes).
+enum RankPalette {
+    static func accent(_ art: String) -> Color {
         switch art {
         case "rank-mint": return Color(red: 0.15, green: 0.77, blue: 0.56)
         case "rank-sky": return Color(red: 0.17, green: 0.64, blue: 0.93)
@@ -229,6 +265,52 @@ private struct RankAtmosphere: View {
         default: return Color(red: 0.70, green: 0.73, blue: 0.86)
         }
     }
+
+    static func ink(_ art: String) -> Color {
+        let rim = MedalTuning.rim(for: art)
+        return Color(uiColor: UIColor { traits in
+            let rgb = traits.userInterfaceStyle == .dark ? rim.light : rim.dark
+            return UIColor(red: CGFloat(rgb.x), green: CGFloat(rgb.y), blue: CGFloat(rgb.z), alpha: 1)
+        })
+    }
+
+    /// The XP bar: the rank's metal from its dark rim through the accent to its light rim.
+    static func bar(_ art: String) -> [Color] {
+        let rim = MedalTuning.rim(for: art)
+        return [MedalTuning.color(rim.dark), accent(art), MedalTuning.color(rim.light)]
+    }
+}
+
+/// A soft glow in the rank colour behind a hero medal that breathes slowly (one gradient, no blur pass).
+private struct RankAura: View {
+    let art: String
+    let size: CGFloat
+    let time: TimeInterval
+    let breathing: Bool
+    let dark: Bool
+    static let period = 4.2
+
+    var body: some View {
+        let wave = breathing ? (1 - cos(time * 2 * .pi / RankAura.period)) / 2 : 0.5
+        let accent = RankPalette.accent(art)
+        let peak = dark ? 0.46 : 0.34
+        return RadialGradient(stops: [.init(color: accent.opacity(peak), location: 0),
+                                      .init(color: accent.opacity(peak * 0.55), location: 0.45),
+                                      .init(color: accent.opacity(0), location: 1)],
+                              center: .center, startRadius: 0, endRadius: size * 0.78)
+            .frame(width: size * 1.56, height: size * 1.56)
+            .scaleEffect(0.92 + 0.1 * CGFloat(wave))
+            .opacity(0.7 + 0.3 * wave)
+            .offset(y: size * 0.02)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct RankAtmosphere: View {
+    let art: String
+    let time: TimeInterval
+    private var accent: Color { RankPalette.accent(art) }
     var body: some View {
         Canvas { context, dimensions in
             let side = min(dimensions.width, dimensions.height)
@@ -297,19 +379,21 @@ struct RewardImage: View {
     var locked = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.shellCovered) private var shellCovered
     @State private var visible = false
-    private var moving: Bool { motion != .still && !reduceMotion && visible && scenePhase == .active }
+    private var moving: Bool { motion != .still && !reduceMotion && visible && !shellCovered && scenePhase == .active }
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !moving)) { context in
             let pose = RewardMotionPose.achievement(time: moving ? context.date.timeIntervalSinceReferenceDate : 0, size: size, motion: motion, active: moving)
             ZStack {
                 Ellipse().fill(Theme.ink.opacity(pose.shadowOpacity))
                     .frame(width: size * 0.44, height: size * 0.07).scaleEffect(x: pose.shadowScale, y: 1).offset(y: size * 0.32)
-                Image(name).resizable().scaledToFit()
+                // Decoded during the launch (`ImagePrewarm`); the asset catalog otherwise.
+                ImagePrewarm.image(name).resizable().scaledToFit()
                     .saturation(locked ? 0 : 1).opacity(locked ? 0.5 : 1)
                     .scaleEffect(pose.scale).rotationEffect(.degrees(pose.rotation), anchor: UnitPoint(x: 0.5, y: 0.68)).offset(y: pose.lift)
             }
-        }.frame(width: size, height: size).accessibilityHidden(true).modifier(RewardVisibility(visible: $visible))
+        }.frame(width: size, height: size).accessibilityHidden(true).entranceLiveContent().modifier(RewardVisibility(visible: $visible))
     }
 }
 

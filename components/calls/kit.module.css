@@ -304,7 +304,7 @@ textarea.input { resize: vertical; min-height: 120px; }
 
 /* ───────── motion ───────── */
 /* The app-wide reveal (globals .reveal): rise + a little blur settling, capped light stagger. */
-@keyframes rise { from { opacity: 0; transform: translate3d(0, var(--k-rise), 0); filter: blur(var(--k-blur)); } }
+@keyframes rise { from { opacity: 0; transform: translate3d(0, var(--k-rise), 0); filter: blur(var(--k-blur)); } 55% { filter: none; } }
 .rise { animation: rise var(--k-reveal-ms) var(--k-ease) both; animation-delay: calc(min(var(--i, 0), 6) * var(--k-reveal-step)); }
 @media (prefers-reduced-motion: reduce) {
   .ringSpin { animation: none; }

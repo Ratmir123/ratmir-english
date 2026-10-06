@@ -61,14 +61,14 @@
 /* Aside cards (WeeklyRhythm shares .side, .week and .dot). */
 .side { display: grid; gap: 16px; padding: 20px 20px 18px; }
 .side h2 { font-size: 19px; }
-.rank { display: flex; align-items: center; gap: 14px; width: 100%; padding: 10px 12px 10px 4px; margin: -4px 0; border-radius: 18px; text-align: left;
-  transition: background-color var(--hover-ms) var(--ease-out); }
-@media (hover: hover) and (pointer: fine) { .rank:hover { background: var(--surface-sunken); } }
-.rankCopy { display: grid; gap: 7px; flex: 1; min-width: 0; }
-.rankCopy strong { font-family: var(--font-display); font-size: 19px; font-weight: 850; line-height: 1.2; }
-.rankCopy strong small { font-family: var(--font-body); font-size: var(--text-13); font-weight: 600; color: var(--text-secondary); }
+/* Level card: the rank is its character (PASS-0.5.3 §8) — a 96 px medal you can turn, its aura spilling softly
+   into the padding, the title and XP bar in the rank's colours. Not a button: «Награды» is the way to the rewards. */
+.rank { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.rankMedal { display: grid; place-items: center; flex: 0 0 auto; width: 104px; height: 104px; margin: -6px 0 -6px -6px; }
+.rankCopy { display: grid; gap: 6px; flex: 1; min-width: 0; }
+.rankTitle { font-family: var(--font-display); font-size: 24px; font-weight: 850; line-height: 1.15; letter-spacing: -.3px; overflow-wrap: anywhere; }
 .rankCopy > small { font-size: var(--text-13); }
-.rankCopy :global(.progress-track) { height: 6px; }
+.rewardsLink { justify-self: start; margin: 2px 0 0 -4px; }
 
 .week { list-style: none; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
 .week li { display: grid; justify-items: center; gap: 6px; min-width: 0; }
@@ -79,7 +79,6 @@
 .week li[data-today='true'] .dot { box-shadow: 0 0 0 2px var(--surface-card), 0 0 0 4px var(--accent-violet); }
 .week li[data-today='true'] small { color: var(--text-primary); font-weight: 700; }
 
-.limits { width: 100%; text-align: left; }
 
 @media (max-width: 640px) {
   .hero { min-height: 0; }

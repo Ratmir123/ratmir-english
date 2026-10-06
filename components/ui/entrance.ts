@@ -5,9 +5,17 @@ import { useLayoutEffect, useSyncExternalStore, type RefObject } from 'react';
 /** 'launch' = the cold open after the greeting hands off; 'screen' = a tab switch (shorter, closer). */
 export type EntranceVariant = 'launch' | 'screen';
 
-// Mirrors the [data-entering] tokens in app/globals.css (duration + step × max steps + base).
-const LENGTH: Record<EntranceVariant, number> = { launch: 900 + 85 * 9 + 60, screen: 620 + 48 * 7 };
+/** How long a whole wave runs. Mirrors the [data-entering] tokens in app/globals.css (duration + step × max steps + base). */
+export const ENTRANCE_MS: Readonly<Record<EntranceVariant, number>> = { launch: 900 + 85 * 9 + 60, screen: 620 + 48 * 7 };
 const ROW = 32;
+/**
+ * Live content: a WebGL companion (its canvas), a rank medal (3D faces, float, glint) or an animated achievement medal.
+ * A block holding one rises with opacity + transform only (`data-enter-live`, PASS-0.5.3 §5): a blur over content that
+ * repaints every frame would be re-filtered every frame, and the filter would flatten the medal's 3D for the duration.
+ */
+const LIVE_CONTENT = 'canvas, [data-rank], [data-reward-motion]';
+/** Lanes that never carry a blur anyway. */
+const PLAIN_LANES = new Set(['side', 'chrome', 'fade', 'live']);
 
 /**
  * Staircase entrance (MOTION-PASS-0.5.2 §2, «лесенкой»). Every `[data-enter]` block under `ref` rises in the order it
@@ -16,7 +24,8 @@ const ROW = 32;
  * content, so a long navigation list never delays the screen. Runs whenever `key` changes (`null` = do nothing yet).
  * Blocks below the fold join the end of the wave instead of queueing behind it. Content stays visible without JS:
  * the animation exists only while the root carries `data-entering`, which is removed afterwards so hover and press
- * transitions work normally.
+ * transitions work normally. A block with live content (`LIVE_CONTENT`) is marked `data-enter-live` for this wave
+ * and rises without a blur; `data-enter="live"` asks for the same explicitly.
  */
 export function useEntrance(ref: RefObject<HTMLElement | null>, key: unknown, variant: EntranceVariant = 'screen') {
   useLayoutEffect(() => {
@@ -33,9 +42,11 @@ export function useEntrance(ref: RefObject<HTMLElement | null>, key: unknown, va
       const lane = item.element.dataset.enter === 'side' ? 'side' : 'main';
       const index = item.rect.top < fold ? steps[lane]++ : steps[lane];
       item.element.style.setProperty('--enter-i', String(index));
+      const live = !PLAIN_LANES.has(item.element.dataset.enter ?? '') && !!item.element.querySelector(LIVE_CONTENT);
+      if (live) item.element.dataset.enterLive = ''; else delete item.element.dataset.enterLive;
     }
     root.dataset.entering = variant;
-    const done = window.setTimeout(() => { if (root.dataset.entering === variant) delete root.dataset.entering; }, LENGTH[variant] + 80);
+    const done = window.setTimeout(() => { if (root.dataset.entering === variant) delete root.dataset.entering; }, ENTRANCE_MS[variant] + 80);
     return () => { window.clearTimeout(done); delete root.dataset.entering; };
     // The ref is stable; `key` is the trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -57,3 +68,26 @@ export function markShellRevealed() {
 export function useShellRevealed(): boolean {
   return useSyncExternalStore(subscribeReveal, () => shellRevealed, () => false);
 }
+
+/* The launch is settled once its staircase has finished (or it ended without one: sign-in, the level test). Until then
+   background results that would re-render the covered shell or insert a block mid-wave (limits, the catalog) wait and
+   land together right after it (PASS-0.5.3 §5). Keyed: a newer result for the same key replaces the waiting one. */
+let launchSettled = false;
+const afterLaunchTasks = new Map<string, () => void>();
+
+export function afterLaunch(key: string, task: () => void) {
+  if (launchSettled) { task(); return; }
+  afterLaunchTasks.set(key, task);
+}
+
+export function markLaunchSettled() {
+  if (launchSettled) return;
+  launchSettled = true;
+  const tasks = [...afterLaunchTasks.values()];
+  afterLaunchTasks.clear();
+  for (const task of tasks) {
+    try { task(); } catch (error) { console.error(error); }
+  }
+}
+
+export function isLaunchSettled(): boolean { return launchSettled; }

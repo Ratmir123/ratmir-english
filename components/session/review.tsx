@@ -13,6 +13,7 @@ import { useApp } from '../app/app-context';
 import { request, messageOf } from '../app/api';
 import { CTA, shortDate, skillLabel } from '../app/labels';
 import { Companion, type MascotEmotion } from '../shell/companion';
+import { PhraseResults } from '../phrases/phrase-results';
 import { SpeechTimingPanel } from '../speech-timing';
 import { ElapsedTime } from '../ui/elapsed';
 import { Dock } from './dock';
@@ -250,6 +251,7 @@ export function ReviewView() {
         {a.strengths.length > 0 && <ul className={styles.strengths}>{a.strengths.map((value, index) => <li key={index}><CheckIcon size={16} weight="bold" />{value}</li>)}</ul>}
         <PatternHits analysis={a} />
       </section>
+      <PhraseResults session={s} />
 
       {a.priorities.map((priority, index) => {
         const pattern = patternTitle(priority.patternId);

@@ -1,0 +1,32 @@
+/* cssmodules-pure-no-check */
+/* The `?entry=quick` page (PASS-0.5.3 §7). The head script in app/layout.tsx marks <html data-entry="quick"> before the first
+   paint; these page-level rules (hence the pure-check opt-out above: they style <html>, <body> and the launch backdrop) keep
+   that first paint transparent, so the transparent overlay window never flashes an opaque frame. Until the shell's quick
+   style is known the page shows nothing; older shells' framed window shows its own background colour meanwhile, and the
+   panel style (older shells, a plain browser) brings the opaque app background back. */
+:global(html[data-entry='quick']:not([data-quick-style='panel'])),
+:global(html[data-entry='quick']:not([data-quick-style='panel'])) :global(body) { background: transparent; }
+/* Nothing of the main app (the launch backdrop, its aurora) paints in the quick window: only this page's root. */
+:global(html[data-entry='quick']) :global(body) > div:not(.root) { display: none; }
+:global(html[data-entry='quick'][data-quick-style='overlay']) { overflow: hidden; scrollbar-gutter: auto; }
+:global(html[data-entry='quick'][data-quick-style='overlay']) :global(body) { overflow: hidden; }
+
+.root { position: relative; z-index: 1; }
+
+/* Overlay: the card is anchored bottom-right; everything else lets clicks through to the desktop (the shell ignores mouse
+   events over the transparent parts; the page switches that off while the pointer is on the bubble or the companion). */
+.overlay {
+  position: fixed; inset: 0; display: flex; align-items: flex-end; justify-content: flex-end;
+  padding: 8px 2px 0 8px; overflow: hidden; pointer-events: none;
+}
+.content { min-width: 0; max-width: 100%; pointer-events: none; }
+.content [data-part] { pointer-events: auto; }
+.overlay:not([data-phase='shown']) .content { visibility: hidden; }
+
+/* Panel: the same card centred on the opaque app background. */
+.panel {
+  min-height: 100dvh; display: grid; place-items: center; align-content: center;
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+.panel > :global(.ambient) { z-index: 0; }
+.panel > :not(:global(.ambient)) { position: relative; z-index: 1; width: min(440px, 100%); }

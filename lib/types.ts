@@ -2,6 +2,7 @@ import type { PlacementView } from './placement/types';
 import type { CallSummary, CommunicationPattern, CostCategory, PersonalDrill, ProfileFact } from './calls/types';
 import type { LessonPlanExtras } from './training';
 import type { StrategyMoveScore } from './strategy-moves';
+import type { PhraseResult, SavedPhrase } from './phrases/types';
 
 /** Canonical skill names for BOTH clients (iPhone mirrors these labels exactly). */
 export const SKILLS = [
@@ -107,6 +108,8 @@ export interface Session {
   processing?: { stage: 'queued' | 'evaluating' | 'waiting-retry' | 'responding'; startedAt: string; attempt?: number; nextAttemptAt?: string };
   completion?: { canComplete: boolean; needsRetry: boolean; reason: string | null };
   completedAt?: string;
+  /** 0.5.3: which saved phrases this conversation used (PASS-0.5.3 §1.5); set when the conversation finishes. */
+  phraseResults?: PhraseResult[];
 }
 export interface SkillState {
   id: SkillId; state: 'unknown' | 'supported' | 'provisional' | 'independent' | 'recheck';
@@ -140,6 +143,8 @@ export interface AppState {
   drills?: PersonalDrill[];
   /** v0.5 facts about the learner suggested by call reviews (accepted ones feed the coach). */
   profileFacts?: ProfileFact[];
+  /** 0.5.3 «Мои фразы»: saved with «Запомнить», newest first, archived included (PASS-0.5.3 §1). */
+  phrases?: SavedPhrase[];
 }
 export interface PracticeQuality {
   observedTargets: number; targetCount: number; independentSuccesses: number;

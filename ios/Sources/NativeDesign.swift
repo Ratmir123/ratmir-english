@@ -206,15 +206,17 @@ enum NativeDate {
 
 // MARK: - Canvas and ambient background
 
-/// Slow aurora behind content: MeshGradient on iOS 18+, blurred blobs on iOS 17,
-/// static with Reduce Motion, solid with Reduce Transparency. Paused off screen.
+/// Slow aurora behind content: MeshGradient on iOS 18+, soft radial blobs on iOS 17,
+/// static with Reduce Motion, solid with Reduce Transparency. Paused off screen and while the launch layer covers
+/// the shell (PASS 0.5.3 §5).
 struct AmbientBackdrop: View {
     var intensity: Double = 1
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.shellCovered) private var shellCovered
     @State private var visible = false
-    private var moving: Bool { visible && !reduceMotion && scenePhase == .active }
+    private var moving: Bool { visible && !reduceMotion && !shellCovered && scenePhase == .active }
     var body: some View {
         ZStack {
             Theme.base
@@ -288,9 +290,22 @@ private struct AmbientBlobs: View {
             .frame(width: width, height: height)
         }
     }
+    /// The circle of diameter `side` blurred by 0.22 · side, drawn as one radial gradient out to 1.88 × its radius:
+    /// the same soft blob without a blur pass on every 15 Hz frame (PASS 0.5.3 §5).
     private func blob(_ color: Color, side: CGFloat, x: CGFloat, y: CGFloat) -> some View {
-        Circle().fill(color).frame(width: side, height: side).blur(radius: side * 0.22).offset(x: x, y: y)
+        let reach = side * AmbientBlobs.reach
+        return RadialGradient(stops: AmbientBlobs.falloff.map { Gradient.Stop(color: color.opacity($0.alpha), location: $0.location) },
+                              center: .center, startRadius: 0, endRadius: reach / 2)
+            .frame(width: reach, height: reach)
+            .offset(x: x, y: y)
     }
+
+    /// Diameter of the gradient relative to the blob's own diameter.
+    private static let reach: CGFloat = 1.88
+    /// Radial profile of a disc blurred by 0.44 of its radius, measured out to 1.88 radii.
+    private static let falloff: [(location: CGFloat, alpha: Double)] = [
+        (0, 0.92), (0.3, 0.8), (0.53, 0.46), (0.78, 0.12), (1, 0),
+    ]
 }
 
 /// Screen root: ambient background and adaptive foreground. Never forces a colour scheme.
@@ -1150,8 +1165,8 @@ struct NativeOpeningState {
 }
 
 /// The launch greeting from saved facts only, the same copy as the web `deriveOpeningGreeting`
-/// (lib/startup-welcome.ts): «Привет, <имя>.» — or plain «Привет.» while no real name is saved — and one line chosen
-/// from the history. Launch never waits for a model call.
+/// (lib/startup-welcome.ts): «Привет, <имя>.» — or plain «Привет.» while no real name is saved — and one motivating
+/// line (`LaunchMotivation`). Launch never waits for a model call; without a state the line is the boot line.
 struct OpeningGreeting: Equatable {
     let greeting: String
     let motivation: String
@@ -1168,13 +1183,25 @@ struct OpeningGreeting: Equatable {
                   updated <= now, calendar.isDate(updated, inSameDayAs: now) else { return false }
             return session.turns.contains { $0.role == "user" && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         }
-        if resumable {
-            motivation = "Разговор ждёт — продолжим с того же места."
-        } else if completedToday {
-            motivation = "Сегодня уже была практика. Дальше — в своём темпе."
-        } else {
-            motivation = "Начнём с одного короткого шага."
-        }
+        var facts = LaunchMotivationFacts()
+        facts.resumable = resumable
+        facts.completedToday = completedToday
+        // «Мои фразы» due now (new phrases are due at once): the same reader as Today and Practice.
+        facts.duePhrases = state?.duePhraseCount(now: now) ?? 0
+        // Web: a personal drill from a real call that is not done yet.
+        facts.pendingCallDrill = (state?.drills ?? []).contains { !$0.isDone && $0.source.type == "call" }
+        // «На этой неделе»: today and the six days before, from the same practice dates as Today's «N из 7».
+        facts.practiceDays = LaunchMotivation.practiceDays(OpeningGreeting.practiceDates(state), now: now, calendar: calendar)
+        facts.dayOfYear = LaunchMotivation.dayOfYear(now, calendar: calendar)
+        motivation = LaunchMotivation.line(facts)
+    }
+
+    /// When practice happened (`PracticeRhythm`'s sources): completed lessons and the server's practice results.
+    static func practiceDates(_ state: TrainingState?) -> [Date] {
+        guard let state else { return [] }
+        var dates = state.sessions.filter { $0.status == "completed" }.compactMap(\.latestDate)
+        dates += (state.progression?.recentResults ?? []).compactMap { NativeDate.parse($0.completedAt) }
+        return dates
     }
 
     /// Today's heading (web `greeting()` in components/app/labels.ts): the time of day, then the name when one is saved.
@@ -1190,6 +1217,102 @@ struct OpeningGreeting: Equatable {
         guard let clean = name?.trimmingCharacters(in: .whitespacesAndNewlines), !clean.isEmpty,
               !["ты", "you", "learner"].contains(clean.lowercased()) else { return nil }
         return clean
+    }
+}
+
+/// What the launch motivation rules look at (web `LaunchMotivationFacts`); each platform derives them from its state.
+struct LaunchMotivationFacts: Equatable {
+    /// A conversation is waiting (Today's «Продолжить», not older than 72 h).
+    var resumable = false
+    /// A completed practice with his own words today.
+    var completedToday = false
+    /// «Мои фразы» due now.
+    var duePhrases = 0
+    /// A personal drill from a real call that is not done yet.
+    var pendingCallDrill = false
+    /// Practice days among today and the six days before.
+    var practiceDays = 0
+    /// 1-based day of the year for the pool.
+    var dayOfYear = 1
+}
+
+/// PASS 0.5.3 §6: the motivating line under the launch companion — the same strings (byte for byte), order and rules as
+/// lib/startup-welcome.ts (`launchMotivation`, `MOTIVATION_POOL`, `duePhrasesLine`, `rhythmLine`, `bootMotivation`).
+/// Pure. The boot line (before any data) is the pool line of the day; the personal line is the first match of: a
+/// conversation waits → practised today → phrases due → a drill from a call → ≥ 3 practice days this week → the pool.
+enum LaunchMotivation {
+    static let resumeLine = "Разговор ждёт — продолжим с того же места."
+    static let doneTodayLine = "Сегодня уже была практика. Дальше — в своём темпе."
+    static let callDrillLine = "Есть тренировка из твоего созвона — переиграем момент."
+    /// «Держим ритм» needs at least this many practice days in the last seven (today included).
+    static let rhythmDays = 3
+    /// The day-of-year pool, in this order: index = (1-based local day of the year − 1) mod 7, 1 January → the first line.
+    static let pool = [
+        "Пять минут вслух — лучше часа в голове.",
+        "Сильный ответ начинается с главного.",
+        "Каждый разговор делает следующий созвон проще.",
+        "Говори своими словами — точность придёт с практикой.",
+        "Короткий шаг каждый день сильнее редкого рывка.",
+        "Свою цену называют спокойно.",
+        "Сегодня — ещё один спокойный разговор на английском.",
+    ]
+
+    /// «1 фраза ждёт повторения — скажем её вслух.» / «3 фразы ждут … их …» / «5 фраз ждут …» / «21 фраза ждёт … их …».
+    static func duePhrasesLine(_ count: Int) -> String {
+        let n = max(1, count)
+        let noun = RuFormat.plural(n, "фраза", "фразы", "фраз")
+        return "\(n) \(noun) \(noun == "фраза" ? "ждёт" : "ждут") повторения — скажем \(n == 1 ? "её" : "их") вслух."
+    }
+
+    /// «3 дня практики на этой неделе. Держим ритм.» / «5 дней …».
+    static func rhythmLine(_ days: Int) -> String {
+        let n = max(0, days)
+        return "\(n) " + RuFormat.plural(n, "день", "дня", "дней") + " практики на этой неделе. Держим ритм."
+    }
+
+    /// 1 for 1 January … 365/366 for 31 December in `calendar` (its time zone).
+    static func dayOfYear(_ now: Date, calendar: Calendar = .current) -> Int {
+        guard now.timeIntervalSinceReferenceDate.isFinite else { return 1 }
+        return calendar.ordinality(of: .day, in: .year, for: now) ?? 1
+    }
+
+    /// The pool line for a day of the year (1-based).
+    static func poolLine(day: Int) -> String {
+        let count = pool.count
+        return pool[((day - 1) % count + count) % count]
+    }
+
+    /// The line from the first frame, before any data: the day-of-year pool only.
+    static func boot(now: Date = Date(), calendar: Calendar = .current) -> String {
+        poolLine(day: dayOfYear(now, calendar: calendar))
+    }
+
+    /// Distinct practice days among today and the six days before it in `calendar` (the window of Today's «N из 7»).
+    /// Future and older-than-eight-days times never count.
+    static func practiceDays(_ completed: [Date], now: Date = Date(), calendar: Calendar = .current) -> Int {
+        let key = { (date: Date) in calendar.dateComponents([.year, .month, .day], from: date) }
+        var week = Set<DateComponents>()
+        for back in 0..<7 {
+            if let day = calendar.date(byAdding: .day, value: -back, to: now) { week.insert(key(day)) }
+        }
+        var practised = Set<DateComponents>()
+        for date in completed {
+            let ahead = date.timeIntervalSince(now)
+            guard ahead.isFinite, ahead <= 1, -ahead <= 8 * 86_400 else { continue }
+            let day = key(date)
+            if week.contains(day) { practised.insert(day) }
+        }
+        return practised.count
+    }
+
+    /// The first rule that matches, in this order; otherwise the day-of-year pool.
+    static func line(_ facts: LaunchMotivationFacts) -> String {
+        if facts.resumable { return resumeLine }
+        if facts.completedToday { return doneTodayLine }
+        if facts.duePhrases > 0 { return duePhrasesLine(facts.duePhrases) }
+        if facts.pendingCallDrill { return callDrillLine }
+        if facts.practiceDays >= rhythmDays { return rhythmLine(facts.practiceDays) }
+        return poolLine(day: facts.dayOfYear)
     }
 }
 
@@ -1220,10 +1343,14 @@ enum NativeLaunch {
 /// companion instance (176 × 184, its centre at 40 % of the screen) while the saved key is checked, when the server
 /// cannot be reached and during the greeting. Text below the companion never moves it. The greeting can be tapped
 /// or escaped at any moment; there is no visible continue button.
+/// PASS 0.5.3 §6 (the launch is the preloader): from the first moments one motivating line from the day-of-year pool
+/// sits under the companion; at the greeting «Привет, …» rises above it and the line cross-fades to the personal one
+/// when that differs. Reward and scenario art is decoded meanwhile (`ImagePrewarm`).
 struct LaunchView: View {
     let stage: LaunchStage
     /// «Привет, <имя>.» or «Привет.» (`OpeningGreeting`).
     let greeting: String
+    /// The personal motivating line (`OpeningGreeting.motivation`); empty = the boot line.
     let sentence: String
     /// Fading out: the greeting's hand-off to Home or a plain cover fade.
     let leaving: Bool
@@ -1231,6 +1358,8 @@ struct LaunchView: View {
     let skip: () -> Void
     let retry: () -> Void
     let enterCode: () -> Void
+    /// The boot line: no data needed, the same all day.
+    private let bootLine: String
     @State private var shown = false
     @State private var greeted = false
     @State private var played = false
@@ -1252,11 +1381,21 @@ struct LaunchView: View {
         self.skip = skip
         self.retry = retry
         self.enterCode = enterCode
+        bootLine = LaunchMotivation.boot()
         // Straight into the greeting (no launch wait before it): the companion lands squashed and springs up.
         let direct = stage == .greeting
         _pose = State(initialValue: direct ? VoiceOrbGreetingPose.arriving : VoiceOrbGreetingPose.neutral)
         _greetingMood = State(initialValue: direct ? VoiceOrbMood.happy : nil)
     }
+
+    private var personalLine: String {
+        let line = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+        return line.isEmpty ? bootLine : line
+    }
+    /// The greeting brings a different line: the boot line hands over to it.
+    private var crossFades: Bool { personalLine != bootLine }
+    private var bootLineVisible: Bool { shown && !leaving && !isOffline && !(greeted && crossFades) }
+    private var personalLineVisible: Bool { greeted && !leaving && crossFades }
 
     private var isGreeting: Bool { stage == .greeting }
     private var offline: (detail: String, retrying: Bool)? {
@@ -1314,8 +1453,10 @@ struct LaunchView: View {
                 .animation(reduceMotion ? NativeMotion.crossFade : arrive, value: shown)
                 .animation(reduceMotion ? NativeMotion.crossFade : fade, value: leaving)
             ZStack(alignment: .top) {
-                greetingLines
-                waitingLine
+                VStack(spacing: 18) {
+                    greetingLines
+                    waitingLine
+                }
                 if let offline = offline {
                     offlineBlock(offline)
                         .transition(reduceMotion ? AnyTransition.opacity
@@ -1327,6 +1468,7 @@ struct LaunchView: View {
         }
     }
 
+    /// «Привет, …» (its place kept from the start, so nothing moves) above the motivating line.
     private var greetingLines: some View {
         VStack(spacing: 18) {
             Text(greeting)
@@ -1337,25 +1479,40 @@ struct LaunchView: View {
                 .offset(y: greeted || reduceMotion ? 0 : 12)
                 .animation(reduceMotion ? NativeMotion.crossFade : lineIn.delay(0.24), value: greeted)
                 .animation(reduceMotion ? NativeMotion.crossFade : lineOut, value: leaving)
-            Text(sentence)
-                .font(.body).foregroundStyle(Theme.inkSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 360)
-                .opacity(greeted && !leaving ? 1 : 0)
-                .offset(y: greeted || reduceMotion ? 0 : 10)
-                .animation(reduceMotion ? NativeMotion.crossFade : lineIn.delay(0.54), value: greeted)
-                .animation(reduceMotion ? NativeMotion.crossFade : lineOut, value: leaving)
+            ZStack(alignment: .top) {
+                motivationText(bootLine)
+                    .opacity(bootLineVisible ? 1 : 0)
+                    .animation(reduceMotion ? NativeMotion.crossFade : lineIn.delay(0.3), value: shown)
+                    .animation(reduceMotion ? NativeMotion.crossFade : lineOut, value: greeted)
+                    .animation(reduceMotion ? NativeMotion.crossFade : lineOut, value: leaving)
+                    .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.exit, value: isOffline)
+                if crossFades {
+                    motivationText(personalLine)
+                        .opacity(personalLineVisible ? 1 : 0)
+                        .offset(y: greeted || reduceMotion ? 0 : 10)
+                        .animation(reduceMotion ? NativeMotion.crossFade : lineIn.delay(0.54), value: greeted)
+                        .animation(reduceMotion ? NativeMotion.crossFade : lineOut, value: leaving)
+                }
+            }
         }
         .allowsHitTesting(false)
-        .accessibilityElement(children: .combine)
-        .accessibilityHidden(!isGreeting)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isGreeting ? greeting + " " + personalLine : bootLine)
+        .accessibilityHidden(isOffline || !(isGreeting || shown))
         .accessibilityAddTraits(isGreeting ? .isButton : [])
         .accessibilityHint(isGreeting ? "Коснись, чтобы сразу открыть главную." : "")
         .accessibilityAction(.default) { if isGreeting { skip() } }
     }
 
-    /// Only after a few seconds of waiting: the server is slow, not the app.
+    private func motivationText(_ line: String) -> some View {
+        Text(line)
+            .font(.body).foregroundStyle(Theme.inkSecondary)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 360)
+    }
+
+    /// Only after a few seconds of waiting, under the motivating line: the server is slow, not the app.
     private var waitingLine: some View {
         Text("Подключаюсь к серверу…")
             .font(.footnote)
@@ -1364,7 +1521,7 @@ struct LaunchView: View {
             .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.reveal, value: slow)
             .animation(NativeMotion.exit, value: stage == .waiting)
             .allowsHitTesting(false)
-            .accessibilityHidden(stage != .waiting)
+            .accessibilityHidden(stage != .waiting || !slow)
     }
 
     private func offlineBlock(_ offline: (detail: String, retrying: Bool)) -> some View {

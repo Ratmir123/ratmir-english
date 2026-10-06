@@ -26,7 +26,12 @@ export type AppContextValue = {
   catalogError: string;
   reloadCatalog: () => void;
   toast: { error: (message: string, action?: ToastAction) => void; notice: (message: string, action?: ToastAction) => void };
+  /** «Запомнить фразу» from anywhere: the desktop shell's floating overlay, or the in-app capture sheet without it. */
   launchQuick: () => void;
+  /** 0.5.3 «Мои фразы» sheet (PASS-0.5.3 §1.6); `phraseId` opens that phrase in place. */
+  openPhrases: (phraseId?: string) => void;
+  /** 0.5.3 the capture card «Запомнить» in an in-app sheet (on the desktop too). */
+  openCapture: () => void;
   onAchievementTarget: (target: AchievementTarget) => void;
   /** Reviews already opened (the Today/sidebar dot marks only new ones). */
   seenReviews: ReadonlySet<string>;

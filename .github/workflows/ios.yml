@@ -66,7 +66,7 @@ jobs:
           xcrun simctl launch "$device" app.ratmirenglish.personal
           sleep 3
           xcrun simctl io "$device" screenshot iPhone11-login.png
-          for screen in today today-plan pending-recording placement placement-intro placement-listening placement-reading placement-break placement-speaking placement-roleplay placement-scoring placement-result practice-catalog practice-detail conversation listening dictation-preview analysing analysis-error review review-retry pushback celebrate completed rank-up saved-deferred preview-timing ielts-reading ielts-writing calls call-review call-transcript call-speakers patterns facts progress skills history achievements ranks ranks-bottom profile reminder-editor reminder-denied; do
+          for screen in today today-plan pending-recording placement placement-intro placement-listening placement-reading placement-break placement-speaking placement-roleplay placement-scoring placement-result practice-catalog practice-detail conversation listening dictation-preview analysing analysis-error review review-retry pushback celebrate completed rank-up saved-deferred preview-timing ielts-reading ielts-writing calls call-review call-transcript call-speakers patterns facts progress skills history achievements ranks ranks-bottom profile profile-voice reminder-editor reminder-denied today-limit hints phrases capture capture-saved phrase-review; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3
@@ -74,7 +74,7 @@ jobs:
           done
           xcrun simctl ui "$device" appearance dark
           sleep 3 # the appearance switch lands asynchronously; the first dark capture used to come out light
-          for screen in today practice-catalog conversation dictation-preview review pushback calls call-review placement-result progress achievements history profile; do
+          for screen in today practice-catalog conversation dictation-preview review pushback calls call-review placement-result progress achievements history profile phrases capture; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
             sleep 3
@@ -131,11 +131,11 @@ jobs:
           python3 - <<'PY'
           import json
           summary = json.load(open('native-tests-summary.json'))
-          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 64, summary
-          assert type(summary['passedTests']) is int and summary['passedTests'] == 64, summary
+          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 130, summary
+          assert type(summary['passedTests']) is int and summary['passedTests'] == 130, summary
           assert summary['failedTests'] == 0 and summary['skippedTests'] == 0, summary
           assert not summary['testFailures'] and summary.get('expectedFailures', 0) == 0, summary
-          print('Verified native tests: 64 passed, none failed or skipped')
+          print('Verified native tests: 130 passed, none failed or skipped')
           PY
           for screen in today achievements ranks-bottom reminder-editor review preview-timing dictation-preview conversation practice-detail; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
@@ -149,12 +149,12 @@ jobs:
           from pathlib import Path
           images = list(Path('.').glob('iPhone11-*.png'))
           movies = list(Path('.').glob('iPhone11-*-motion.mp4'))
-          assert len(images) == 70, [p.name for p in images]
+          assert len(images) == 79, [p.name for p in images]
           assert all(p.stat().st_size > 1024 for p in images), 'A preview screenshot is empty or incomplete'
           # Motion clips are review aids: a clip stopped by the recording watchdog is reported, not fatal.
           complete = [p for p in movies if p.stat().st_size > 1024]
           if len(complete) != 9: print('::warning::motion recordings complete:', len(complete), 'of 9')
-          print('Verified previews: 70 PNG screenshots,', len(complete), 'motion recordings')
+          print('Verified previews: 79 PNG screenshots,', len(complete), 'motion recordings')
           PY
       - uses: actions/upload-artifact@v4
         if: always()

@@ -9,7 +9,7 @@ import { count, MODE_LABEL, SKILL_GROUPS, SKILL_STATE_LABEL, sessionStatusLabel,
 import { weeklyRhythm } from '../app/today-plan';
 import { ScreenMascot } from '../shell/screen-mascot';
 import { Segmented } from '../ui/segmented';
-import { Achievements, rankProgress, RankLadder, RankMedal, XpBar } from '../ui/rewards';
+import { Achievements, rankProgress, RankLadder, RankMedal, RankName, XpBar } from '../ui/rewards';
 import styles from './progress.module.css';
 
 type Section = 'overview' | 'skills' | 'history' | 'rewards';
@@ -38,9 +38,9 @@ function RankCard({ progression, state, onRewards }: { progression: ProgressionS
     : 'Опыт растёт за каждую практику с разбором, тест уровня и разобранные созвоны: 15 XP за занятие, +5 за улучшенную попытку.';
   return <section className={`surface ${styles.rank}`} aria-labelledby="progress-rank">
     <div className={styles.rankGrid}>
-      <div className={styles.rankMedal}><RankMedal level={progression.level} size={104} interactive label={`Ранг «${rank.band.title}»`} /></div>
+      <div className={styles.rankMedal}><RankMedal level={progression.level} size={136} interactive aura label={`Ранг «${rank.band.title}»`} /></div>
       <div className={styles.rankTitle}>
-        <h2 id="progress-rank">{rank.band.title}</h2>
+        <h2 id="progress-rank"><RankName level={progression.level} /></h2>
         <p className="caption">Ранг опыта — растёт от практики, не от языка</p>
       </div>
       <div className={styles.rankBody}>
@@ -88,6 +88,9 @@ function History({ state }: { state: AppState }) {
   const query = search.trim().toLowerCase();
   const sessions = [...state.sessions].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .filter(session => !query || (session.lesson.title + ' ' + session.lesson.goal).toLowerCase().includes(query));
+  // Rows already there when History opens arrive with the list's staircase block: a `.reveal` inside that block would
+  // play a second time (PASS-0.5.3 §5). Only a session that appears later reveals, and only among the first eight rows.
+  const [arrived] = useState(() => new Set(sessions.map(session => session.id)));
   return <div className={styles.stack}>
     <div className={styles.historyTools} data-enter>
       <label className={styles.search}><MagnifyingGlassIcon size={18} aria-hidden="true" /><span className="visually-hidden">Найти занятие</span>
@@ -98,7 +101,8 @@ function History({ state }: { state: AppState }) {
     {state.sessions.length > 0 && !sessions.length && <div className={`surface ${styles.empty} reveal`}><strong>Ничего не нашлось</strong><button type="button" className="text-button" onClick={() => setSearch('')}>Показать всё</button></div>}
     {sessions.length > 0 && <ul className={`surface rows ${styles.history}`} aria-label="Занятия" data-enter>{sessions.map((session, index) => {
       const tone = sessionTone(session);
-      return <li key={session.id} className="reveal" style={{ '--i': Math.min(index, 6) } as CSSProperties}>
+      const late = index < 8 && !arrived.has(session.id);
+      return <li key={session.id} className={late ? 'reveal' : undefined} style={late ? { '--i': index } as CSSProperties : undefined}>
         <button type="button" className={styles.historyOpen} onClick={() => app.lesson.open(session, 'progress')}>
           <span className={styles.historyCopy}><strong>{session.lesson.title}</strong>
             {/* A pill only for a state that still changes; a finished session is plain text. */}
@@ -119,12 +123,14 @@ function Rewards({ progression, state }: { progression: ProgressionState; state:
   const app = useApp();
   const opened = progression.achievements.filter(item => item.unlocked).length;
   const rank = rankProgress(progression);
+  // The cards rise in by their own `.reveal` cascade (first eight), so only the heading joins the staircase; the
+  // ladder holds the live 3D medal of the current rank — the lane without blur.
   return <div className={styles.stack}>
-    <section className={styles.block} aria-labelledby="progress-achievements" data-enter>
-      <div className={styles.blockHead}><h2 id="progress-achievements">Достижения</h2><span className="caption">Открыто {opened} из {progression.achievements.length}</span></div>
+    <section className={styles.block} aria-labelledby="progress-achievements">
+      <div className={styles.blockHead} data-enter><h2 id="progress-achievements">Достижения</h2><span className="caption">Открыто {opened} из {progression.achievements.length}</span></div>
       <Achievements value={progression} state={state} onTarget={app.onAchievementTarget} />
     </section>
-    <section className={`surface ${styles.group}`} aria-labelledby="progress-ladder" data-enter>
+    <section className={`surface ${styles.group}`} aria-labelledby="progress-ladder" data-enter="live">
       <div className={styles.blockHead}><h2 id="progress-ladder">Ранги опыта</h2><span className="caption">Сейчас «{rank.band.title}», {progression.xp} XP</span></div>
       <RankLadder value={progression} />
     </section>

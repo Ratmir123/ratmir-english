@@ -115,6 +115,8 @@ struct MascotView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
+    /// Under the launch layer the shell's companions hold still; only the launch companion animates (PASS 0.5.3 §5).
+    @Environment(\.shellCovered) private var shellCovered
 
     init(mode: VoiceOrbMode, level: Double = 0, mood: VoiceOrbMood? = nil, statusDescription: String? = nil,
          greetingPose: VoiceOrbGreetingPose = .neutral, speechLevel: Double = 0, celebrate: Int = 0,
@@ -134,6 +136,7 @@ struct MascotView: View {
         GeometryReader { proxy in
             stage(size: proxy.size)
         }
+        .entranceLiveContent()
         .modifier(MascotScrollVisibility(onScreen: $onScreen))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Твой собеседник")
@@ -184,7 +187,7 @@ struct MascotView: View {
     }
 
     private func isLive(side: CGFloat) -> Bool {
-        !reduceMotion && isVisible && onScreen && scenePhase == .active && side >= MascotMetrics.thumbnailSide
+        !reduceMotion && !shellCovered && isVisible && onScreen && scenePhase == .active && side >= MascotMetrics.thumbnailSide
     }
 
     private func renderFrame(date: Date, side: CGFloat, live: Bool) -> MascotFrame {

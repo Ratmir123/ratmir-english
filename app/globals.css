@@ -310,19 +310,25 @@ legend { padding: 0; font-weight: 700; }
   .glass::before, .glass.interactive::after { display: none; }
 }
 
-/* Ambient aurora: three transformed gradient blobs (no CSS filter), drifting 30–45 s. */
+/* Ambient aurora: three transformed gradient blobs (no CSS filter), drifting 34–46 s. The drift steps about 12 times a
+   second (PASS-0.5.3 §5): far below a pixel per step, but the glass above it re-blurs its backdrop 12 times a second
+   instead of every frame. steps() = duration × 12. */
 .ambient { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; contain: strict; }
 .ambient i {
   position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; will-change: transform;
-  animation: ambient-drift var(--d, 40s) ease-in-out infinite alternate;
+  animation: ambient-drift var(--d, 40s) steps(480) infinite alternate;
 }
 .ambient i:nth-child(1) { left: -22vmax; top: -26vmax; background: radial-gradient(closest-side, var(--ambient-1), transparent); }
-.ambient i:nth-child(2) { right: -26vmax; top: 6vmax; --d: 46s; animation-delay: -12s; background: radial-gradient(closest-side, var(--ambient-2), transparent); }
-.ambient i:nth-child(3) { left: 12vmax; bottom: -38vmax; --d: 34s; animation-delay: -6s; background: radial-gradient(closest-side, var(--ambient-3), transparent); }
+.ambient i:nth-child(2) { right: -26vmax; top: 6vmax; --d: 46s; animation-delay: -12s; animation-timing-function: steps(552); background: radial-gradient(closest-side, var(--ambient-2), transparent); }
+.ambient i:nth-child(3) { left: 12vmax; bottom: -38vmax; --d: 34s; animation-delay: -6s; animation-timing-function: steps(408); background: radial-gradient(closest-side, var(--ambient-3), transparent); }
 .ambient[data-mood='listening'] i:nth-child(3) { background: radial-gradient(closest-side, rgb(218 241 99 / .34), transparent); }
 .ambient[data-mood='speaking'] i:nth-child(1) { background: radial-gradient(closest-side, rgb(187 178 245 / .5), transparent); }
-/* While recording, the background holds still: the glass dock never blurs a moving backdrop (cheaper paint, §5). */
-.ambient[data-mood='listening'] i { animation-play-state: paused; }
+/* The background holds still while recording (the glass dock never blurs a moving backdrop), under the launch layer,
+   during a staircase and while a sheet or dialog is open: the main thread and the GPU belong to what moves on top. */
+.ambient[data-mood='listening'] i,
+:root[data-launch='covering'] .ambient i,
+:root:has([data-entering]) .ambient i,
+:root:has(dialog[open]) .ambient i { animation-play-state: paused; }
 @keyframes ambient-drift { to { transform: translate3d(6vmax, -4vmax, 0) scale(1.08); } }
 
 /* ---------- Buttons ---------- */
@@ -340,10 +346,11 @@ legend { padding: 0; font-weight: 700; }
 .button svg { flex-shrink: 0; }
 .button.primary { background: var(--cta-bg); color: var(--cta-fg); box-shadow: var(--cta-glow); }
 .button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+/* Fill, top highlight and hairline only: it sits on opaque cards, where a backdrop blur changed nothing but the cost
+   (PASS-0.5.3 §5). */
 .button.secondary {
   background: var(--surface-glass-strong); color: var(--text-primary);
   box-shadow: inset 0 1px 0 var(--surface-glass-highlight), inset 0 0 0 1px var(--surface-glass-hairline), var(--e1);
-  -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%);
 }
 .button.secondary:hover:not(:disabled) { background: var(--surface-solid); }
 .button.tinted { background: var(--accent-violet-soft); color: var(--accent-violet-ink); }
@@ -505,8 +512,12 @@ legend { padding: 0; font-weight: 700; }
 }
 .nav-session strong { display: block; font-size: var(--text-15); }
 .nav-session small { display: block; color: var(--text-secondary); font-weight: 600; }
-.nav-session .pulse { width: 10px; height: 10px; border-radius: 50%; background: var(--accent-violet); box-shadow: 0 0 0 0 var(--accent-violet-soft); animation: pulse 2s infinite; flex-shrink: 0; }
-@keyframes pulse { 70% { box-shadow: 0 0 0 8px transparent; } }
+/* The live dot breathes a ring out: a scaled, fading pseudo-element (compositor only), not an animated box-shadow. */
+.nav-session .pulse { position: relative; width: 10px; height: 10px; flex-shrink: 0; }
+.nav-session .pulse::before, .nav-session .pulse::after { content: ''; position: absolute; inset: 0; border-radius: 50%; }
+.nav-session .pulse::before { background: var(--accent-violet-soft); animation: pulse 2s infinite; }
+.nav-session .pulse::after { background: var(--accent-violet); }
+@keyframes pulse { 0% { transform: scale(1); opacity: 1; } 70% { transform: scale(2.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 .sidebar-footer { margin-top: auto; display: grid; gap: 6px; }
 .sidebar-rank { display: grid; gap: 8px; padding: 12px; border-radius: 18px; background: var(--surface-sunken); text-align: left; transition: background-color var(--hover-ms) var(--ease-out); }
 .sidebar-rank:hover { background: var(--surface-sunken-2); }
@@ -547,6 +558,10 @@ legend { padding: 0; font-weight: 700; }
 
 /* The launch layer covers the page (components/startup-welcome.tsx): no scrollbar from the shell mounting beneath. */
 :root[data-launch='covering'] { overflow: hidden; }
+/* A covered shell sleeps (PASS-0.5.3 §5, components/ui/shell-cover.ts): its own loops hold still under the launch or
+   level-test layer; mascots and medals pause themselves. */
+:root[data-shell-covered] [data-shell] .nav-session .pulse::before,
+:root[data-shell-covered] [data-shell] .skeleton::after { animation-play-state: paused; }
 /* Centred full-page state (sign-in). The cold open itself is the launch layer. */
 .boot { position: relative; z-index: 1; min-height: 100dvh; display: grid; place-items: center; }
 /* «Готовлю занятие»: floating glass that arrives like a toast (no filter on glass). */
@@ -555,8 +570,15 @@ legend { padding: 0; font-weight: 700; }
   display: flex; align-items: center; gap: 12px; padding: 10px 18px 10px 10px; border-radius: 26px;
   animation: toast-in var(--toast-in-ms) var(--ease-out) both;
 }
-.skeleton { border-radius: var(--radius-card); background: linear-gradient(100deg, var(--surface-sunken) 30%, var(--surface-sunken-2) 50%, var(--surface-sunken) 70%); background-size: 300% 100%; animation: skeleton 1.6s linear infinite; }
-@keyframes skeleton { to { background-position: -150% 0; } }
+/* Loading placeholder: a soft band sweeps across on a transformed pseudo-element (compositor only), never by repainting
+   the background. */
+.skeleton { position: relative; overflow: hidden; isolation: isolate; border-radius: var(--radius-card); background: var(--surface-sunken); }
+.skeleton::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(100deg, transparent 20%, var(--surface-sunken) 50%, transparent 80%);
+  transform: translate3d(-100%, 0, 0); animation: skeleton 1.6s linear infinite;
+}
+@keyframes skeleton { to { transform: translate3d(100%, 0, 0); } }
 
 /* Toasts */
 .toast-region {
@@ -622,26 +644,34 @@ dialog.sheet:not([open])::backdrop { opacity: 0; }
   dialog.sheet { width: 100vw; max-width: 100vw; margin: auto 0 0; border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; padding-bottom: env(safe-area-inset-bottom); }
 }
 
-/* Reveal + light stagger for content that arrives later (rows of a list, capped at 6 steps). Never on a [data-enter]
-   block: when the staircase ends, its animation would hand over to this one and play twice. */
-.reveal { animation: reveal var(--reveal-ms) var(--ease-out) both; animation-delay: calc(min(var(--i, 0), 6) * var(--reveal-step)); }
-@keyframes reveal { from { opacity: 0; transform: translate3d(0, var(--reveal-rise), 0); filter: blur(var(--reveal-blur)); } }
+/* Reveal + light stagger for content that arrives later (rows of a list, at most 8 rows animate). Never on or inside a
+   [data-enter] block: when the staircase ends, its animation would hand over to this one and play twice. The blur is
+   gone by 55 % of the way (PASS-0.5.3 §5). */
+.reveal { animation: reveal var(--reveal-ms) var(--ease-out) both; animation-delay: calc(min(var(--i, 0), 7) * var(--reveal-step)); }
+@keyframes reveal { from { opacity: 0; transform: translate3d(0, var(--reveal-rise), 0); filter: blur(var(--reveal-blur)); } 55% { filter: none; } }
 
 /* Staircase entrance (MOTION-PASS-0.5.2 §2). Blocks marked [data-enter] rise in screen order while their root carries
    [data-entering] (set by components/ui/entrance.ts, removed when done, so hover/press transitions stay untouched).
-   Content is visible by default: without JS nothing waits. 'launch' = cold open, 'screen' = tab switch. */
+   Content is visible by default: without JS nothing waits. 'launch' = cold open, 'screen' = tab switch.
+   PASS-0.5.3 §5: the blur is at most 6 px (launch) / 4 px (screen) and gone by 55 % of the block's animation; blocks are
+   promoted to their own layer only while the wave runs. */
 [data-entering] [data-enter] {
   animation: enter var(--enter-ms) var(--ease-out) both;
   animation-delay: calc(var(--enter-base) + min(var(--enter-i, 0), var(--enter-max)) * var(--enter-step));
 }
-[data-entering='launch'] { --enter-ms: 900ms; --enter-step: 85ms; --enter-base: 60ms; --enter-max: 9; --enter-rise: 20px; --enter-blur: 8px; }
-[data-entering='screen'] { --enter-ms: 620ms; --enter-step: 48ms; --enter-base: 0ms; --enter-max: 7; --enter-rise: 12px; --enter-blur: 5px; }
+[data-entering] [data-enter]:not([data-enter='chrome']) { will-change: transform, opacity; }
+[data-entering='launch'] { --enter-ms: 900ms; --enter-step: 85ms; --enter-base: 60ms; --enter-max: 9; --enter-rise: 20px; --enter-blur: 6px; }
+[data-entering='screen'] { --enter-ms: 620ms; --enter-step: 48ms; --enter-base: 0ms; --enter-max: 7; --enter-rise: 12px; --enter-blur: 4px; }
 /* Glass chrome never gets a filter (it would cut its backdrop): it slides in from its own edge. A container whose
-   own items carry the wave (`fade`) only fades in, so its children do not travel twice. */
+   own items carry the wave (`fade`) only fades in, so its children do not travel twice. A block holding live content
+   (a WebGL companion, a 3D or animated medal: `data-enter-live`, marked by entrance.ts, or `data-enter="live"`) rises
+   without a blur, which would re-filter it every frame and flatten the medal's 3D. */
 [data-entering] [data-enter='chrome'] { animation-name: enter-chrome; }
 [data-entering] [data-enter='side'] { animation-name: enter-side; }
 [data-entering] [data-enter='fade'] { animation-name: enter-fade; }
-@keyframes enter { from { opacity: 0; transform: translate3d(0, var(--enter-rise), 0) scale(.985); filter: blur(var(--enter-blur)); } }
+[data-entering] [data-enter='live'], [data-entering] [data-enter-live] { animation-name: enter-live; }
+@keyframes enter { from { opacity: 0; transform: translate3d(0, var(--enter-rise), 0) scale(.985); filter: blur(var(--enter-blur)); } 55% { filter: none; } }
+@keyframes enter-live { from { opacity: 0; transform: translate3d(0, var(--enter-rise), 0) scale(.985); } }
 @keyframes enter-chrome { from { opacity: 0; transform: translate3d(0, calc(var(--enter-rise) * 1.6), 0); } }
 @keyframes enter-side { from { opacity: 0; transform: translate3d(calc(var(--enter-rise) * -1), 0, 0); } }
 @keyframes enter-fade { from { opacity: 0; } }
@@ -716,7 +746,7 @@ dialog.sheet:not([open])::backdrop { opacity: 0; }
   dialog.sheet, dialog.sheet[open], dialog.sheet::backdrop, dialog.sheet[open]::backdrop { transition-duration: 200ms; transition-timing-function: ease-out; }
   dialog.sheet:not([open]) { transform: none; }
   @starting-style { dialog.sheet[open] { transform: none; } }
-  .nav-session .pulse, .skeleton { animation: none; }
+  .nav-session .pulse::before, .skeleton::after { animation: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
   .button, .icon-button, .press, .lift, .segmented > .lens, .nav-lens, .tab-bar .tab-lens { transition-duration: 1ms !important; }
 }

@@ -115,7 +115,7 @@ export const AUDIO = {
   micEyes: 0.1,
 } as const;
 
-/** §6 idle life */
+/** §6 idle life (PASS-0.5.3 §4: a roll episode replaces the held ±6° tilt; the pointer gaze relaxes when the pointer rests). */
 export const IDLE = {
   minGap: 4,
   maxGap: 7,
@@ -123,11 +123,31 @@ export const IDLE = {
   glance: 0.5,
   glanceSeconds: 0.8,
   hop: -0.6, // ·S per second
-  tiltDegrees: 6,
-  tiltSeconds: 1.2,
+  /** Roll episode (same 15 % share of the idle picks as the old tilt): one smooth cycle 0 → +5° → −5° → 0, random sign. */
+  rollDegrees: 5,
+  rollSeconds: 2.6,
   flickerSmile: 0.4,
   flickerSeconds: 0.6,
+  /** Web pointer gaze: after gazeRelaxAfter s without pointer movement it eases back to the centre over gazeRelaxSeconds. */
+  gazeRelaxAfter: 2.5,
+  gazeRelaxSeconds: 0.6,
 } as const;
+
+/**
+ * PASS-0.5.3 §4 — rolling, not swinging (an egg rocking on its base). The body rotates about a pivot near its base and
+ * shifts sideways with the tilt; the floor shadow follows the shift. pivotY: fraction of the canvas side from the top
+ * (the body's rest bottom is at 0.89; iPhone: rotation anchor UnitPoint(0.5, 0.86)). Δx = shift·R0·S·φ(rad) in the tilt
+ * direction, i.e. 0.35 × 0.78 × S × φ = 0.273·S·φ. Static, settled and reduced-motion poses are upright (φ = 0, Δx = 0).
+ */
+export const ROLL = { pivotY: 0.86, shift: 0.35 } as const;
+
+/**
+ * PASS-0.5.3 §6 — compositor idle (idleMode 'compositor', the launch preloader): one settled upright WebGL frame plus a CSS
+ * keyframe roll (±degrees about the roll pivot, with the rolling shift) and breath (scale 1 ↔ 1 + breath) on a wrapper,
+ * period `seconds`, transform only. Switching to the live physics eases the wrapper back to identity in handoffMs.
+ * mascot.module.css holds the keyframes; tests/mascot-roll.test.ts checks them against these numbers.
+ */
+export const COMPOSITOR_IDLE = { degrees: 4, breath: 0.015, seconds: 4.2, handoffMs: 320 } as const;
 
 /** Mood tint colours, linear 0–1 sRGB triplets (§1). */
 export const TINT_RGB = {

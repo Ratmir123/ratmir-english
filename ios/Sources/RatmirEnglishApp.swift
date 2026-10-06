@@ -2,6 +2,8 @@ import SwiftUI
 import UIKit
 
 @main struct RatmirEnglishApp: App {
+    /// Home Screen quick action «Запомнить фразу» (AppEntryPoints.swift).
+    @UIApplicationDelegateAdaptor(SmoothTalkAppDelegate.self) private var appDelegate
     @StateObject private var client = TrainingClient()
     /// «Оформление» in Profile; nil (system) never overrides the device setting.
     @AppStorage(AppAppearance.storageKey) private var appearance = AppAppearance.system.rawValue
@@ -117,6 +119,8 @@ struct RootView: View {
                 if opening.animateHome { finishOpening(animated: false) }
             }, including: opening.animateHome ? .all : .subviews)
             .overlay { launchLayer }
+            // PASS 0.5.3 §5: reward and scenario art is decoded off the main thread while the launch layer plays.
+            .task { ImagePrewarm.start() }
             .task(id: openingReadiness) { await runOpening() }
             .task(id: pollingKey) { await client.pollStateWhileProcessing() }
             .task(id: placementPromptKey) { promptPlacementIfNeeded() }
@@ -127,6 +131,8 @@ struct RootView: View {
             .fullScreenCover(isPresented: $client.placementPresented, onDismiss: { client.refreshInBackground() }) {
                 placementCover
             }
+            // PASS 0.5.3 §1.6–1.7: «Запомнить» / «Мои фразы» sheet; the quick action and the App Intent open it after the hand-off.
+            .modifier(PhraseSheetsHost(launchCovering: launchLayerVisible))
             .onChange(of: launchWaiting, initial: true) { _, waiting in launchWaitingChanged(waiting) }
             .onChange(of: client.conversationPresented) { _, presented in
                 if presented { finishOpening(animated: false) }
@@ -202,6 +208,8 @@ struct RootView: View {
         .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard, value: client.completionMoment?.id)
         .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard, value: client.startingIntent)
         .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard, value: callReady?.id)
+        // Companions, medals and the backdrop under the launch layer hold still (only the launch companion moves).
+        .environment(\.shellCovered, shellCovered)
     }
 
     @ViewBuilder private var topOverlay: some View {
@@ -292,6 +300,9 @@ struct RootView: View {
     }
 
     private var launchLeaving: Bool { launchHold == .fading || opening.phase == .handoff }
+    /// PASS 0.5.3 §5: the shell is hidden under the launch layer until it starts leaving (the hand-off wakes Home while
+    /// the layer fades), and under the placement test's full-screen cover.
+    private var shellCovered: Bool { (launchLayerVisible && !launchLeaving) || client.placementPresented }
     private var launchLeaveSeconds: Double {
         launchHold == .fading ? NativeLaunch.coverFadeSeconds : NativeOpeningState.handoffSeconds
     }

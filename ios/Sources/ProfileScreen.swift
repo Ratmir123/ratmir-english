@@ -1,31 +1,28 @@
 import SwiftUI
 
-/// «Профиль»: a native inset-grouped list (who you are, what the coach knows, voice, reminders,
-/// coach and limits, data, version). Rows sit on the solid card colour; no glass on content.
+/// «Профиль», compact (PASS-0.5.3 §3): who you are and a few settings; everything else is one tap away. A native
+/// inset-grouped list: the screen's companion (wink), one summary row («О тебе»), then one surface of rows, each with its
+/// current value on the right and its own pushed screen («Мой плейбук», «Голос», «Напоминания», «Тренер и лимиты»,
+/// «Данные»; «Оформление» is an inline menu), and the version footer. Rows sit on the solid card colour; no glass on
+/// content, no cards inside cards. A limit notice on Today opens the matching screen through `ProfileNavigator`.
 struct ProfileScreen: View {
     @EnvironmentObject private var client: TrainingClient
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var showEditor = false
-    @State private var reminderEditor: ReminderEditorSelection? = nil
-    @State private var reminderToDelete: PracticeReminder? = nil
-    @State private var exportURL: URL? = nil
-    @State private var showReset = false
-    @State private var confirmSignOut = false
+    @ObservedObject private var navigator: ProfileNavigator
+    @State private var path: [ProfileSection] = []
     @AppStorage(AppAppearance.storageKey) private var appearance = AppAppearance.system.rawValue
 
+    init() {
+        _navigator = ObservedObject(wrappedValue: ProfileNavigator.shared)
+    }
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             // Staircase: each section is one step; its card fades in while the rows rise (EntranceFill).
             List {
                 introSection.entrance(0)
-                profileSection.entrance(1)
-                factsSection.entrance(2)
-                appearanceSection.entrance(3)
-                voiceSection.entrance(4)
-                remindersSection.entrance(5)
-                limitsSection.entrance(6)
-                dataSection.entrance(7)
-                aboutSection.entrance(8)
+                summarySection.entrance(1)
+                settingsSection.entrance(2)
+                footerSection.entrance(3)
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
@@ -35,53 +32,51 @@ struct ProfileScreen: View {
             .navigationTitle("Профиль")
             .navigationBarTitleDisplayMode(.large)
             .refreshable { await client.refreshQuietly() }
+            .navigationDestination(for: ProfileSection.self) { section in
+                destination(section)
+            }
             .task {
-                await client.refreshReminderStatus()
+                applyPendingSection()
 #if DEBUG
-                if PreviewFixtures.screen == "reminder-editor" {
-                    reminderEditor = ReminderEditorSelection(reminder: client.reminders.first)
-                }
+                openPreviewSection()
 #endif
+                await client.refreshReminderStatus()
             }
-            .sheet(isPresented: $showEditor) {
-                if let profile = client.state?.profile {
-                    ProfileEditor(profile: profile).environmentObject(client)
-                }
-            }
-            .sheet(item: $reminderEditor) { selection in
-                ReminderTimeEditor(reminder: selection.reminder).environmentObject(client)
-                    .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.height(500), .large])
-                    .presentationDragIndicator(.visible)
-            }
-            .sheet(isPresented: $showReset) {
-                ResetSheet().environmentObject(client)
-            }
-            .confirmationDialog("Удалить напоминание?", isPresented: reminderDeletePresented, titleVisibility: .visible) {
-                if let reminderToDelete {
-                    Button("Удалить время \(reminderToDelete.timeLabel)", role: .destructive) {
-                        let id = reminderToDelete.id
-                        self.reminderToDelete = nil
-                        Task { await client.deleteReminder(id: id) }
-                    }
-                }
-                Button("Оставить", role: .cancel) { reminderToDelete = nil }
-            } message: { Text("Другие времена останутся без изменений.") }
-            .confirmationDialog("Выйти на этом iPhone?", isPresented: $confirmSignOut, titleVisibility: .visible) {
-                Button("Выйти", role: .destructive) { client.signOut() }
-                Button("Остаться", role: .cancel) {}
-            } message: { Text("История останется на сервере. Для входа понадобится адрес и личный код.") }
+        }
+        .onChange(of: navigator.pending) { _, section in
+            if section != nil { applyPendingSection() }
         }
     }
 
-    private var reminderDeletePresented: Binding<Bool> {
-        Binding(get: { reminderToDelete != nil }, set: { if !$0 { reminderToDelete = nil } })
+    /// A deep link replaces whatever was pushed: the learner lands on the screen the notice talks about.
+    private func applyPendingSection() {
+        guard let section = navigator.consume() else { return }
+        path = [section]
     }
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
+#if DEBUG
+    private func openPreviewSection() {
+        guard path.isEmpty, let screen = PreviewFixtures.screen else { return }
+        if screen == "profile-voice" {
+            path = [.voice]
+        } else if screen == "reminder-editor" || screen == "reminder-denied" {
+            path = [.reminders]
+        }
+    }
+#endif
+
+    @ViewBuilder private func destination(_ section: ProfileSection) -> some View {
+        switch section {
+        case .details: ProfileDetailsView()
+        case .playbook: FactsView(facts: client.state?.profileFacts ?? [])
+        case .voice: ProfileVoiceView()
+        case .reminders: ProfileRemindersView()
+        case .limits: ProfileCoachView()
+        case .data: ProfileDataView()
+        }
     }
 
-    // MARK: Intro
+    // MARK: Header
 
     /// The screen's one companion (wink) next to the same lede the web shows (MOTION-PASS-0.5.2 §3).
     private var introSection: some View {
@@ -93,340 +88,124 @@ struct ProfileScreen: View {
         }
     }
 
-    // MARK: Profile
-
-    @ViewBuilder private var profileSection: some View {
+    /// One summary row: the name, the daily practice and the coach's tone; «Подробнее» is the pushed «О тебе».
+    @ViewBuilder private var summarySection: some View {
         let profile = client.state?.profile
         Section {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(profile?.name ?? "Профиль").font(TypeScale.title2)
-                Text("Практика \(RuFormat.minutes(profile?.dailyMinutes ?? 15)) в день")
-                    .font(.subheadline).foregroundStyle(Theme.inkSecondary)
+            NavigationLink(value: ProfileSection.details) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(ProfileCopy.displayName(profile?.name)).font(TypeScale.title2)
+                    Text(ProfileCopy.practiceLine(profile))
+                        .font(.subheadline).foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
-            .accessibilityElement(children: .combine)
-            if let goals = profile?.goals, !goals.isEmpty { profileLine("Цели", goals) }
-            if let work = profile?.professionalContext, !work.isEmpty { profileLine("Работа", work) }
-            if let relocation = profile?.relocation, !relocation.isEmpty { profileLine("Переезд", relocation) }
-            if let interests = profile?.interests, !interests.isEmpty { profileLine("Интересы", interests.joined(separator: ", ")) }
-            Button { showEditor = true } label: {
-                Label("Изменить профиль", systemImage: "pencil")
-            }
-            .disabled(profile == nil)
+            .accessibilityHint("Подробнее: цели, работа, переезд и интересы")
         }
         .listRowBackground(EntranceFill(index: 1))
     }
 
-    private func profileLine(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.footnote).foregroundStyle(Theme.inkSecondary)
-            Text(value).font(.body).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+    // MARK: Rows
+
+    /// The same values as the PC rows: each row speaks for its own side of the one limit rule (subscription notices for
+    /// the coach, voice ones for «Голос»).
+    private var settingsSection: some View {
+        let voiceNotice = LimitNotice.current(usage: nil, audioUsage: client.state?.audioUsage)
+        let coach = ProfileCopy.coachState(notice: LimitNotice.current(usage: client.subscriptionUsage, audioUsage: nil),
+                                           status: client.status, statusUnavailable: client.statusUnavailable)
+        return Section {
+            valueRow(.playbook, value: ProfileCopy.playbookValue(client.state?.profileFacts ?? []))
+            appearanceRow
+            valueRow(.voice, value: ProfileCopy.voiceValue(status: client.status, statusUnavailable: client.statusUnavailable,
+                                                           usage: client.state?.audioUsage),
+                     tone: voiceNotice.map { $0.tone == .danger ? ProfileCopy.CoachTone.danger : ProfileCopy.CoachTone.warning })
+            valueRow(.reminders, value: ProfileCopy.remindersValue(client.reminders, notificationState: client.notificationState))
+            coachRow(coach)
+            valueRow(.data, value: ProfileCopy.retentionValue(client.state?.profile.audioRetentionDays ?? 30))
         }
-        .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
+        .listRowBackground(EntranceFill(index: 2))
     }
 
-    /// «Мой плейбук» lives on «Созвоны»; here it is one row (no duplicated block), named as on the web.
-    @ViewBuilder private var factsSection: some View {
-        if let facts = client.state?.profileFacts {
-            let suggested = facts.filter { $0.status == "suggested" }.count
-            Section {
-                NavigationLink {
-                    FactsView(facts: facts)
-                } label: {
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Мой плейбук").font(.body)
-                            Text(PlaybookCopy.detail(facts))
-                                .font(.footnote).foregroundStyle(Theme.inkSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer(minLength: 8)
-                        if suggested > 0 {
-                            Circle().fill(Theme.lime).overlay { Circle().strokeBorder(Theme.limeInk, lineWidth: 1) }
-                                .frame(width: 9, height: 9).accessibilityHidden(true)
-                        }
+    /// One line: the title on the left, the current value on the right (a status dot when a limit speaks).
+    private func valueRow(_ section: ProfileSection, value: String, tone: ProfileCopy.CoachTone? = nil) -> some View {
+        NavigationLink(value: section) {
+            LabeledContent {
+                HStack(spacing: 6) {
+                    if let tone {
+                        Circle().fill(tone.color).frame(width: 8, height: 8).accessibilityHidden(true)
                     }
+                    Text(value).foregroundStyle(Theme.inkSecondary).multilineTextAlignment(.trailing)
                 }
-            } footer: {
-                Text("Принятые факты помогают собеседнику и разбору.")
+            } label: {
+                ProfileRowTitle(title: section.title, icon: section.icon)
             }
-            .listRowBackground(EntranceFill(index: 2))
         }
     }
 
-    // MARK: Appearance
+    /// «Тренер и лимиты»: the status as a pill, like the PC chip.
+    private func coachRow(_ coach: (label: String, tone: ProfileCopy.CoachTone)) -> some View {
+        NavigationLink(value: ProfileSection.limits) {
+            LabeledContent {
+                StatusPill(title: coach.label, color: coach.tone.color)
+            } label: {
+                ProfileRowTitle(title: ProfileSection.limits.title, icon: ProfileSection.limits.icon)
+            }
+        }
+    }
 
-    /// «Оформление»: the native segmented control (a list of choices at accessibility sizes).
-    private var appearanceSection: some View {
+    /// «Оформление»: a menu right in the row; only on this device.
+    private var appearanceRow: some View {
+        Picker(selection: $appearance) {
+            ForEach(AppAppearance.allCases) { option in
+                Text(option.title).tag(option.rawValue)
+            }
+        } label: {
+            ProfileRowTitle(title: "Оформление", icon: "circle.lefthalf.filled")
+        }
+        .pickerStyle(.menu)
+        .tint(Theme.inkSecondary)
+        .accessibilityHint("Только на этом устройстве")
+    }
+
+    // MARK: Footer
+
+    private var footerSection: some View {
         Section {
-            SelectionRow(selection: $appearance, options: AppAppearance.allCases.map {
-                SelectionOption(id: $0.rawValue, title: $0.title, icon: $0.icon)
-            })
-            .padding(.vertical, 4)
-        } header: {
-            sectionHeader("Оформление")
-        } footer: {
-            Text("Только на этом устройстве")
-        }
-        .listRowBackground(EntranceFill(index: 3))
-    }
-
-    // MARK: Voice and limits
-
-    private var voiceSection: some View {
-        Section {
-            HStack {
-                Text("Голос собеседника")
-                Spacer()
-                StatusPill(title: client.status?.audio.configured == true ? "Включён" : "Не подключён",
-                           color: client.status?.audio.configured == true ? Theme.lime : Theme.warning)
+            VStack(spacing: 6) {
+                Text(versionLine).font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
+                Text(SigningInfo.note).font(.caption).foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
-            if let usage = client.state?.audioUsage {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(usage.estimated ? "Оценка расходов" : "Расходы на голос")
-                        Spacer()
-                        Text(usage.usedUsd.formatted(.currency(code: "USD").locale(RuFormat.locale))).font(.body.weight(.semibold)).monospacedDigit()
-                        Text("из " + usage.budgetUsd.formatted(.currency(code: "USD").locale(RuFormat.locale))).font(.footnote).foregroundStyle(Theme.inkSecondary)
-                    }
-                    Text("Записано \(usage.recordedMinutes.formatted(.number.precision(.fractionLength(1)).locale(RuFormat.locale))) мин. Итоговый счёт — у OpenAI.")
-                        .font(.footnote).foregroundStyle(Theme.inkSecondary)
-                }
-                .padding(.vertical, 2)
-            }
-        } header: {
-            sectionHeader("Голос")
-        } footer: {
-            Text(client.status?.audio.configured == true
-                 ? "Реплики звучат автоматически. Звук играет даже в беззвучном режиме — это учебное приложение."
-                 : "Голос подключается на компьютере: Профиль → Голос. После этого потяни экран вниз.")
-        }
-        .listRowBackground(EntranceFill(index: 4))
-    }
-
-    private var limitsSection: some View {
-        Section {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(client.status?.brain.model ?? "GPT-6.1 Sol")
-                    if let message = client.status?.brain.error, client.status?.brain.verified != true {
-                        Text(message).font(.footnote).foregroundStyle(Theme.inkSecondary)
-                    }
-                }
-                Spacer()
-                StatusPill(title: client.status?.brain.verified == true ? "На связи" : client.status == nil ? "Проверяем" : "Нет связи",
-                           color: client.status?.brain.verified == true ? Theme.lime : Theme.warning)
-            }
-            QuotaSection()
-                .padding(.vertical, 4)
-        } header: {
-            sectionHeader("Тренер и лимиты")
-        }
-        .listRowBackground(EntranceFill(index: 6))
-    }
-
-    // MARK: Reminders
-
-    private var remindersSection: some View {
-        Section {
-            reminderPermissionNote
-            ForEach(client.reminders) { reminder in
-                reminderRow(reminder)
-            }
-            Button { reminderEditor = ReminderEditorSelection(reminder: nil) } label: {
-                Label("Добавить время", systemImage: "plus")
-            }
-            .disabled(client.reminderBusy || client.reminders.count >= 12)
-        } header: {
-            HStack {
-                sectionHeader("Время для практики")
-                Spacer()
-                if client.reminderBusy { ProgressView().tint(Theme.violet) }
-            }
-        } footer: {
-            if client.reminders.count >= 12 {
-                Text("Можно сохранить до 12 времён. Удали одно, чтобы добавить новое.")
-            } else if client.reminders.isEmpty {
-                Text("Выбери одно или несколько удобных времён. Напоминания приходят по местному времени этого iPhone.")
-            }
-        }
-        .listRowBackground(EntranceFill(index: 5))
-    }
-
-    @ViewBuilder private var reminderPermissionNote: some View {
-        if client.notificationState == "denied" {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Уведомления выключены в iPhone. Твои времена сохранены.")
-                    .font(.footnote).foregroundStyle(Theme.inkSecondary)
-                Button { client.openSystemSettings() } label: { Label("Разрешить уведомления", systemImage: "arrow.up.right") }
-                    .buttonStyle(QuietButton())
-            }
-            .padding(.vertical, 4)
-        } else if client.notificationState == "unavailable" {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("iPhone не передал состояние уведомлений. Попробуй открыть настройки приложения.")
-                    .font(.footnote).foregroundStyle(Theme.inkSecondary)
-                Button { client.openSystemSettings() } label: { Label("Настройки iPhone", systemImage: "arrow.up.right") }
-                    .buttonStyle(QuietButton())
-            }
-            .padding(.vertical, 4)
-        } else if client.notificationState == "provisional" {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Разрешена тихая доставка. Чтобы видеть баннеры, включи их в настройках iPhone.")
-                    .font(.footnote).foregroundStyle(Theme.inkSecondary)
-                Button { client.openSystemSettings() } label: { Label("Настройки iPhone", systemImage: "arrow.up.right") }
-                    .buttonStyle(QuietButton())
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    private func reminderRow(_ reminder: PracticeReminder) -> some View {
-        HStack(spacing: 12) {
-            Button { reminderEditor = ReminderEditorSelection(reminder: reminder) } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(reminder.timeLabel).font(TypeScale.stat)
-                    Text(reminder.enabled ? "Каждый день" : "На паузе").font(.footnote).foregroundStyle(Theme.inkSecondary)
-                }
-                .foregroundStyle(Theme.ink).frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(PressButton())
-            .accessibilityLabel("Изменить напоминание в " + reminder.timeLabel)
-            Toggle("Напоминание в " + reminder.timeLabel, isOn: Binding(get: { reminder.enabled }, set: { value in
-                Task { await client.setReminderEnabled(id: reminder.id, enabled: value) }
-            }))
-            .labelsHidden().tint(Theme.violet).fixedSize()
-            Button { reminderToDelete = reminder } label: { Image(systemName: "trash").font(.subheadline) }
-                .buttonStyle(SoftIconButton(size: 40))
-                .accessibilityLabel("Удалить напоминание в " + reminder.timeLabel)
-        }
-        .disabled(client.reminderBusy)
-    }
-
-    // MARK: Data, account, about
-
-    private var dataSection: some View {
-        Section {
-            if let exportURL {
-                ShareLink(item: exportURL) {
-                    Label("Поделиться файлом", systemImage: "square.and.arrow.up")
-                }
-            } else {
-                Button { Task { exportURL = await client.exportData() } } label: {
-                    Label(client.busy && client.operationStage == "Готовлю файл с данными" ? "Готовлю файл…" : "Выгрузить данные", systemImage: "arrow.down.doc")
-                }
-                .disabled(client.busy)
-            }
-            Button(role: .destructive) { showReset = true } label: { Label("Удалить всю практику", systemImage: "trash") }
-                .foregroundStyle(Theme.danger)
-                .disabled(client.busy || client.recording)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Сервер").font(.footnote).foregroundStyle(Theme.inkSecondary)
-                Text(client.server.isEmpty ? "Не указан" : client.server).font(.body)
-                    .lineLimit(1).truncationMode(.middle)
-            }
+            .frame(maxWidth: .infinity)
+            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 12, trailing: 16))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
             .accessibilityElement(children: .combine)
-            Button { confirmSignOut = true } label: { Label("Выйти на этом iPhone", systemImage: "rectangle.portrait.and.arrow.right") }
-                .disabled(client.busy || client.recording)
-        } header: {
-            sectionHeader("Данные")
-        } footer: {
-            Text("Практика хранится на твоём сервере. Можно выгрузить копию или начать с чистого листа.")
-        }
-        .listRowBackground(EntranceFill(index: 7))
-    }
-
-    private var aboutSection: some View {
-        Section {
-            HStack(spacing: 12) {
-                // «О приложении»: the brand is the companion (calm), no letter mark.
-                BrandMark(size: 44)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(AppVersion.display).font(.subheadline.weight(.semibold))
-                    if let server = client.status?.app?.version ?? client.state?.app?.version, !server.isEmpty {
-                        Text("Сервер " + server).font(.footnote).foregroundStyle(Theme.inkSecondary)
-                    }
-                }
-            }
-            .accessibilityElement(children: .combine)
-        } footer: {
-            Text(SigningInfo.note)
-        }
-        .listRowBackground(EntranceFill(index: 8))
-    }
-}
-
-/// Subscription limits named by window length (L-29: `primary` / `secondary` never read alike).
-private struct QuotaSection: View {
-    @EnvironmentObject private var client: TrainingClient
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Лимиты подписки").font(.subheadline.weight(.semibold))
-            if let usage = client.subscriptionUsage, usage.available && !usage.windows.isEmpty {
-                ForEach(usage.windows) { window in windowRow(window) }
-                if usage.stale {
-                    Text("Данные с последней проверки. Сейчас обновить не удалось.").font(.caption).foregroundStyle(Theme.inkSecondary)
-                }
-            } else {
-                Text("Точный остаток сейчас недоступен. Его можно проверить в ChatGPT.")
-                    .font(.footnote).foregroundStyle(Theme.inkSecondary)
-            }
-            Text("Лимит общий с ChatGPT и Codex.").font(.caption).foregroundStyle(Theme.inkSecondary)
-            if let activity = client.subscriptionUsage?.activity {
-                HStack {
-                    Text("Запросов приложения за \(activity.periodDays) дн.").font(.caption).foregroundStyle(Theme.inkSecondary)
-                    Spacer()
-                    Text(RuFormat.number(activity.requests)).font(.subheadline.weight(.semibold)).monospacedDigit()
-                }
-                if let retry = activity.retryAt, let date = NativeDate.parse(retry), date > Date() {
-                    Text("Повторить после " + RuFormat.time(date)).font(.caption).foregroundStyle(Theme.inkSecondary)
-                }
-            }
-            if let url = URL(string: client.subscriptionUsage?.manageUrl ?? "https://chatgpt.com/settings/usage") {
-                Link(destination: url) {
-                    HStack { Text("Открыть лимиты ChatGPT"); Spacer(); Image(systemName: "arrow.up.right") }
-                        .font(.subheadline.weight(.semibold))
-                }
-            }
         }
     }
 
-    private func windowRow(_ window: SubscriptionUsage.Window) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(window.title).font(.footnote.weight(.semibold))
-                if let bucket = window.bucketName, !bucket.isEmpty {
-                    Text("· " + bucket).font(.caption).foregroundStyle(Theme.inkSecondary)
-                }
-                Spacer()
-                if let remaining = window.remainingPercent {
-                    Text("осталось \(Int(min(100, max(0, remaining)).rounded()))%").font(.footnote.weight(.semibold)).monospacedDigit()
-                }
-            }
-            if let remaining = window.remainingPercent {
-                LiquidProgressBar(value: remaining / 100, color: Theme.violet, height: 6)
-            }
-            if let reset = window.resetsAt, let date = NativeDate.parse(reset) {
-                Text("Обновится " + RuFormat.dayTime(date)).font(.caption).foregroundStyle(Theme.inkSecondary)
-            }
+    private var versionLine: String {
+        var line = AppVersion.display
+        if let server = client.status?.app?.version ?? client.state?.app?.version, !server.isEmpty {
+            line += " · сервер " + server
         }
+        return line
     }
 }
 
 enum AppVersion {
     static var display: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.2"
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.3"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
         return "Smooth Talk " + short + (build.isEmpty ? "" : " (\(build))")
     }
 }
 
-/// AltStore installs expire after seven days; the date comes from the embedded profile.
+/// AltStore installs expire after seven days; the date comes from the embedded profile (read once per launch).
 enum SigningInfo {
-    static var expirationDate: Date? {
+    static let expirationDate: Date? = {
         guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
               let data = try? Data(contentsOf: url),
               let text = String(data: data, encoding: .isoLatin1),
@@ -438,7 +217,7 @@ enum SigningInfo {
             return nil
         }
         return plist["ExpirationDate"] as? Date
-    }
+    }()
 
     static var note: String {
         guard let date = expirationDate else {
@@ -510,7 +289,7 @@ struct ReminderTimeEditor: View {
 }
 
 /// Name, goals, work context, relocation, interests, daily minutes and coach tone (POST profile).
-private struct ProfileEditor: View {
+struct ProfileEditor: View {
     let profile: Learner
     @EnvironmentObject private var client: TrainingClient
     @Environment(\.dismiss) private var dismiss
@@ -583,8 +362,8 @@ private struct ProfileEditor: View {
 }
 
 /// Typed confirmation: the server accepts only the literal word DELETE. The warning says exactly what goes and what
-/// stays (MOTION-PASS 0.5.2 §8.2, the same text on the PC), with the existing export one tap away.
-private struct ResetSheet: View {
+/// stays (PASS-0.5.3 §1.1, the same text on the PC), with the existing export one tap away.
+struct ResetSheet: View {
     @EnvironmentObject private var client: TrainingClient
     @Environment(\.dismiss) private var dismiss
     @State private var typed = ""
@@ -594,7 +373,7 @@ private struct ResetSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Удалятся занятия, записи, созвоны с разборами, паттерны, тренировки и результат теста уровня. Профиль и принятые факты останутся. Отменить нельзя.")
+                Text("Удалятся занятия, записи, созвоны с разборами, паттерны, тренировки и результат теста уровня. Профиль, принятые факты и «Мои фразы» останутся. Отменить нельзя.")
                     .font(.subheadline).fixedSize(horizontal: false, vertical: true)
                 exportLink
                 Text("Чтобы подтвердить, введи DELETE.").font(.footnote).foregroundStyle(Theme.inkSecondary)
