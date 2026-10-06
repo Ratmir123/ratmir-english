@@ -1,11 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Context, Mode, Session } from '@/lib/types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Context, Mode, Session, Turn } from '@/lib/types';
 import { useVoice, type RecordingDraft } from '../use-voice';
 import { messageOf, request } from './api';
 import { useDrafts, type DraftIntent } from './use-drafts';
-import type { AppData } from './use-app-data';
+import { voiceAvailability, type AppData } from './use-app-data';
 import type { Navigation } from './use-navigation';
 import type { TabId } from './labels';
 import { diffProgress, improvedCelebration, progressSnapshot, type Celebration } from './celebrations';
@@ -16,7 +16,8 @@ export type StartOptions = {
   drillId?: string;
   from?: TabId;
 };
-export type ToastAction = { label: string; run: () => void };
+/** `life` (ms) overrides how long the toast stays: an undo window («Факт убран · Вернуть») ends with its action. */
+export type ToastAction = { label: string; run: () => void; life?: number };
 export type Feedback = {
   error: (message: string, action?: ToastAction) => void;
   notice: (message: string, action?: ToastAction) => void;
@@ -27,6 +28,16 @@ type SessionActionName = 'finish' | 'complete' | 'retry' | 'edit' | 'reanalyse';
 
 const POLL_MS = 3000;
 const recordingBusy = (state: string) => state === 'listening' || state === 'transcribing';
+
+/**
+ * Partner text (MOTION-PASS-0.5.2 §6): every partner line arrives hidden, in every mode. `shown` = lines the learner
+ * revealed (and did not hide again); `unvoiced` = lines whose voice failed, shown for good; `seen` = lines whose text
+ * was ever on screen, which is what support counts.
+ */
+type PartnerText = { shown: ReadonlySet<string>; unvoiced: ReadonlySet<string>; seen: ReadonlySet<string> };
+const NO_PARTNER_TEXT: PartnerText = { shown: new Set(), unvoiced: new Set(), seen: new Set() };
+const withItem = (set: ReadonlySet<string>, id: string) => set.has(id) ? set : new Set([...set, id]);
+const withoutItem = (set: ReadonlySet<string>, id: string) => { if (!set.has(id)) return set; const next = new Set(set); next.delete(id); return next; };
 
 /**
  * The single owner of the open lesson: one useVoice instance (audit §5.3 invariant 1), drafts, idempotency
@@ -42,17 +53,21 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const [busy, setBusy] = useState('');
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const [busySince, setBusySince] = useState<number | null>(null);
   const [starting, setStarting] = useState<{ label: string; since: number } | null>(null);
   const [sessionError, setSessionError] = useState('');
   const [hintText, setHintText] = useState('');
   const [hintLevel, setHintLevel] = useState(0);
-  const [textMode, setTextModeState] = useState(true);
-  const [transcript, setTranscript] = useState(false);
-  const textModeRef = useRef(textMode);
-  textModeRef.current = textMode;
-  const transcriptRef = useRef(transcript);
-  transcriptRef.current = transcript;
+  const [partnerText, setPartnerText] = useState<PartnerText>(NO_PARTNER_TEXT);
+  const partnerTextRef = useRef(partnerText);
+  partnerTextRef.current = partnerText;
+  // Until /api/status answers the voice is unknown and partner lines stay hidden (like the iPhone); only a status that
+  // says «no voice», or a failed status check, makes the text stand in for it.
+  const voiceUnavailable = voiceAvailability(data.status, data.statusFailed) === 'unavailable';
+  const voiceUnavailableRef = useRef(voiceUnavailable);
+  voiceUnavailableRef.current = voiceUnavailable;
   const [comfort, setComfortMap] = useState<Record<string, number>>({});
   const [glowRetryId, setGlowRetryId] = useState<string | null>(null);
   /** The session completed by this action (not opened from history): its outcome celebrates once. */
@@ -89,12 +104,41 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
     } finally { setBusy(''); setBusySince(null); }
   }, [reportSessionError]);
 
-  const setTextMode = useCallback((value: boolean) => setTextModeState(value), []);
   const resetSessionView = useCallback((value: Session) => {
-    const audio = !!data.status?.audio.configured;
     setHintText(''); setHintLevel(0); setSessionError(''); setGlowRetryId(null);
-    setTranscript(value.mode === 'learning' || !audio); setTextModeState(value.mode === 'learning' || !audio);
-  }, [data.status?.audio.configured]);
+    // Partner lines start hidden in every mode; lines already marked as read on the server stay counted as seen.
+    const marked = value.turns.filter(turn => turn.role === 'assistant' && turn.support >= 1).map(turn => turn.id);
+    setPartnerText({ shown: new Set(), unvoiced: new Set(), seen: new Set(marked) });
+  }, []);
+
+  // ---------- partner text (MOTION-PASS-0.5.2 §6) ----------
+  /** He cannot hear this line (no voice configured, or its speech failed): its text stands in and cannot be hidden. */
+  const speechFailedTurnId = voice.speechFailedTurnId;
+  const partnerTextForced = useCallback((turn: Pick<Turn, 'id'>) =>
+    voiceUnavailable || speechFailedTurnId === turn.id || partnerText.unvoiced.has(turn.id), [voiceUnavailable, speechFailedTurnId, partnerText]);
+  const partnerTextShown = useCallback((turn: Pick<Turn, 'id'>) =>
+    partnerTextForced(turn) || partnerText.shown.has(turn.id), [partnerTextForced, partnerText]);
+  // A line whose voice failed stays readable (and counts as read) even after a later replay works.
+  useEffect(() => {
+    if (!speechFailedTurnId) return;
+    setPartnerText(previous => ({ ...previous, unvoiced: withItem(previous.unvoiced, speechFailedTurnId), seen: withItem(previous.seen, speechFailedTurnId) }));
+  }, [speechFailedTurnId]);
+  const revealPartnerText = useCallback(async (turnId: string) => {
+    const current = sessionRef.current;
+    if (!current || current.baseline) return;
+    setPartnerText(previous => ({ ...previous, shown: withItem(previous.shown, turnId), seen: withItem(previous.seen, turnId) }));
+    // The line he is about to answer is marked as read right away (that very turn); while busy or recording, the next
+    // message's textVisible marks it instead. A failed mark is covered the same way, so it stays quiet.
+    const last = current.turns.at(-1);
+    if (current.status !== 'active' || last?.role !== 'assistant' || last.id !== turnId || last.support >= 1) return;
+    if (busyRef.current || recordingBusy(voiceRef.current.state)) return;
+    const next = await request<Session>(`sessions/${current.id}/show-text`, { turnId }).catch(() => null);
+    const latest = sessionRef.current;
+    if (next && latest?.id === current.id && next.updatedAt >= latest.updatedAt) setSession(next);
+  }, []);
+  const hidePartnerText = useCallback((turnId: string) => {
+    setPartnerText(previous => previous.shown.has(turnId) ? { ...previous, shown: withoutItem(previous.shown, turnId) } : previous);
+  }, []);
 
   // ---------- drafts (the composer value is the persisted draft) ----------
   const draftFor = useCallback((sessionId: string | undefined, intent: DraftIntent, retryId?: string) => {
@@ -242,10 +286,16 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
       ? lastSent.current
       : { sessionId: current.id, id: draft.id, text, source: draft.audioFile ? 'audio' : 'text', audioFile: draft.audioFile, originalTranscript: draft.originalTranscript };
     lastSent.current = packet;
+    // Support is per line: the partner line he answers counts as read only if its text was on screen at any point
+    // (revealed, or voice unavailable / failed). The server marks just that line. A reading/writing task prompt is
+    // not partner speech (same rule as the iPhone client).
+    const heard = current.turns.findLast(turn => turn.role === 'assistant');
+    const textVisible = !current.baseline && !!heard && !['reading', 'writing'].includes(current.lesson.activity || '')
+      && (voiceUnavailableRef.current || voiceRef.current.speechFailedTurnId === heard.id || partnerTextRef.current.seen.has(heard.id));
     const result = await action('Собеседник отвечает', async () => {
       const { sessionId: ignored, ...body } = packet;
       void ignored;
-      try { return await request<Session>(`sessions/${current.id}/message`, { ...body, textVisible: current.baseline ? false : textModeRef.current || transcriptRef.current }); }
+      try { return await request<Session>(`sessions/${current.id}/message`, { ...body, textVisible }); }
       catch (error) {
         const saved = await request<Session>(`sessions/${current.id}`).catch(() => null);
         if (saved?.turns.some(turn => turn.role === 'user' && turn.id === packet.id)) {
@@ -308,7 +358,7 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
       const fresh = await refreshState();
       if (name === 'complete' && next.status === 'completed' && current.status !== 'completed') {
         if (deferred) {
-          feedbackRef.current.notice('Сохранено. К новой попытке вернёшься из «Незаконченных» на главной.');
+          feedbackRef.current.notice('Попытка отложена. Занятие ждёт в «Незаконченных занятиях» на главной.');
           if (sessionRef.current?.id === sessionId) navRef.current.go('today');
         } else {
           setLastCompletedId(sessionId);
@@ -328,12 +378,6 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
     else discardDraft();
     await sessionAction('finish');
   }, [discardDraft, send, sessionAction]);
-
-  const showTranscript = useCallback(async () => {
-    const current = sessionRef.current; if (!current) return;
-    const next = await action('Показываю текст', () => request<Session>(`sessions/${current.id}/show-text`, {}));
-    if (next) { setSession(next); setTranscript(true); setTextModeState(true); }
-  }, [action]);
 
   const hint = useCallback(async (level: 1 | 2 | 3) => {
     const current = sessionRef.current; if (!current) return;
@@ -387,11 +431,17 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
     setComfortMap(previous => ({ ...previous, [current.id]: value }));
   }, []);
 
-  return {
+  // Memoised: the object (and with it the app context) changes only when lesson state does. Live caption deltas and
+  // microphone levels never pass through here — they live in the voice stores (MOTION-PASS-0.5.2 §5).
+  const sessionComfort = session ? comfort[session.id] : undefined;
+  return useMemo(() => ({
     voice, session, setSession, busy, busySince, starting, sessionError, setSessionError,
-    hintText, hintLevel, textMode, setTextMode, transcript, comfort: session ? comfort[session.id] : undefined, setComfort, glowRetryId, lastCompletedId,
+    hintText, hintLevel, comfort: sessionComfort, setComfort, glowRetryId, lastCompletedId,
+    voiceUnavailable, partnerTextShown, partnerTextForced, revealPartnerText, hidePartnerText,
     drafts, draftFor, changeDraft, discardDraft,
-    open, start, send, resend, sessionAction, finishWithDraft, showTranscript, hint, pushbackSpeech, pushback, deleteSession, resetAll,
-  };
+    open, start, send, resend, sessionAction, finishWithDraft, hint, pushbackSpeech, pushback, deleteSession, resetAll,
+  }), [voice, session, busy, busySince, starting, sessionError, hintText, hintLevel, sessionComfort, setComfort, glowRetryId, lastCompletedId,
+    voiceUnavailable, partnerTextShown, partnerTextForced, revealPartnerText, hidePartnerText, drafts, draftFor, changeDraft, discardDraft,
+    open, start, send, resend, sessionAction, finishWithDraft, hint, pushbackSpeech, pushback, deleteSession, resetAll]);
 }
 export type SessionController = ReturnType<typeof useSessionController>;

@@ -12,8 +12,8 @@ struct ConversationView: View {
     @State private var analysisStartedAt = Date()
     @State private var reviewComposerOpen = false
     @State private var pushbackComposerOpen = false
-    @State private var confirmFinishWithDraft = false
-    @State private var confirmDeferRetry = false
+    /// Leaving a step asks only when an unsent draft would be lost (MOTION-PASS §8.5).
+    @State private var unsentIntent: UnsentDraftIntent?
     @State private var showTiming = false
     @State private var freshRetry: Int? = nil
     @State private var celebrate = 0
@@ -54,19 +54,16 @@ struct ConversationView: View {
                 await client.pollReview()
             }
             .onAppear { initializeBrief() }
-            .confirmationDialog("Черновик не отправлен", isPresented: $confirmFinishWithDraft, titleVisibility: .visible) {
-                Button("Удалить черновик и получить разбор", role: .destructive) {
-                    client.clearDraft()
-                    Task { await client.action("finish") }
+            // MOTION-PASS §8.5: leaving a step asks only when an unsent draft would be lost (the web FinishDialog wording).
+            .confirmationDialog(unsentTitle, isPresented: unsentDialogShown, titleVisibility: .visible, presenting: unsentIntent) { intent in
+                if intent == .finish && canSendBeforeFinishing {
+                    Button("Отправить и закончить") { Task { await sendThenFinish() } }
                 }
-                Button("Остаться", role: .cancel) {}
-            } message: { Text("Отправленные ответы сохранены. Неотправленный текст не попадёт в разбор.") }
-            .confirmationDialog("На сегодня всё?", isPresented: $confirmDeferRetry, titleVisibility: .visible) {
-                Button("Сохранить и вернуться") {
-                    Task { await client.action("complete", deferRetry: true, returnHome: true) }
-                }
-                Button("Остаться", role: .cancel) {}
-            } message: { Text("Разбор сохранится. Улучшенная попытка останется на потом и не будет засчитана как выполненная.") }
+                Button(intent.discardTitle, role: .destructive) { discardAndLeave(intent) }
+                Button("Вернуться к занятию", role: .cancel) {}
+            } message: { intent in
+                Text(intent.detail(textActivity: conversation?.isTextActivity == true))
+            }
             .sensoryFeedback(.success, trigger: improvedTick)
             .sensoryFeedback(.warning, trigger: notImprovedTick)
             .mascotConfetti(trigger: celebrate, origin: UnitPoint(x: 0.5, y: 0.25))
@@ -133,21 +130,44 @@ struct ConversationView: View {
         return value.retries.contains { $0.improved == true && ($0.analysisVersion == nil || $0.analysisVersion == analysis.version) }
     }
 
-    private var canSaveCompletion: Bool {
+    /// «Завершить занятие» / «Отложить попытку»: an unsent draft no longer blocks them (the learner confirms what
+    /// is lost, §8.5); a recording that is not text yet does.
+    private var canLeaveReview: Bool {
         conversation?.id == id && !client.busy && !client.recording && !client.microphoneStarting
-            && !client.hasUnsentAnswer && !client.hasUnuploadedRecording && conversation?.analysis != nil
+            && !client.hasUnuploadedRecording && conversation?.analysis != nil
     }
 
+    private var leaveBlockReason: String? {
+        client.hasUnuploadedRecording && !client.busy && !client.recording ? "Сначала распознай или удали запись." : nil
+    }
+
+    /// An unsent draft no longer blocks finishing: the learner confirms what is lost (§8.5). A recording that is not
+    /// text yet, and a reply the server already holds, still come first.
     private func canRequestReview(_ value: Conversation) -> Bool {
         value.id == id && !client.busy && !client.recording && !client.microphoneStarting && value.isLive
-            && value.processing == nil && value.userTurnCount > 0 && client.recordedFile == nil
-            && client.pendingMessageID == nil && !client.hasUnuploadedRecording
+            && value.processing == nil && value.userTurnCount > 0 && !client.hasUnuploadedRecording && !serverHoldsReply
+    }
+
+    private var serverHoldsReply: Bool { client.pendingMessageID != nil && !client.pendingIsLocalOnly }
+
+    private var canSendBeforeFinishing: Bool {
+        !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !client.hasUnuploadedRecording
+            && !client.busy && conversation?.processing == nil && !serverHoldsReply
+    }
+
+    private var unsentDialogShown: Binding<Bool> {
+        Binding(get: { unsentIntent != nil }, set: { shown in if !shown { unsentIntent = nil } })
+    }
+
+    private var unsentTitle: String {
+        guard unsentIntent == .finish else { return "Есть неотправленная попытка" }
+        return conversation?.isTextActivity == true ? "Есть неотправленный текст" : "Есть неотправленный ответ"
     }
 
     private func finishBlockReason(_ value: Conversation) -> String? {
         if client.recording || client.busy { return nil }
-        if client.hasUnuploadedRecording || client.recordedFile != nil { return "Сначала отправь или удали запись." }
-        if client.pendingMessageID != nil { return "Сначала отправь последний ответ." }
+        if client.hasUnuploadedRecording { return "Сначала распознай или удали запись." }
+        if serverHoldsReply { return "Сначала дождись ответа собеседника на последнюю реплику." }
         if value.processing != nil { return "Собеседник ещё отвечает." }
         return nil
     }
@@ -195,12 +215,33 @@ struct ConversationView: View {
         }
     }
 
-    private func requestReview() {
-        if !client.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            confirmFinishWithDraft = true
+    /// «Закончить и получить разбор», «Завершить занятие» and «Отложить попытку» (which parks the attempt: the
+    /// lesson stays unfinished on Today) happen at once unless an unsent draft would be lost (§8.5).
+    private func leave(_ intent: UnsentDraftIntent) {
+        if client.hasUnsentAnswer {
+            unsentIntent = intent
         } else {
-            Task { await client.action("finish") }
+            proceed(intent)
         }
+    }
+
+    private func proceed(_ intent: UnsentDraftIntent) {
+        switch intent {
+        case .finish: Task { await client.action("finish") }
+        case .complete: Task { await client.action("complete", returnHome: true) }
+        case .deferRetry: Task { await client.action("complete", deferRetry: true, returnHome: true) }
+        }
+    }
+
+    private func discardAndLeave(_ intent: UnsentDraftIntent) {
+        client.discardUnsentAnswer()
+        proceed(intent)
+    }
+
+    private func sendThenFinish() async {
+        await client.submit(.message)
+        guard !client.hasUnsentAnswer, !client.hasUnuploadedRecording, client.error == nil else { return }
+        await client.action("finish")
     }
 
 #if DEBUG
@@ -256,9 +297,7 @@ struct ConversationView: View {
             if value.analysisFailed { analysisFailedCard(value) }
             if let material = value.lesson.material { LessonMaterialCard(material: material) }
             if !value.isTextActivity { partnerStage(value) }
-            if let turn = value.turns.last(where: { $0.role == "assistant" }), value.mode == "learning" || client.assistantTextShown {
-                TranscriptCard(turn: turn, label: partnerLabel(value, turn))
-            }
+            if let turn = value.turns.last(where: { $0.role == "assistant" }) { partnerCard(value, turn) }
             if !client.recording, let last = value.turns.last(where: { $0.role == "user" }) { TranscriptCard(turn: last) }
             if value.turns.count > 2 { wholeConversation(value) }
             if client.playing, client.audioOutput != "Звук пока не запущен" {
@@ -300,7 +339,26 @@ struct ConversationView: View {
 
     private func modeTitle(_ value: Conversation) -> String {
         if value.isTextActivity { return value.isReading ? "Чтение" : "Письмо" }
-        return value.mode == "call" ? "Созвон" : "С опорами"
+        return ModeCopy.title(value.mode)
+    }
+
+    /// The partner's latest line, heard first (MOTION-PASS §6): hidden until opened, «Скрыть текст» hides it again,
+    /// the next line arrives hidden. Reading/writing prompts and lines without voice are always shown.
+    private func partnerCard(_ value: Conversation, _ turn: Turn) -> some View {
+        let forced = client.partnerTextForced(turn, in: value)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(partnerLabel(value, turn) ?? "Собеседник")
+                .font(.caption.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
+            PartnerLineReveal(text: turn.text, shown: forced || client.revealedPartnerTurn == turn.id, canHide: !forced,
+                              disabled: client.recording || client.microphoneStarting,
+                              reveal: { client.revealPartnerText() }, hide: { client.hidePartnerText() })
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Theme.solid, in: RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1)
+        }
     }
 
     private func analysisFailedCard(_ value: Conversation) -> some View {
@@ -336,11 +394,24 @@ struct ConversationView: View {
         .padding(.vertical, 2)
     }
 
+    /// Partner turns show only once the learner opens the list: opening it counts as opening the line he is about
+    /// to answer (`show-text`). A line that arrives while the list stays open is held back here too (§6).
     private func wholeConversation(_ value: Conversation) -> some View {
-        DisclosureGroup(isExpanded: $showConversation) {
+        let current: String? = value.turns.last.flatMap { last -> String? in
+            last.role == "assistant" && !value.isTextActivity ? last.id : nil
+        }
+        let expanded = Binding(get: { showConversation }, set: { open in
+            if open && !showConversation && current != nil { client.revealPartnerText() }
+            showConversation = open
+        })
+        return DisclosureGroup(isExpanded: expanded) {
             VStack(spacing: 12) {
                 ForEach(value.turns) { turn in
-                    if turn.role == "user" || value.mode == "learning" || client.assistantTextShown { TranscriptCard(turn: turn) }
+                    if turn.id == current {
+                        partnerCard(value, turn)
+                    } else {
+                        TranscriptCard(turn: turn)
+                    }
                 }
             }.padding(.top, 10)
         } label: {
@@ -694,7 +765,7 @@ struct ConversationView: View {
     @ViewBuilder private func finishRow(_ value: Conversation) -> some View {
         if value.userTurnCount > 0 && !client.recording {
             VStack(spacing: 4) {
-                Button { requestReview() } label: {
+                Button { leave(.finish) } label: {
                     Label("Закончить и получить разбор", systemImage: "checkmark.circle")
                 }
                 .buttonStyle(QuietButton())
@@ -721,19 +792,21 @@ struct ConversationView: View {
         }
     }
 
+    /// A finished lesson opened later is simply left for Today (§8.5); right after finishing, iOS already returns to
+    /// Today, where the next step waits. The toolbar chevron still just closes the sheet.
     private var closeButton: some View {
-        Button { client.minimizeConversation() } label: {
-            HStack { Text("Закрыть"); Spacer(); Image(systemName: "chevron.down") }
+        Button { client.returnToHome() } label: {
+            HStack { Text("На главную"); Spacer(); Image(systemName: "house") }
         }
         .buttonStyle(SecondaryButton())
-        .disabled(client.recording)
+        .disabled(client.recording || client.microphoneStarting)
     }
 
     private func completeBlock(_ value: Conversation) -> some View {
         VStack(spacing: 10) {
             Label("Всё сохранено. Можно завершать.", systemImage: "checkmark.circle.fill")
                 .font(.footnote).foregroundStyle(Theme.inkSecondary)
-            Button { Task { await client.action("complete", returnHome: true) } } label: {
+            Button { leave(.complete) } label: {
                 HStack {
                     Text(client.busy ? "Сохраняю…" : "Завершить занятие")
                     Spacer()
@@ -741,7 +814,10 @@ struct ConversationView: View {
                 }
             }
             .buttonStyle(PrimaryButton())
-            .disabled(!canSaveCompletion)
+            .disabled(!canLeaveReview)
+            if let reason = leaveBlockReason {
+                Text(reason).font(.caption).foregroundStyle(Theme.inkSecondary)
+            }
         }
     }
 
@@ -753,13 +829,17 @@ struct ConversationView: View {
             .buttonStyle(PrimaryButton())
             .disabled(client.busy || client.recording)
             if value.status == "completed" {
-                Button("Позже") { client.minimizeConversation() }.buttonStyle(QuietButton())
-            } else {
-                Button("На сегодня всё") { confirmDeferRetry = true }
+                // The lesson is finished and its attempt is parked: leave it (§8.5).
+                Button("На главную") { client.returnToHome() }
                     .buttonStyle(QuietButton())
-                    .disabled(!canSaveCompletion)
-                if client.hasUnsentAnswer {
-                    Text("Отправь или очисти новую попытку, чтобы отложить её.").font(.caption).foregroundStyle(Theme.inkSecondary)
+                    .disabled(client.recording || client.microphoneStarting)
+            } else {
+                // Parks the attempt; the lesson stays unfinished on Today.
+                Button("Отложить попытку") { leave(.deferRetry) }
+                    .buttonStyle(QuietButton())
+                    .disabled(!canLeaveReview)
+                if let reason = leaveBlockReason {
+                    Text(reason).font(.caption).foregroundStyle(Theme.inkSecondary)
                 }
             }
         }
@@ -789,7 +869,7 @@ struct ConversationView: View {
 // MARK: - Composer
 
 /// The floating dock: input (or live captions), recording actions and the control cluster
-/// (replay · hint/text · mic · send). Controls live here, never under the dock (L-18).
+/// (replay · text | mic | hint · send). Controls live here, never under the dock (L-18).
 private struct ComposerPanel: View {
     let target: ComposerTarget
     let conversation: Conversation
@@ -824,7 +904,7 @@ private struct ComposerPanel: View {
             if target == .message, let hint = client.hint { hintCard(hint) }
             inputArea
             if client.pendingIsLocalOnly && !client.busy { pendingNote }
-            if !client.recording && (client.recordedFile != nil || client.hasUnuploadedRecording) { recordingActions }
+            if !client.showsLiveCaptions && (client.recordedFile != nil || client.hasUnuploadedRecording) { recordingActions }
             controls
             if conversation.lesson.format == "pitch" && target == .message {
                 PitchTarget(start: client.recording ? client.recordingStartedAt : nil)
@@ -832,12 +912,15 @@ private struct ComposerPanel: View {
             if client.recording, let start = client.recordingStartedAt { RecordingLimitNote(start: start) }
         }
         .animation(reduceMotion ? nil : NativeMotion.standard, value: client.recording)
+        .animation(reduceMotion ? nil : NativeMotion.standard, value: client.showsLiveCaptions)
     }
 
+    /// While speaking (and while the answer is saved right after Stop) the live words; then the editable draft.
+    /// The caption box has a fixed height, so the dock never grows while the learner speaks (§5).
     @ViewBuilder private var inputArea: some View {
-        if client.recording {
-            LiveTranscriptView(text: client.liveTranscript, status: client.liveTranscriptStatus)
-                .transition(reduceMotion ? .identity : .opacity)
+        if client.showsLiveCaptions {
+            LiveTranscriptView(model: client.liveCaptions, live: client.recording)
+                .transition(.opacity)
         } else {
             TextField(placeholder, text: $client.draft, axis: .vertical)
                 .lineLimit(writing ? 4...10 : 1...4)
@@ -930,7 +1013,7 @@ private struct ComposerPanel: View {
                 HStack(spacing: 10) {
                     if !client.recording { leftCluster }
                     Spacer(minLength: 0)
-                    if !client.recording { sendCircle }
+                    if !client.recording { rightCluster }
                 }
                 micButton
             }
@@ -938,17 +1021,28 @@ private struct ComposerPanel: View {
         }
     }
 
+    /// The partner's line: listen again and show/hide its text (both modes, §6).
     @ViewBuilder private var leftCluster: some View {
         HStack(spacing: 8) {
             switch target {
             case .message:
-                if !conversation.isTextActivity { replayCircle }
-                if conversation.mode == "learning" { hintCircle } else if !client.assistantTextShown { textCircle }
+                if !conversation.isTextActivity {
+                    replayCircle
+                    textCircle
+                }
             case .retry:
                 EmptyView()
             case .pushback(let retryID):
                 objectionCircle(retryID)
             }
+        }
+    }
+
+    /// The learner's answer: a hint (С опорами only) and send.
+    @ViewBuilder private var rightCluster: some View {
+        HStack(spacing: 8) {
+            if target == .message && conversation.mode == "learning" { hintCircle }
+            sendCircle
         }
     }
 
@@ -986,15 +1080,21 @@ private struct ComposerPanel: View {
             .accessibilityLabel(client.hint == nil ? "Подсказка" : "Ещё подсказку")
     }
 
-    private var textCircle: some View {
-        Button { Task { await client.revealText() } } label: { Image(systemName: "text.alignleft") }
-            .buttonStyle(LiquidIconButton(size: 48))
-            .disabled(client.recording)
-            .accessibilityLabel("Показать текст реплики")
+    /// Opens or hides the latest partner line. Absent when the line cannot be heard (its text is always shown then).
+    @ViewBuilder private var textCircle: some View {
+        if let turn = conversation.turns.last(where: { $0.role == "assistant" }), !client.partnerTextForced(turn, in: conversation) {
+            let shown = client.revealedPartnerTurn == turn.id
+            Button {
+                if shown { client.hidePartnerText() } else { client.revealPartnerText() }
+            } label: { Image(systemName: shown ? "eye.slash" : "text.bubble") }
+            .buttonStyle(LiquidIconButton(size: 48, tint: shown ? Theme.lavender.opacity(0.55) : nil))
+            .disabled(client.recording || client.microphoneStarting)
+            .accessibilityLabel(shown ? "Скрыть текст реплики" : "Показать текст реплики")
+        }
     }
 
     private func objectionCircle(_ retryID: String) -> some View {
-        let key = "pushback:" + retryID
+        let key = TrainingClient.pushbackLineKey(retryID)
         let active = client.playingModelLine == key || client.loadingModelLine == key
         return Button { Task { await client.pushbackSpeech(retryId: retryID) } } label: {
             Image(systemName: active ? "stop.fill" : "speaker.wave.2.fill")
@@ -1034,8 +1134,8 @@ private struct ComposerPanel: View {
             .foregroundStyle(Theme.onAccent)
             .padding(.horizontal, 22)
             .frame(height: 64)
-            .background(Theme.cyan, in: Capsule())
-            .shadow(color: Theme.cyan.opacity(0.45), radius: 16, x: 0, y: 6)
+            // The glow sits on the static capsule, so the moving level bars never re-render a shadow (§5).
+            .background { Capsule().fill(Theme.cyan).shadow(color: Theme.cyan.opacity(0.45), radius: 16, x: 0, y: 6) }
         } else {
             ZStack {
                 if client.microphoneStarting {
@@ -1100,6 +1200,77 @@ private struct RecordingLimitNote: View {
                     .frame(maxWidth: .infinity)
             }
         }
+    }
+}
+
+// MARK: - Leaving a step
+
+/// A lesson step that would drop an unsent draft (MOTION-PASS §8.5). Wording equals the web FinishDialog.
+enum UnsentDraftIntent: Equatable {
+    case finish, complete, deferRetry
+
+    var discardTitle: String {
+        switch self {
+        case .finish: return "Удалить черновик и закончить"
+        case .complete: return "Удалить черновик и завершить"
+        case .deferRetry: return "Удалить черновик и отложить"
+        }
+    }
+
+    func detail(textActivity: Bool) -> String {
+        switch self {
+        case .finish:
+            return "Отправь его и получи разбор — или удали черновик. После этого "
+                + (textActivity ? "добавить ответы в это задание" : "добавить реплики в этот разговор") + " уже не получится."
+        case .complete:
+            return "Черновик попытки не будет проверен. Удали его, чтобы завершить занятие, или вернись и проверь попытку."
+        case .deferRetry:
+            return "Черновик попытки не будет проверен. Удали его, чтобы отложить попытку, или вернись и проверь её."
+        }
+    }
+}
+
+// MARK: - Partner line
+
+/// A partner line that is heard before it is read (MOTION-PASS §6): it arrives hidden behind «Показать текст»,
+/// «Скрыть текст» hides it again. A line that cannot be heard (`canHide == false`) is simply shown.
+/// Shared by the conversation, the pushback objection and the placement roleplay.
+struct PartnerLineReveal: View {
+    let text: String
+    var font: Font = .body
+    let shown: Bool
+    let canHide: Bool
+    var note = "Реплика собеседника звучит голосом. Текст можно открыть — это учтётся как опора."
+    var disabled = false
+    let reveal: () -> Void
+    let hide: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if shown {
+                Text(text).font(font).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    .transition(reduceMotion ? .opacity : NativeMotion.insertion)
+                if canHide {
+                    Button(action: hide) {
+                        Label("Скрыть текст", systemImage: "eye.slash")
+                            .font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
+                            .frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressButton())
+                    .disabled(disabled)
+                }
+            } else {
+                Text(note).font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+                Button(action: reveal) { Label("Показать текст", systemImage: "text.bubble") }
+                    .buttonStyle(QuietButton())
+                    .disabled(disabled)
+                    .padding(.top, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(reduceMotion ? nil : NativeMotion.standard, value: shown)
     }
 }
 
@@ -1231,10 +1402,14 @@ private struct PushbackCard: View {
     let composerOpen: Bool
     let onAnswer: () -> Void
     @EnvironmentObject private var client: TrainingClient
-    private var key: String { "pushback:" + retryID }
+    /// The objection the learner opened (keyed by attempt, so the next objection arrives hidden).
+    @State private var revealedRetry: String?
+    private var key: String { TrainingClient.pushbackLineKey(retryID) }
     private var active: Bool { client.playingModelLine == key || client.loadingModelLine == key }
     var body: some View {
         if let pushback = retry.pushback {
+            // Heard first (§6); after the stress test it is part of the review and stays visible.
+            let forced = pushback.held != nil || client.voiceUnavailable || client.voiceFailed(key)
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Собеседник возражает").font(.headline).accessibilityAddTraits(.isHeader)
@@ -1242,8 +1417,10 @@ private struct PushbackCard: View {
                         .font(.footnote).foregroundStyle(Theme.inkSecondary)
                 }
                 HStack(alignment: .top, spacing: 10) {
-                    Text(pushback.npcLine).font(.subheadline.weight(.medium)).textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
+                    PartnerLineReveal(text: pushback.npcLine, font: .subheadline.weight(.medium),
+                                      shown: forced || revealedRetry == retryID, canHide: !forced,
+                                      note: "Возражение звучит голосом — послушай его. Текст можно открыть.",
+                                      reveal: { revealedRetry = retryID }, hide: { revealedRetry = nil })
                     Spacer(minLength: 0)
                     Button { Task { await client.pushbackSpeech(retryId: retryID) } } label: {
                         Image(systemName: active ? "stop.fill" : "play.fill")

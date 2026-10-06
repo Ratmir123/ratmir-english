@@ -1,9 +1,10 @@
 'use client';
 
 /**
- * «Созвоны» tab, in reading order: upload entry, the calls list (one surface, a row per call with its state),
- * then «Мои паттерны» — or the selected call (Разбор · Тренировки · Транскрипт). Master–detail when the
- * content area is ≥1000px wide, stacked otherwise.
+ * «Созвоны» tab: one switch «Звонки · Паттерны · Плейбук» under the header (MOTION-PASS-0.5.2 §8, like the iPhone,
+ * where patterns and the playbook live in this tab too). «Звонки»: upload entry and the calls list (one surface, a row
+ * per call with its state), or the selected call (Разбор · Тренировки · Транскрипт) — master–detail when the content
+ * area is ≥ 1000 px wide, stacked otherwise. «Паттерны» and «Мой плейбук» stay one tap away even with a call open.
  * Polls GET calls every 3 s only while something is processing.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -11,13 +12,19 @@ import { ArrowLeftIcon, CursorClickIcon, FileTextIcon, PhoneCallIcon, TargetIcon
 import { api } from '@/lib/client/api';
 import type { CallStatus, CallSummary } from '@/lib/calls/types';
 import type { AppState, Mode } from '@/lib/types';
-import { Chip, cx, kit, ProgressBar, useInterval } from './kit';
+import { Chip, cx, kit, ProgressBar, Segmented, useInterval } from './kit';
 import { CALL_STATUS, formatDay, formatDuration, isCallProcessing, plural, SOURCE_LABEL } from './format';
 import { dismissUpload, getServerUploadsSnapshot, getUploadsSnapshot, subscribeUploads, type UploadJob } from './upload-store';
 import { CallUploadCard } from './upload-call';
 import { CallDetailView, UploadProgress } from './call-detail';
+import { FactsPanel } from './facts-panel';
 import { PatternsPanel } from './patterns-panel';
+import type { CallsSection } from '../app/use-navigation';
+import type { MascotEmotion } from '../shell/companion';
+import { ScreenMascot } from '../shell/screen-mascot';
 import styles from './calls.module.css';
+
+const UPLOADING: UploadJob['phase'][] = ['creating', 'preparing', 'uploading', 'completing'];
 
 /** One call as a list row: title with its state, who/when, then the one line that matters for that state. */
 function CallItem({ call, job, selected, onSelect }: { call: CallSummary; job: UploadJob | null; selected: boolean; onSelect: () => void }) {
@@ -69,17 +76,24 @@ function PendingUpload({ job }: { job: UploadJob }) {
   );
 }
 
-export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId }: {
+export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId, initialSection, sectionNonce }: {
   state: AppState; onRefresh: () => Promise<void>; onStartDrill: (drillId: string, mode: Mode) => void; initialCallId?: string | null;
+  /** Open on «Паттерны» or «Плейбук» (e.g. Profile → «Мой плейбук»); a call id always opens «Звонки». */
+  initialSection?: CallsSection | null; sectionNonce?: number;
 }) {
   const [selected, setSelected] = useState<string | null>(initialCallId ?? null);
+  const [section, setSectionValue] = useState<CallsSection>(initialCallId ? 'calls' : initialSection ?? 'calls');
+  // A section picked here settles in softly; the screen's arrival is the staircase instead.
+  const [switched, setSwitched] = useState(false);
+  const setSection = (value: CallsSection) => { setSectionValue(value); setSwitched(true); };
   const [calls, setCalls] = useState<CallSummary[]>(state.calls ?? []);
   const uploads = useSyncExternalStore(subscribeUploads, getUploadsSnapshot, getServerUploadsSnapshot);
   const root = useRef<HTMLElement>(null);
   const statuses = useRef(new Map<string, CallStatus>());
   const refreshing = useRef(false);
 
-  useEffect(() => { if (initialCallId) setSelected(initialCallId); }, [initialCallId]);
+  useEffect(() => { if (initialCallId) { setSelected(initialCallId); setSectionValue('calls'); } }, [initialCallId]);
+  useEffect(() => { if (initialSection && !initialCallId) setSectionValue(initialSection); }, [initialSection, initialCallId, sectionNonce]);
   useEffect(() => { setCalls(state.calls ?? []); }, [state.calls]);
 
   const refreshApp = useCallback(async () => {
@@ -120,67 +134,85 @@ export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId }: {
   }, []);
 
   const pendingJobs = uploads.filter(job => !job.callId && job.phase !== 'cancelled');
+  const facts = state.profileFacts ?? [];
+  const factsToCheck = facts.filter(fact => fact.status === 'suggested').length;
   const selectedSummary = useMemo(() => calls.find(call => call.id === selected) ?? null, [calls, selected]);
   const patterns = state.patterns ?? [];
   const drills = state.drills ?? [];
   const needsAction = calls.filter(call => call.status === 'needs-speaker').length;
+  const hasList = pendingJobs.length > 0 || calls.length > 0;
+  // The screen's companion (MOTION-PASS-0.5.2 §3): thinking while a call is processed or uploaded, surprised when one
+  // needs «кто есть кто», listening otherwise. Without calls it moves into the empty state, larger and curious.
+  const working = calls.some(call => isCallProcessing(call.status)) || uploads.some(job => UPLOADING.includes(job.phase));
+  const mood: MascotEmotion = working ? 'thinking' : needsAction ? 'surprised' : 'listening';
+  // One companion per screen: without calls it sits, larger and curious, in the «Звонки» empty state instead.
+  const headCompanion = hasList || section !== 'calls';
 
   return (
-    <section ref={root} className={cx(kit.scope, styles.screen)} data-view={selected ? 'detail' : 'list'} aria-label="Созвоны">
-      <div className={styles.layout}>
-        <div className={styles.listPane}>
-          <div className={styles.pageHead}>
-            <h1>Созвоны</h1>
-            <p>Загрузи звонок — получишь разбор, тренировки из своих же моментов и обновлённые паттерны.</p>
-          </div>
-          <CallUploadCard onCreated={id => { void fetchCalls(); void refreshApp(); select(id); }} />
-          {pendingJobs.length || calls.length ? (
-            <section className={styles.callsBlock} aria-labelledby="calls-list-title">
-              <div className={styles.sectionTitle}>
-                <h2 id="calls-list-title">Звонки</h2>
-                {needsAction
-                  ? <Chip tone="violet">{needsAction} {plural(needsAction, ['ждёт тебя', 'ждут тебя', 'ждут тебя'])}</Chip>
-                  : <span className={styles.sectionCount}>{calls.length} {plural(calls.length, ['звонок', 'звонка', 'звонков'])}</span>}
+    <section ref={root} className={cx(kit.scope, styles.screen)} data-view={section === 'calls' && selected ? 'detail' : 'list'} aria-label="Созвоны">
+      <div className={styles.pageHead} data-enter>
+        <div className={styles.pageCopy}>
+          <h1>Созвоны</h1>
+          <p>Загрузи звонок — получишь разбор, тренировки из своих же моментов и обновлённые паттерны.</p>
+        </div>
+        {headCompanion ? <ScreenMascot emotion={mood} fluid className="screen-mascot" /> : null}
+      </div>
+      <div className={styles.sections} data-enter>
+        <Segmented label="Разделы созвонов" idPrefix="calls" value={section} onChange={setSection} options={[
+          { id: 'calls', label: 'Звонки', badge: needsAction || null },
+          { id: 'patterns', label: 'Паттерны' },
+          { id: 'playbook', label: 'Плейбук', badge: factsToCheck || null },
+        ]} />
+      </div>
+      <div key={section} id={`calls-panel-${section}`} role="tabpanel" aria-labelledby={`calls-tab-${section}`} className={styles.panel}
+        data-switched={switched || undefined}>
+        {section === 'patterns' ? <div data-enter>
+          <PatternsPanel patterns={patterns} drills={drills} onStartDrill={onStartDrill} onChanged={() => void refreshApp()} />
+        </div> : section === 'playbook' ? <div className={cx(kit.glass, styles.playbook)} data-enter>
+          <FactsPanel facts={facts} onChanged={() => void refreshApp()} />
+        </div> : <div className={styles.layout}>
+          <div className={styles.listPane}>
+            <div data-enter><CallUploadCard onCreated={id => { void fetchCalls(); void refreshApp(); select(id); }} /></div>
+            {hasList ? (
+              <section className={styles.callsBlock} aria-labelledby="calls-list-title" data-enter>
+                <div className={styles.sectionTitle}>
+                  <h2 id="calls-list-title">Звонки</h2>
+                  {needsAction
+                    ? <Chip tone="violet">{needsAction} {plural(needsAction, ['ждёт тебя', 'ждут тебя', 'ждут тебя'])}</Chip>
+                    : <span className={styles.sectionCount}>{calls.length} {plural(calls.length, ['звонок', 'звонка', 'звонков'])}</span>}
+                </div>
+                <ul className={cx(kit.glass, styles.list)}>
+                  {pendingJobs.map(job => <PendingUpload key={job.key} job={job} />)}
+                  {calls.map(call => (
+                    <CallItem key={call.id} call={call} job={uploads.find(job => job.callId === call.id) ?? null}
+                      selected={call.id === selected} onSelect={() => select(call.id)} />
+                  ))}
+                </ul>
+              </section>
+            ) : (
+              <div className={cx(kit.glass, styles.empty)} data-enter>
+                <div className={styles.emptyCopy}>
+                  <h2>Первый звонок — первый разбор</h2>
+                  <ul>
+                    <li><PhoneCallIcon size={18} aria-hidden="true" />Итог, что сработало и что стоило денег — с цитатами и временем.</li>
+                    <li><CursorClickIcon size={18} aria-hidden="true" />«Как сказать сильнее» — твоим голосом, можно послушать.</li>
+                    <li><TargetIcon size={18} aria-hidden="true" />Тренировки из твоих моментов и паттерны от звонка к звонку.</li>
+                  </ul>
+                </div>
+                <ScreenMascot emotion="curious" fluid className={styles.emptyMascot} />
               </div>
-              <ul className={cx(kit.glass, styles.list)}>
-                {pendingJobs.map(job => <PendingUpload key={job.key} job={job} />)}
-                {calls.map(call => (
-                  <CallItem key={call.id} call={call} job={uploads.find(job => job.callId === call.id) ?? null}
-                    selected={call.id === selected} onSelect={() => select(call.id)} />
-                ))}
-              </ul>
-              {selected ? (
-                <button type="button" className={cx(kit.btn, kit.quiet, kit.small, styles.patternsLink)} onClick={() => select(null)}>
-                  <TargetIcon size={16} />Мои паттерны
-                </button>
-              ) : null}
-            </section>
-          ) : (
-            <div className={cx(kit.glass, styles.empty)}>
-              <h2>Первый звонок — первый разбор</h2>
-              <ul>
-                <li><PhoneCallIcon size={18} aria-hidden="true" />Итог, что сработало и что стоило денег — с цитатами и временем.</li>
-                <li><CursorClickIcon size={18} aria-hidden="true" />«Как сказать сильнее» — твоим голосом, можно послушать.</li>
-                <li><TargetIcon size={18} aria-hidden="true" />Тренировки из твоих моментов и паттерны от звонка к звонку.</li>
-              </ul>
-            </div>
-          )}
-        </div>
-        <div className={styles.detailPane}>
-          {selected ? (
-            <>
-              <button type="button" className={cx(kit.btn, kit.quiet, kit.small, styles.backButton)} style={{ justifySelf: 'start' }} onClick={() => select(null)}>
-                <ArrowLeftIcon size={16} weight="bold" />Все звонки
-              </button>
-              <CallDetailView key={selected} callId={selected} summary={selectedSummary} patterns={patterns} uploads={uploads}
-                onChanged={() => { void fetchCalls(); void refreshApp(); }}
-                onDeleted={() => { setSelected(null); void fetchCalls(); void refreshApp(); }}
-                onStartDrill={onStartDrill} />
-            </>
-          ) : (
-            <PatternsPanel patterns={patterns} drills={drills} onStartDrill={onStartDrill} onChanged={() => void refreshApp()} />
-          )}
-        </div>
+            )}
+          </div>
+          {selected ? <div className={styles.detailPane} data-enter>
+            <button type="button" className={cx(kit.btn, kit.quiet, kit.small, styles.backButton)} style={{ justifySelf: 'start' }} onClick={() => select(null)}>
+              <ArrowLeftIcon size={16} weight="bold" />Все звонки
+            </button>
+            <CallDetailView key={selected} callId={selected} summary={selectedSummary} patterns={patterns} uploads={uploads}
+              onChanged={() => { void fetchCalls(); void refreshApp(); }}
+              onDeleted={() => { setSelected(null); void fetchCalls(); void refreshApp(); }}
+              onStartDrill={onStartDrill} />
+          </div> : null}
+        </div>}
       </div>
     </section>
   );

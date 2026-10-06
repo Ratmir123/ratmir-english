@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The playbook: facts about the learner (rates, floors, cases, metrics, confidential terms,
-/// relocation…) grouped by kind. Suggested facts come first with «Верно / Неверно»; accepted facts
+/// «Мой плейбук» (the same name on the web): facts about the learner (rates, floors, cases, metrics, confidential
+/// terms, relocation…) grouped by kind. Suggested facts come first with «Верно / Неверно»; accepted facts
 /// feed the partner, hints and the evaluator. `embedded: true` renders without scroll view/backdrop.
 struct FactsView: View {
     let facts: [ProfileFact]
@@ -34,39 +34,45 @@ struct FactsView: View {
                     .padding(.bottom, 32)
                     .frame(maxWidth: 720)
                     .frame(maxWidth: .infinity)
+                    .entranceStage()
             }
             .background { FeatureBackdrop() }
-            .navigationTitle("Факты о тебе")
+            .navigationTitle("Мой плейбук")
         }
     }
 
+    /// Blocks carry their staircase step; embedded in a host without a stage they simply show.
     private var content: some View {
         VStack(alignment: .leading, spacing: 18) {
             if !embedded {
-                Text("Что тренажёр знает о тебе: ставки, кейсы, цифры, условия. Собеседник, подсказки и разбор опираются только на принятые факты.")
+                Text("Что о тебе знают собеседник и тренер: ставки, кейсы, цифры, что конфиденциально. Сюда попадает только то, что ты подтвердил.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .entrance(0)
             }
             if let error {
                 FeatureBanner(message: error, onDismiss: { self.error = nil })
             }
             if current.isEmpty {
-                FeatureEmptyState(icon: "person.text.rectangle", title: "Фактов пока нет",
-                                  text: "После разбора звонка здесь появятся предложения: ставки, кейсы и договорённости, которые прозвучали.")
+                FeatureEmptyState(icon: "person.text.rectangle", title: "Плейбук пока пуст",
+                                  text: "Факты появятся после разборов созвонов: ставки, кейсы, договорённости. В плейбук попадёт только то, что ты подтвердишь.")
                     .featureGlass(radius: 24)
+                    .entrance(1)
             }
             if !suggested.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     FeatureSectionTitle(title: "Проверь, всё ли верно · \(suggested.count)", subtitle: "Прими только то, что верно. Ставки — для своего типа клиента.")
                     group(suggested)
                 }
+                .entrance(1)
             }
-            ForEach(acceptedKinds, id: \.self) { kind in
+            ForEach(Array(acceptedKinds.enumerated()), id: \.element) { index, kind in
                 VStack(alignment: .leading, spacing: 10) {
                     FeatureSectionTitle(title: FeatureLabels.factKind(kind))
                     group(accepted.filter { $0.kind == kind })
                 }
+                .entrance(2 + index)
             }
             if !rejected.isEmpty {
                 DisclosureGroup {
@@ -82,6 +88,7 @@ struct FactsView: View {
                 }
                 .padding(16)
                 .featureGlass(radius: 22)
+                .entrance(2 + acceptedKinds.count)
             }
         }
         .onChange(of: signature) { _, _ in overrides = nil }
@@ -119,6 +126,20 @@ struct FactsView: View {
             }
             busy.remove(fact.id)
         }
+    }
+}
+
+/// The one line under «Мой плейбук» wherever it is linked (Созвоны, Профиль), as on the web: what to check, how many
+/// facts are in, or what the playbook is for.
+@MainActor enum PlaybookCopy {
+    static func detail(_ facts: [ProfileFact]) -> String {
+        let suggested = facts.filter { $0.status == "suggested" }.count
+        let accepted = facts.filter { $0.status == "accepted" }.count
+        if suggested > 0 {
+            return FeatureFormat.count(suggested, "новое предложение", "новых предложения", "новых предложений") + " — проверь"
+        }
+        if accepted > 0 { return FeatureFormat.count(accepted, "факт", "факта", "фактов") + " в плейбуке" }
+        return "Ставки, кейсы и цифры из твоих созвонов — попадает только то, что ты подтвердил."
     }
 }
 

@@ -40,6 +40,8 @@ export interface MascotProps {
   size?: number;
   /** Pointer + keyboard play (default true). Non-interactive mascots render as role="img". */
   interactive?: boolean;
+  /** Decoration beside a heading: pointer play only, hidden from assistive tech and the tab order. */
+  decorative?: boolean;
   /** Status text for the accessible label: "Твой собеседник. {status}". */
   statusDescription?: string;
   /** Increment to trigger joy + boing + confetti. */
@@ -111,7 +113,7 @@ const level = (store?: MascotLevelStore) => {
 interface Control { sync(): void; claim(): void; celebrate(emotion?: MascotEmotion): void; greet(): void; theme(): void; resize(): void }
 
 export const Mascot = memo(function Mascot(props: MascotProps) {
-  const { state = 'idle', emotion, size, interactive = true, statusDescription, celebrate, greeting = false, theme = 'auto', still = false, exclusive = true, palette = MASCOT_PALETTE, className, style } = props;
+  const { state = 'idle', emotion, size, interactive = true, decorative = false, statusDescription, celebrate, greeting = false, theme = 'auto', still = false, exclusive = true, palette = MASCOT_PALETTE, className, style } = props;
   const uid = 'm' + useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const [physics] = useState(() => new MascotPhysics({ size: size && size > 0 ? size : 240, state, emotion: emotion ?? null, seed: props.seed ?? (Math.random() * 4294967296) >>> 0 }));
   const [faceRefs] = useState(createFaceRefs);
@@ -449,6 +451,11 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
     'data-interactive': interactive ? 'true' : 'false',
     'data-lens': 'none',
   };
+  // Decorative companions (screen headers, cards) still react to the pointer but stay out of the tab order and the
+  // accessibility tree; the adjacent heading carries the meaning.
+  if (decorative) return interactive
+    ? <button key="decorative" type="button" {...shared} tabIndex={-1} aria-hidden="true">{content}</button>
+    : <div key="decorative-static" {...shared} aria-hidden="true">{content}</div>;
   return interactive
     ? <button key="interactive" type="button" {...shared} aria-label={label}>{content}</button>
     : <div key="static" role="img" {...shared} aria-label={label}>{content}</div>;

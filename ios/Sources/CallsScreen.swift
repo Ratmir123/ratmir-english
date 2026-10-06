@@ -53,20 +53,35 @@ private struct CallsScreenContent: View {
     }
     private var pollIdentity: String { store.pollKey + "|" + (scenePhase == .active ? "active" : "inactive") }
 
+    /// MOTION-PASS 0.5.2 §3: a call being processed → thinking; one waiting for «кто есть кто» → surprised;
+    /// otherwise listening. With no calls the companion sits, curious and larger, in the empty state instead.
+    private var introMood: VoiceOrbMood {
+        if store.isAnyProcessing { return .thinking }
+        if store.calls.contains(where: { $0.kind == .needsSpeaker }) { return .surprised }
+        return .listening
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    ScreenIntro(text: "Загрузи звонок — получишь разбор, тренировки из своих же моментов и обновлённые паттерны.",
+                                mood: introMood, showsCompanion: !store.calls.isEmpty)
+                        .entrance(0)
                     CallUploadCard(compact: false)
+                        .entrance(1)
                     banners
                     CallsInsightsRow(patterns: store.patterns, facts: store.facts, open: { path.append($0) })
+                        .entrance(2)
                     callsSection
+                        .entrance(3)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
                 .padding(.bottom, 32)
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
+                .entranceStage()
             }
             .background { FeatureBackdrop() }
             .refreshable {
@@ -137,7 +152,8 @@ private struct CallsScreenContent: View {
             }
             if store.calls.isEmpty {
                 FeatureEmptyState(icon: "phone.bubble", title: "Пока пусто",
-                                  text: "Загрузи запись или транскрипт звонка — или опиши его по памяти. Разберу, что сработало, что стоило денег, и соберу тренировки из твоих моментов.")
+                                  text: "Загрузи запись или транскрипт звонка — или опиши его по памяти. Разберу, что сработало, что стоило денег, и соберу тренировки из твоих моментов.",
+                                  mood: .curious, companionSize: 104)
                     .featureGlass(radius: 24)
             } else {
                 GroupedRows {
@@ -170,7 +186,7 @@ private struct CallsScreenContent: View {
 
 // MARK: - Insights
 
-/// «Мои паттерны» and «Факты о тебе» as two rows of one surface.
+/// «Мои паттерны» and «Мой плейбук» as two rows of one surface.
 struct CallsInsightsRow: View {
     let patterns: [CommunicationPattern]
     let facts: [ProfileFact]
@@ -181,7 +197,6 @@ struct CallsInsightsRow: View {
             .sorted { $0.costRank < $1.costRank }
     }
     private var suggestedFacts: Int { facts.filter { $0.status == "suggested" }.count }
-    private var acceptedFacts: Int { facts.filter { $0.status == "accepted" }.count }
 
     var body: some View {
         if !patterns.isEmpty || !facts.isEmpty {
@@ -228,10 +243,7 @@ struct CallsInsightsRow: View {
 
     private var factsRow: some View {
         Button { open(.facts) } label: {
-            ListRowLabel(icon: "person.text.rectangle", title: "Факты о тебе",
-                         detail: suggestedFacts > 0
-                            ? FeatureFormat.count(suggestedFacts, "новое предложение", "новых предложения", "новых предложений") + " — проверь"
-                            : FeatureFormat.count(acceptedFacts, "факт", "факта", "фактов") + " в плейбуке") {
+            ListRowLabel(icon: "person.text.rectangle", title: "Мой плейбук", detail: PlaybookCopy.detail(facts)) {
                 if suggestedFacts > 0 {
                     Circle().fill(FeaturePalette.lime).overlay { Circle().strokeBorder(FeaturePalette.success, lineWidth: 1) }
                         .frame(width: 9, height: 9).accessibilityHidden(true)
@@ -374,7 +386,7 @@ struct CallProgressRing: View {
             }
         }
         .frame(width: size, height: size)
-        .animation(reduceMotion ? nil : FeatureMotion.standard, value: percent)
+        .animation(reduceMotion ? nil : FeatureMotion.progress, value: percent)
         .accessibilityHidden(true)
     }
 }

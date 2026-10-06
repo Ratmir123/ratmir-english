@@ -17,8 +17,6 @@ private struct CallUploadCardContent: View {
     let client: TrainingClient
     @ObservedObject private var uploads: CallUploadCenter
     @State private var importing = false
-    @State private var draft: CallFileDraft?
-    @State private var pendingDraft: CallFileDraft?
     @State private var showMemory = false
     @State private var pickError: String?
     @State private var confirmCancel = false
@@ -46,16 +44,7 @@ private struct CallUploadCardContent: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .featureGlass(radius: 28)
         .animation(reduceMotion ? nil : FeatureMotion.standard, value: uploads.job?.phase)
-        .fileImporter(isPresented: $importing, allowedContentTypes: CallUploadCenter.allowedTypes) { result in
-            handlePick(result)
-        }
-        .sheet(item: $draft, onDismiss: releasePendingDraft) { value in
-            CallUploadSheet(draft: value) { meta, kind in
-                pendingDraft = nil
-                uploads.submit(draft: value, meta: meta, textKind: kind, client: client)
-            }
-            .environmentObject(client)
-        }
+        .callFileImport(isPresented: $importing, error: $pickError, client: client)
         .sheet(isPresented: $showMemory) {
             CallMemorySheet { text, meta in
                 uploads.submitMemory(text: text, meta: meta, client: client)
@@ -126,35 +115,67 @@ private struct CallUploadCardContent: View {
         }
     }
 
+    private func resume(_ job: CallUploadJob) {
+        guard let callId = job.callId else { uploads.dismissJob(); return }
+        uploads.resume(callId: callId, title: job.title, uploadedBytes: nil, client: client)
+    }
+}
+
+/// The file flow of a real call: the system file picker → the details sheet («Разобрать») → the shared upload job.
+/// One flow for the upload card and Today's «Загрузить созвон», which opens the picker with a single tap.
+/// A file that cannot be used sets `error` (Russian, shown by the host); a cancelled pick stays silent.
+struct CallFileImport: ViewModifier {
+    @Binding var isPresented: Bool
+    @Binding var error: String?
+    let client: TrainingClient
+    @State private var draft: CallFileDraft?
+    @State private var pendingDraft: CallFileDraft?
+
+    func body(content: Content) -> some View {
+        content
+            .fileImporter(isPresented: $isPresented, allowedContentTypes: CallUploadCenter.allowedTypes) { result in
+                handlePick(result)
+            }
+            .sheet(item: $draft, onDismiss: releasePendingDraft) { value in
+                CallUploadSheet(draft: value) { meta, kind in
+                    pendingDraft = nil
+                    CallUploadCenter.shared.submit(draft: value, meta: meta, textKind: kind, client: client)
+                }
+                .environmentObject(client)
+            }
+    }
+
     private func handlePick(_ result: Result<URL, Error>) {
         switch result {
         case .success(let url):
             do {
-                let value = try uploads.makeDraft(from: url)
-                pickError = nil
+                let value = try CallUploadCenter.shared.makeDraft(from: url)
+                error = nil
                 pendingDraft = value
                 // Let the document picker finish dismissing before the details sheet appears.
                 Task {
                     try? await Task.sleep(for: .milliseconds(350))
                     draft = value
                 }
-            } catch {
-                pickError = FeatureErrorText.describe(error)
+            } catch let failure {
+                error = FeatureErrorText.describe(failure)
             }
-        case .failure(let error):
-            if !FeatureErrorText.isCancellation(error) { pickError = FeatureErrorText.describe(error) }
+        case .failure(let failure):
+            if !FeatureErrorText.isCancellation(failure) { error = FeatureErrorText.describe(failure) }
         }
     }
 
     /// A details sheet closed without «Разобрать» must release the file's security scope.
     private func releasePendingDraft() {
-        if let pendingDraft { uploads.releaseDraft(pendingDraft) }
+        if let pendingDraft { CallUploadCenter.shared.releaseDraft(pendingDraft) }
         pendingDraft = nil
     }
+}
 
-    private func resume(_ job: CallUploadJob) {
-        guard let callId = job.callId else { uploads.dismissJob(); return }
-        uploads.resume(callId: callId, title: job.title, uploadedBytes: nil, client: client)
+extension View {
+    /// Attaches the call file flow (`CallFileImport`): setting `isPresented` opens the file picker.
+    func callFileImport(isPresented: Binding<Bool>, error: Binding<String?>, client: TrainingClient) -> some View {
+        modifier(CallFileImport(isPresented: isPresented, error: error, client: client))
     }
 }
 

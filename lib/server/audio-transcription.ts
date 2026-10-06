@@ -8,7 +8,8 @@ export const MAX_RECORDING_MINUTES = 8;
 export function liveTranscriptionConfiguration() {
   return { type: 'transcription', audio: { input: {
     format: { type: 'audio/pcm', rate: 24000 },
-    transcription: { model: LIVE_TRANSCRIPTION_MODEL, languages: ['en', 'ru'], delay: 'low', prompt: VERBATIM_TRANSCRIPTION_PROMPT },
+    // 'minimal': the learner's own words should appear almost at once (MOTION-PASS-0.5.2 §5).
+    transcription: { model: LIVE_TRANSCRIPTION_MODEL, languages: ['en', 'ru'], delay: 'minimal', prompt: VERBATIM_TRANSCRIPTION_PROMPT },
     turn_detection: null,
   } } };
 }

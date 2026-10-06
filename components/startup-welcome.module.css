@@ -1,22 +1,57 @@
-.entry {
-  position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; overflow: auto;
+/* Launch layer (MOTION-PASS-0.5.2 §4): one opaque layer from the first paint to the hand-off. The companion holds one
+   place throughout (no jump when the words arrive: they hang below it), then the layer fades while the shell rises. */
+.layer {
+  --launch-fade: 600ms;
+  position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; overflow: hidden;
   padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
   background: radial-gradient(60% 50% at 50% 38%, var(--ambient-1), transparent 70%), var(--bg-base); color: var(--text-primary);
-  opacity: 1; transition: opacity 560ms cubic-bezier(.4, 0, .2, 1);
+  transition: opacity var(--launch-fade) cubic-bezier(.4, 0, .2, 1);
 }
-.content { display: grid; justify-items: center; gap: 20px; width: min(100%, 640px); text-align: center; transition: transform 560ms cubic-bezier(.4, 0, .2, 1); }
-.companion { width: 190px; height: 190px; pointer-events: none; animation: welcome-companion var(--spring-jelly-ms) var(--spring-jelly) both; }
-.copy { min-width: 0; width: 100%; transition: opacity 180ms var(--ease-out); }
-.copy h1 { margin: 0; font-size: 44px; overflow-wrap: anywhere; animation: welcome-arrive 680ms var(--ease-out) 160ms both; }
-.copy p { max-width: 36ch; margin: 12px auto 0; color: var(--text-secondary); font-size: 19px; line-height: 1.5; text-wrap: balance; }
-.copy p span { display: inline-block; white-space: pre; transform-origin: 50% 70%; animation: welcome-word 580ms var(--spring-bouncy) var(--word-delay) both; }
-.wordmark { margin-top: 14px; font-family: var(--font-display); font-weight: 850; color: var(--text-tertiary); font-size: 15px; letter-spacing: .02em; animation: welcome-arrive 720ms var(--ease-out) 700ms both; }
-.entry[data-phase='leaving'] { opacity: 0; }
-.entry[data-phase='leaving'] .content { transform: translateY(-16px) scale(.975); }
+.layer[data-phase='leaving'] { opacity: 0; pointer-events: none; }
+
+/* The companion's square sits a little above centre so the companion and the words below it read as one group. */
+.stage {
+  position: relative; width: 184px; height: 184px; transform: translate3d(0, -8vh, 0);
+  transition: transform var(--launch-fade) var(--ease-exit);
+}
+.layer[data-phase='leaving'] .stage { transform: translate3d(0, calc(-8vh - 18px), 0) scale(.97); }
+/* Fades in only after ~150 ms, so a fast load never flashes it; breathing is the companion's own calm idle. */
+.mascot { position: absolute; inset: 0; opacity: 0; animation: mascot-in 760ms var(--ease-out) 150ms forwards; }
+/* Handing off before it ever appeared: it stays hidden instead of ghosting in over the fade. */
+.layer[data-phase='leaving'] .mascot { animation-play-state: paused; }
+
+.copy {
+  position: absolute; top: calc(100% + 12px); left: 50%; width: min(640px, calc(100vw - 40px)); transform: translateX(-50%);
+  display: grid; justify-items: center; text-align: center;
+}
+.hello, .problem { display: grid; justify-items: center; gap: 12px; min-width: 0; width: 100%; }
+.hello h1 { margin: 0; font-size: 44px; overflow-wrap: anywhere; animation: arrive 760ms var(--ease-out) 100ms both; }
+.hello p { max-width: 36ch; margin: 0 auto; color: var(--text-secondary); font-size: 19px; line-height: 1.5; text-wrap: balance; }
+/* Words settle one after another — soft deceleration with a little blur, no bounce (that belongs to the companion). */
+.hello p span { display: inline-block; white-space: pre; animation: word 640ms var(--ease-out) var(--word-delay) both; }
+.wordmark { margin-top: 8px; font-family: var(--font-display); font-weight: 850; color: var(--text-tertiary); font-size: 15px; letter-spacing: .02em; animation: arrive 760ms var(--ease-out) 780ms both; }
+.problem { animation: arrive 620ms var(--ease-out) both; }
+.problem h1 { margin: 0; font-size: 26px; }
+.problem p { max-width: 44ch; margin: 0 auto; color: var(--text-secondary); font-size: 15px; line-height: 1.5; }
+.problem :global(.button) { margin-top: 4px; }
+
 .skip { position: absolute; top: max(16px, env(safe-area-inset-top)); right: 20px; width: 1px; height: 1px; padding: 0; opacity: 0; overflow: hidden; }
 .skip:focus-visible { width: auto; height: auto; min-height: 44px; padding: 10px 18px; border-radius: var(--radius-pill); background: var(--cta-bg); color: var(--cta-fg); opacity: 1; }
-@keyframes welcome-arrive { from { opacity: 0; transform: translateY(12px) scale(.975); } }
-@keyframes welcome-companion { from { opacity: 0; transform: translateY(24px) scale(.9, .86); } }
-@keyframes welcome-word { from { opacity: 0; transform: translateY(9px) scale(.96, .89); } }
-@media (max-width: 600px) { .copy h1 { font-size: 32px; } .copy p { font-size: 17px; max-width: 30ch; } .companion { width: 160px; height: 160px; } }
-@media (prefers-reduced-motion: reduce) { .entry, .content, .copy { transition: none; } .companion, .copy h1, .copy p span, .wordmark { animation: none; } }
+
+@keyframes mascot-in { from { opacity: 0; transform: translate3d(0, 14px, 0) scale(.92); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes arrive { from { opacity: 0; transform: translate3d(0, 14px, 0); filter: blur(6px); } }
+@keyframes word { from { opacity: 0; transform: translate3d(0, 8px, 0); filter: blur(4px); } }
+
+@media (max-width: 600px) {
+  .stage { width: 156px; height: 156px; }
+  .hello h1 { font-size: 32px; }
+  .hello p { font-size: 17px; max-width: 30ch; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No choreography: the companion simply fades in, the layer simply fades out. */
+  .layer { --launch-fade: 240ms; }
+  .stage, .layer[data-phase='leaving'] .stage { transform: translate3d(0, -8vh, 0); transition: none; }
+  .mascot { animation: mascot-fade 240ms ease-out 150ms forwards; }
+  .hello h1, .hello p span, .wordmark, .problem { animation: none; }
+}
+@keyframes mascot-fade { from { opacity: 0; } to { opacity: 1; } }

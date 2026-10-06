@@ -39,8 +39,10 @@ private struct PlacementFlowContainer: View {
     @State private var roundTick = 0
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let client: TrainingClient
 
     init(client: TrainingClient, startRetake: Bool) {
+        self.client = client
         _store = StateObject(wrappedValue: PlacementStore(client: client))
         _player = StateObject(wrappedValue: FeatureAudioPlayer(client: client))
         _wantsRetake = State(initialValue: startRetake)
@@ -153,7 +155,11 @@ private struct PlacementFlowContainer: View {
 
     @ViewBuilder private var mainContent: some View {
         if case .result = stage, let view = store.view {
-            PlacementResultView(view: view, onRetake: { wantsRetake = true }, onStartPractice: { dismiss() })
+            // «Начать практику» leads to Сегодня, where the plan built from this result waits (as on the web).
+            PlacementResultView(view: view, onRetake: { wantsRetake = true }, onStartPractice: {
+                client.requestedTab = .today
+                dismiss()
+            })
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -397,7 +403,7 @@ struct PlacementIntroView: View {
                 FeatureBanner(message: "Рекомендуем пересдавать после \(date): за пару недель изменения обычно в пределах погрешности. Пересдать можно и сейчас.", tone: .info)
             }
             if view?.audioAvailable == false {
-                FeatureBanner(message: "Голос пока не подключён: аудио, речь и рабочая сцена будут пропущены, а результат — неполным. Голос подключается на компьютере: Настройки → OpenAI API-ключ.",
+                FeatureBanner(message: "Голос пока не подключён: аудио, речь и рабочая сцена будут пропущены, а результат — неполным. Голос подключается на компьютере: Профиль → Голос.",
                               tone: .info, actionTitle: "Проверить снова", action: recheck)
             }
 
@@ -570,7 +576,7 @@ struct PlacementSectionIntroView: View {
             .featureReveal(1)
 
             if voiceUnavailable {
-                FeatureBanner(message: "Голос не подключён, поэтому этот раздел пройти не получится. Его можно пропустить: навык будет «не измерено». Голос подключается на компьютере: Настройки → OpenAI API-ключ.", tone: .info)
+                FeatureBanner(message: "Голос не подключён, поэтому этот раздел пройти не получится. Его можно пропустить: навык будет «не измерено». Голос подключается на компьютере: Профиль → Голос.", tone: .info)
             }
 
             VStack(spacing: 12) {

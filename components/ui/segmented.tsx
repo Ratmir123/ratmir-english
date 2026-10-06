@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { MOTION_MS } from './motion';
 
 export type SegmentOption<T extends string> = { id: T; label: string; disabled?: boolean; badge?: number | null };
 
@@ -23,7 +24,7 @@ export function Segmented<T extends string>({ value, options, onChange, label, b
   }, [value]);
   useLayoutEffect(() => {
     measure();
-    if (previous.current !== value) { previous.current = value; setMoving(true); const timer = setTimeout(() => setMoving(false), 460); return () => clearTimeout(timer); }
+    if (previous.current !== value) { previous.current = value; setMoving(true); const timer = setTimeout(() => setMoving(false), MOTION_MS.spring + 40); return () => clearTimeout(timer); }
   }, [measure, value]);
   useLayoutEffect(() => {
     const element = root.current; if (!element || typeof ResizeObserver === 'undefined') return;

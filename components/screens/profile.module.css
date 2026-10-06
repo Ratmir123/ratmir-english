@@ -31,7 +31,7 @@
 .problemCopy strong { font-size: var(--text-15); color: var(--text-primary); }
 .detail summary { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; cursor: pointer; list-style: none; font-weight: 650; color: var(--text-secondary); }
 .detail summary::-webkit-details-marker { display: none; }
-.detail summary svg { transition: transform 200ms var(--ease-out); }
+.detail summary svg { transition: transform var(--hover-ms) var(--ease-out); }
 .detail[open] summary svg { transform: rotate(90deg); }
 .detail code { display: block; margin-top: 2px; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 12px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
 .check { justify-self: start; }
@@ -42,19 +42,39 @@
 .dataCard :global(.rows) { margin: 0 -22px; border-top: 1px solid var(--hairline); }
 .row {
   display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 12px 22px; font-weight: 650; color: var(--text-primary);
-  cursor: pointer; transition: background-color 160ms var(--ease-out);
+  cursor: pointer; transition: background-color var(--hover-ms) var(--ease-out);
 }
 .row > span { flex: 1; min-width: 0; }
 .row > svg { flex-shrink: 0; }
 @media (hover: hover) and (pointer: fine) { .row:hover { background: var(--surface-hover); } }
 .danger > summary { list-style: none; color: var(--status-error-ink); }
 .danger > summary::-webkit-details-marker { display: none; }
-.caret { color: var(--text-tertiary); transition: transform 200ms var(--ease-out); }
+.caret { color: var(--text-tertiary); transition: transform var(--hover-ms) var(--ease-out); }
 .danger[open] .caret { transform: rotate(90deg); }
 .dangerBody { display: grid; gap: 12px; padding: 4px 22px 16px; }
 .dangerBody :global(.button) { justify-self: start; }
+.backup { justify-self: start; margin: -4px 0 0 -4px; }
+.danger[open] .dangerBody { animation: dangerOpen var(--reveal-ms) var(--ease-out) both; }
+@keyframes dangerOpen { from { opacity: 0; transform: translate3d(0, -6px, 0); } }
+@media (prefers-reduced-motion: reduce) { .danger[open] .dangerBody { animation: dangerFade 200ms ease-out both; } }
+@keyframes dangerFade { from { opacity: 0; } }
 
 .version { text-align: center; font-size: var(--text-12); color: var(--text-tertiary); padding: 4px 0 8px; }
+
+/* Settings that save on their own (voice budget, audio retention): label, a compact control, a quiet status. */
+.setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(112px, 150px); align-items: center; gap: 4px 12px; }
+.settingLabel { display: block; font-size: var(--text-13); font-weight: 600; color: var(--text-secondary); }
+.settingInput { min-height: 40px; padding: 8px 12px; }
+.settingStatus { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 6px; min-height: 18px; font-size: var(--text-12); font-weight: 600; color: var(--text-secondary); }
+.settingStatus svg { color: var(--accent-lime-ink); }
+.settingError { grid-column: 1 / -1; }
+
+/* «Мой плейбук» lives in Созвоны; Profile keeps one row that goes there. */
+.linkCard { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; color: var(--text-primary); }
+.linkCopy { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.linkCopy strong { font-family: var(--font-display); font-size: 20px; font-weight: 750; }
+.linkCopy span { font-size: var(--text-13); color: var(--text-secondary); line-height: 1.45; }
+.linkAction { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; font-weight: 650; color: var(--accent-violet-ink); }
 
 @container profile (max-width: 560px) {
   .fields { grid-template-columns: minmax(0, 1fr); }

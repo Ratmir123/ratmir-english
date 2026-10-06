@@ -44,8 +44,13 @@ enum MascotTuning {
 }
 
 enum MascotMetrics {
-    /// Smaller mascots (thumbnails, banners) render a static pose and ignore touch.
-    static let thumbnailSide: CGFloat = 96
+    /// MOTION-PASS 0.5.2 §3: every companion lives (idle life, blinking, moods). Only a body smaller than this
+    /// draws one resting pose, because motion would not read at that size.
+    static let thumbnailSide: CGFloat = 24
+    /// Below this side the live timeline runs at 30 fps; larger companions get 60.
+    static let fullRateSide: CGFloat = 80
+    /// Touch play (poke, squeeze, drag) needs a finger-sized body.
+    static let touchSide: CGFloat = 44
 }
 
 /// One launch greeting hop per app launch (MASCOT-SPEC §8, Home idle).

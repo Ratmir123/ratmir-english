@@ -1,30 +1,90 @@
 'use client';
 
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import {
   ArrowRightIcon, ArrowsClockwiseIcon, CaretRightIcon, ClockCounterClockwiseIcon, MegaphoneIcon, PhoneCallIcon, PlayIcon,
   SparkleIcon, WarningCircleIcon,
 } from '@phosphor-icons/react';
-import type { Mode } from '@/lib/types';
+import type { AppState, Mode, Session } from '@/lib/types';
+import type { PlacementView } from '@/lib/placement/types';
 import { lessonBudget } from '@/lib/lesson-budget';
 import { subscriptionView } from '@/lib/subscription-view';
 import { PlacementLevelCard } from '../placement/placement-result';
 import { PatternsPanel } from '../calls/patterns-panel';
 import { CallUploadCard } from '../calls/upload-call';
 import { useApp } from '../app/app-context';
+import { messageOf, request } from '../app/api';
 import { greeting, MODE_HINT, MODE_LABEL, sessionStatusLabel, sessionTone, shortDate } from '../app/labels';
-import { failedCalls, laterSessions, processingCalls, todayPrimary, type TodayPrimary } from '../app/today-plan';
+import { failedCalls, processingCalls, todayPrimary, weeklyRhythm, type TodayPrimary } from '../app/today-plan';
+import { drillTile } from '../practice/for-you-model';
 import { WeeklyRhythm } from './weekly-rhythm';
-import { Companion } from '../shell/companion';
+import { Companion, type MascotEmotion } from '../shell/companion';
+import type { ToastAction } from '../shell/toasts';
+import { useShellRevealed } from '../ui/entrance';
 import { Segmented } from '../ui/segmented';
 import { rankProgress, RankMedal } from '../ui/rewards';
 import styles from './today.module.css';
 
 let greetedThisLaunch = false;
+/** The hero companion says hello once the shell is actually seen (after the launch layer), as its block settles. */
+const HERO_GREET_DELAY_MS = 380;
 
 function todayLine(now = new Date()) {
   const text = new Intl.DateTimeFormat('ru', { weekday: 'long', day: 'numeric', month: 'long' }).format(now);
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * The hero companion's mood follows the day's task (MOTION-PASS-0.5.2 §3): test not taken → curious; a drill or a
+ * plan ready → determined; a review ready → excited; practised today → proud; otherwise happy.
+ */
+function heroEmotion(state: AppState, primary: TodayPrimary): MascotEmotion {
+  if (primary.kind === 'placement') return 'curious';
+  if (primary.kind === 'drill' || primary.kind === 'plan') return 'determined';
+  if (primary.kind === 'continue' && primary.session.status === 'review') return 'excited';
+  if (weeklyRhythm(state).days.some(day => day.today && day.count > 0)) return 'proud';
+  return 'happy';
+}
+
+/* «Убрать» on an unfinished lesson (MOTION-PASS-0.5.2 §8.4): the row disappears at once, a toast offers «Вернуть» for
+   ≈ 6 s, and only then is the lesson deleted. Kept outside the screen so a pending removal survives a tab switch. */
+const UNDO_MS = 6000;
+const removals = new Map<string, { timer: ReturnType<typeof setTimeout>; committing: boolean }>();
+let removalIds: ReadonlySet<string> = new Set();
+const removalListeners = new Set<() => void>();
+const NO_REMOVALS: ReadonlySet<string> = new Set();
+function publishRemovals() { removalIds = new Set(removals.keys()); removalListeners.forEach(listener => listener()); }
+function subscribeRemovals(listener: () => void) { removalListeners.add(listener); return () => { removalListeners.delete(listener); }; }
+function scheduleRemoval(id: string, commit: () => Promise<unknown>) {
+  if (removals.has(id)) return;
+  const entry = { committing: false, timer: setTimeout(() => {
+    entry.committing = true;
+    void commit().catch(() => undefined).finally(() => { removals.delete(id); publishRemovals(); });
+  }, UNDO_MS) };
+  removals.set(id, entry);
+  publishRemovals();
+}
+function cancelRemoval(id: string) {
+  const entry = removals.get(id);
+  if (!entry || entry.committing) return;
+  clearTimeout(entry.timer);
+  removals.delete(id);
+  publishRemovals();
+}
+const usePendingRemovals = () => useSyncExternalStore(subscribeRemovals, () => removalIds, () => NO_REMOVALS);
+
+const sessionTime = (session: Session) => { const parsed = Date.parse(session.completedAt ?? session.updatedAt ?? session.createdAt); return Number.isFinite(parsed) ? parsed : 0; };
+/** Can still be opened and continued: live, in review, or a better attempt still owed (a retry parked with
+ * «Отложить попытку» included). Same as iPhone `Conversation.isResumable`. */
+function isResumable(session: Session) {
+  if (session.status === 'active' || session.status === 'error' || session.status === 'review') return true;
+  return !!session.analysis && session.status === 'completed' && (!!session.retryDeferred || !!session.completion?.needsRetry);
+}
+/** «Незаконченные занятия» (the rule the iPhone uses): every unfinished lesson except the one on today's card, newest first. */
+function unfinishedLessons(state: AppState, primary: TodayPrimary): Session[] {
+  const hero = primary.kind === 'continue' ? primary.session.id : null;
+  return state.sessions.filter(session => !session.baseline && session.id !== hero && isResumable(session))
+    .sort((a, b) => sessionTime(b) - sessionTime(a));
 }
 
 function ModeChoice({ value, onChange, fixed }: { value: Mode; onChange: (mode: Mode) => void; fixed?: string | null }) {
@@ -43,25 +103,41 @@ function PrimaryCard({ primary }: { primary: TodayPrimary }) {
   const busy = !!lesson.busy || !!lesson.starting;
   const recommendation = primary.kind === 'plan' ? primary.recommendation : null;
   const textActivity = recommendation && ['reading', 'writing'].includes(recommendation.activity);
-  const [mode, setMode] = useState<Mode>(() => primary.kind === 'drill' ? (primary.drill.tier >= 2 ? 'call' : 'learning') : recommendation?.preferredMode ?? 'learning');
+  // The plan's mode picker; a drill starts by the one rule below instead (§8.6).
+  const [mode, setMode] = useState<Mode>(() => recommendation?.preferredMode ?? 'learning');
+  const [rescoring, setRescoring] = useState(false);
+  // «Посчитать снова» recalculates right here (MOTION-PASS-0.5.2 §8.11); Today then shows the scoring status row.
+  const rescore = async () => {
+    if (rescoring) return;
+    setRescoring(true);
+    try {
+      const next = await request<PlacementView>('placement/rescore', {});
+      data.setState(previous => previous ? { ...previous, placement: next } : previous);
+    } catch (error) { app.toast.error(messageOf(error, 'Не удалось запустить подсчёт. Попробуй ещё раз.')); }
+    finally { setRescoring(false); }
+  };
 
   let title = '', why = '', facts: ReactNode = null, detail: ReactNode = null, cta = 'Начать', icon = <PlayIcon size={18} weight="fill" />;
   let run: () => void = () => {};
+  /** The other way to start the same task, a small text action next to the button («или с опорами»). */
+  let alternative: { label: string; ariaLabel: string; run: () => void } | null = null;
   switch (primary.kind) {
     case 'placement': {
+      // While the test is being scored it is a status row (StatusStrip), never the day's card.
       const view = primary.view;
-      title = view.status === 'scoring' ? 'Считаем твой результат' : view.status === 'error' ? 'Результат не посчитался'
-        : primary.retake ? 'Пересдача теста уровня' : 'Узнаем твой настоящий уровень';
-      why = view.status === 'scoring' ? 'Речь и рабочий разговор оценивает Sol. Это займёт пару минут — можно заниматься дальше.'
-        : view.status === 'error' ? (view.error || 'Ответы сохранены. Попробуй посчитать ещё раз.')
-          : 'Слушать, читать, говорить и короткий рабочий разговор. По результату подберём собеседников и тренировки.';
-      cta = view.status === 'in-progress' ? 'Продолжить тест' : view.status === 'scoring' ? 'Открыть тест' : view.status === 'error' ? 'Посчитать снова' : 'Начать тест';
-      facts = <><span><ClockCounterClockwiseIcon size={15} aria-hidden="true" />~{Math.max(5, view.remainingMinutes || 25)} мин</span><span>5 частей, можно в два захода</span></>;
+      title = view.status === 'error' ? 'Результат не посчитался' : primary.retake ? 'Пересдача теста уровня' : 'Узнаем твой настоящий уровень';
+      why = view.status === 'error' ? (view.error || 'Ответы сохранены. Попробуй посчитать ещё раз.')
+        : 'Слушать, читать, говорить и короткий рабочий разговор. По результату подберём собеседников и тренировки.';
+      cta = view.status === 'in-progress' ? 'Продолжить тест' : view.status === 'error' ? 'Посчитать снова' : 'Начать тест';
+      if (view.status === 'error') { icon = <ArrowsClockwiseIcon size={18} />; run = () => void rescore(); }
+      else {
+        facts = <><span><ClockCounterClockwiseIcon size={15} aria-hidden="true" />~{Math.max(5, view.remainingMinutes || 25)} мин</span><span>5 частей, можно в два захода</span></>;
+        run = app.openPlacement;
+      }
       detail = <>
         {view.status === 'in-progress' && primary.planned > 0 && <div className="progress-track lime" role="progressbar" aria-label="Пройдено в тесте" aria-valuemin={0} aria-valuemax={primary.planned} aria-valuenow={primary.answered} style={{ '--value': primary.answered / primary.planned } as CSSProperties}><span /></div>}
-        {!view.audioAvailable && <p className="caption">Голосовой ключ не подключён: части на слух и речь пропустим, их можно пройти позже.</p>}
+        {!view.audioAvailable && view.status !== 'error' && <p className="caption">Голосовой ключ не подключён: части на слух и речь пропустим, их можно пройти позже.</p>}
       </>;
-      run = app.openPlacement;
       break;
     }
     case 'continue': {
@@ -80,19 +156,30 @@ function PrimaryCard({ primary }: { primary: TodayPrimary }) {
     case 'call': {
       title = primary.call.title;
       why = 'Подтверди, кто из собеседников ты — и разбор созвона продолжится.';
-      cta = 'Подтвердить'; icon = <PhoneCallIcon size={18} weight="fill" />;
+      cta = 'Выбрать, кто я'; icon = <PhoneCallIcon size={18} weight="fill" />;
       run = () => app.go('calls', { callId: primary.call.id });
       break;
     }
     case 'drill': {
+      // One start rule everywhere (MOTION-PASS-0.5.2 §8.6, as on the Practice tiles and the drill rows): the button runs
+      // the default mode (pressure tier 2–3 «Как на созвоне», tier 1 «С опорами»), «или …» the other one; a written
+      // follow-up has just one.
       const drill = primary.drill;
+      const start = drillTile(drill, data.state?.profile.dailyMinutes ?? 15);
+      const other = start.other;
       title = drill.title; why = drill.why;
-      facts = primary.call ? <span><PhoneCallIcon size={15} aria-hidden="true" />Из созвона «{primary.call.title}»</span> : <span>Тренировка по твоим паттернам</span>;
-      detail = <>
-        {drill.goal && <p className={styles.goal}><strong>Цель:</strong> {drill.goal}</p>}
-        <ModeChoice value={mode} onChange={setMode} />
+      facts = <>
+        {primary.call ? <span><PhoneCallIcon size={15} aria-hidden="true" />Из созвона «{primary.call.title}»</span> : <span>Тренировка по твоим паттернам</span>}
+        <span className="tabular">~{start.minutes} мин</span>
+        <span>{other ? MODE_LABEL[start.mode] : 'Текст'}</span>
       </>;
-      run = () => app.startDrill(drill.id, mode);
+      detail = drill.goal ? <p className={styles.goal}><strong>Цель:</strong> {drill.goal}</p> : null;
+      cta = 'Переиграть момент';
+      run = () => app.startDrill(drill.id, start.mode);
+      if (other) {
+        const label = MODE_LABEL[other].toLowerCase();
+        alternative = { label: `или ${label}`, ariaLabel: `Переиграть момент ${label}`, run: () => app.startDrill(drill.id, other) };
+      }
       break;
     }
     case 'plan': {
@@ -110,27 +197,44 @@ function PrimaryCard({ primary }: { primary: TodayPrimary }) {
     }
   }
   const blocked = busy && primary.kind !== 'continue' && primary.kind !== 'placement';
-  return <section className={`surface ink ${styles.primary}`} aria-labelledby="today-primary-title" data-testid="today-primary">
+  return <section className={`surface ink ${styles.primary}`} aria-labelledby="today-primary-title" data-testid="today-primary" data-enter>
     <h2 id="today-primary-title" className="title-28">{title}</h2>
     {why && <p className={styles.why}>{why}</p>}
     {facts && <p className={styles.facts}>{facts}</p>}
     {detail}
     <div className={styles.primaryActions}>
-      <button type="button" className="button primary large" onClick={run} disabled={blocked} data-testid="today-primary-action">
-        {icon}{lesson.starting ? 'Готовлю…' : cta}<ArrowRightIcon size={18} />
+      <button type="button" className="button primary large" onClick={run} disabled={blocked || rescoring} data-testid="today-primary-action">
+        {icon}{rescoring ? 'Запускаю подсчёт…' : lesson.starting ? 'Готовлю…' : cta}<ArrowRightIcon size={18} />
       </button>
+      {alternative && !lesson.starting && <button type="button" className="text-button" onClick={alternative.run} disabled={blocked}
+        aria-label={alternative.ariaLabel} data-testid="today-primary-alternative">{alternative.label}</button>}
       {blocked && <span className="disabled-reason">{lesson.starting ? 'Занятие уже готовится.' : 'Подожди, идёт действие.'}</span>}
     </div>
   </section>;
 }
 
-function StatusStrip() {
+/** Things that are being prepared elsewhere, one row each (like the iPhone): the level test being scored, lessons whose
+ * review is being prepared (other than today's card), calls in work or failed. */
+function StatusStrip({ primary }: { primary: TodayPrimary }) {
   const app = useApp();
   const state = app.data.state!;
+  const scoring = state.placement?.status === 'scoring';
+  const hero = primary.kind === 'continue' ? primary.session.id : null;
+  const analysing = state.sessions.filter(session => session.status === 'analysing' && !session.baseline && session.id !== hero).slice(0, 2);
   const busy = processingCalls(state).filter(call => call.status !== 'awaiting-upload');
   const failed = failedCalls(state);
-  if (!busy.length && !failed.length) return null;
-  return <div className={`surface flat rows ${styles.strip}`}>
+  if (!scoring && !analysing.length && !busy.length && !failed.length) return null;
+  return <div className={`surface flat rows ${styles.strip}`} data-enter>
+    {scoring && <button type="button" className={styles.row} onClick={app.openPlacement}>
+      <span className={styles.rowIcon} data-tone="cyan"><ArrowsClockwiseIcon size={20} /></span>
+      <span className={styles.rowCopy}><strong>Тест уровня</strong><small>Считаем результат — около двух минут</small></span>
+      <CaretRightIcon size={16} className={styles.chevron} />
+    </button>}
+    {analysing.map(session => <button key={session.id} type="button" className={styles.row} onClick={() => app.lesson.open(session, 'today')}>
+      <span className={styles.rowIcon} data-tone="cyan"><ArrowsClockwiseIcon size={20} /></span>
+      <span className={styles.rowCopy}><strong>{session.lesson.title}</strong><small>Разбор готовится</small></span>
+      <CaretRightIcon size={16} className={styles.chevron} />
+    </button>)}
     {busy.map(call => <button key={call.id} type="button" className={styles.row} onClick={() => app.go('calls', { callId: call.id })}>
       <span className={styles.rowIcon} data-tone="cyan"><ArrowsClockwiseIcon size={20} /></span>
       <span className={styles.rowCopy}><strong>{call.title}</strong><small>{call.progress?.stage ?? 'Созвон обрабатывается'}{call.progress ? ` · ${Math.round(call.progress.percent)}%` : ''}</small></span>
@@ -144,7 +248,7 @@ function StatusStrip() {
   </div>;
 }
 
-/** Everything else you can start right now, as one list: a call upload (drop target), the pitch drill, a free topic. */
+/** Everything else you can start right now, as one list: a call upload (drop target), the pitch drill, your own topic. */
 function QuickActions() {
   const app = useApp();
   const pitch = useMemo(() => {
@@ -154,9 +258,9 @@ function QuickActions() {
   const busy = !!app.lesson.busy || !!app.lesson.starting;
   const actions = [
     ...(pitch ? [{ id: 'pitch', icon: MegaphoneIcon, title: 'Питч за 30 секунд', note: 'Кто ты и почему именно ты', run: () => app.start({ familyId: pitch.id, mode: pitch.preferredMode, context: pitch.context, from: 'today' as const }) }] : []),
-    { id: 'free', icon: SparkleIcon, title: 'Свободная тема', note: 'Разговор о том, что интересно', run: () => app.openFamily(null, true) },
+    { id: 'free', icon: SparkleIcon, title: 'Своя тема', note: 'Разговор о том, что интересно', run: () => app.openFamily(null, true) },
   ];
-  return <section className={`surface ${styles.quick}`} aria-labelledby="today-quick">
+  return <section className={`surface ${styles.quick}`} aria-labelledby="today-quick" data-enter>
     <h2 id="today-quick" className={styles.blockTitle}>Быстрый старт</h2>
     <div className="rows">
       <CallUploadCard variant="compact" onCreated={id => app.go('calls', { callId: id })} />
@@ -169,17 +273,24 @@ function QuickActions() {
   </section>;
 }
 
-function LaterList() {
+function LaterList({ primary }: { primary: TodayPrimary }) {
   const app = useApp();
-  const later = laterSessions(app.data.state!);
+  const removing = usePendingRemovals();
+  const later = unfinishedLessons(app.data.state!, primary).filter(session => !removing.has(session.id));
   if (!later.length) return null;
-  return <details className={`surface flat ${styles.later}`}>
+  const remove = (session: Session) => {
+    scheduleRemoval(session.id, () => app.lesson.deleteSession(session.id));
+    const undo: ToastAction = { label: 'Вернуть', run: () => cancelRemoval(session.id), life: UNDO_MS };
+    app.toast.notice('Занятие убрано', undo);
+  };
+  return <details className={`surface flat ${styles.later}`} data-enter>
     <summary><span className={styles.rowCopy}><strong>Незаконченные занятия</strong><small>{later.length} — можно вернуться в любой момент</small></span><CaretRightIcon size={16} className={styles.caret} /></summary>
-    <ul className="rows">{later.slice(0, 8).map(session => <li key={session.id}>
+    <ul className="rows">{later.slice(0, 8).map(session => <li key={session.id} className={styles.laterRow}>
       <button type="button" className={styles.row} onClick={() => app.lesson.open(session, 'today')}>
         <span className={styles.rowCopy}><strong>{session.lesson.title}</strong><small>{sessionStatusLabel(session)} · {shortDate(session.updatedAt)}</small></span>
-        <CaretRightIcon size={16} className={styles.chevron} />
       </button>
+      <button type="button" className={`text-button muted ${styles.removeLater}`} onClick={() => remove(session)}
+        aria-label={`Убрать занятие «${session.lesson.title}»`}>Убрать</button>
     </li>)}</ul>
   </details>;
 }
@@ -189,10 +300,10 @@ function LevelCard() {
   const state = app.data.state!;
   const progression = state.progression;
   const rank = progression ? rankProgress(progression) : null;
-  return <section className={`surface ${styles.side}`} aria-labelledby="today-level">
+  return <section className={`surface ${styles.side}`} aria-labelledby="today-level" data-enter>
     <div className="section-title"><h2 id="today-level" className={styles.blockTitle}>Уровень</h2><button type="button" className="text-button" onClick={() => app.go('progress')}>Прогресс<ArrowRightIcon size={15} /></button></div>
     {/* Before the first result the test is Today's primary card; its own «Начать» here would compete with it. */}
-    {state.placement?.result && <PlacementLevelCard view={state.placement} onOpen={() => app.go('progress')} onStart={app.openPlacement} embedded />}
+    {state.placement?.result && <PlacementLevelCard view={state.placement} onOpen={() => app.go('progress', { progress: 'report' })} onStart={app.openPlacement} embedded />}
     {progression && rank && <button type="button" className={styles.rank} onClick={() => app.go('progress', { progress: 'rewards' })}
       aria-label={`Ранг «${rank.band.title}», уровень опыта ${progression.level}, ${progression.xp} XP. Открыть награды`}>
       <RankMedal level={progression.level} size={64} />
@@ -212,7 +323,10 @@ function WorkingOn() {
   const patterns = (state.patterns ?? []).filter(pattern => !pattern.dismissed && pattern.kind === 'weakness' && ['active', 'improving'].includes(pattern.status))
     .sort((a, b) => a.costRank - b.costRank).slice(0, 2);
   if (!patterns.length) return null;
-  return <PatternsPanel patterns={patterns} drills={state.drills ?? []} onStartDrill={app.startDrill} compact onChanged={() => void app.data.refresh()} onOpenAll={() => app.go('calls')} />;
+  // The wrapper is the staircase block (the panel belongs to the calls feature).
+  return <div data-enter>
+    <PatternsPanel patterns={patterns} drills={state.drills ?? []} onStartDrill={app.startDrill} compact onChanged={() => void app.data.refresh()} onOpenAll={() => app.go('calls', { calls: 'patterns' })} />
+  </div>;
 }
 
 function LimitsWarning() {
@@ -220,7 +334,7 @@ function LimitsWarning() {
   const view = subscriptionView(app.data.usage);
   const low = view.windows.find(window => window.low);
   if (!low) return null;
-  return <button type="button" className={`banner warning ${styles.limits}`} onClick={() => app.go('profile')}>
+  return <button type="button" className={`banner warning ${styles.limits}`} onClick={() => app.go('profile')} data-enter>
     <WarningCircleIcon size={18} weight="fill" /><span className="banner-copy"><strong>{low.exhausted ? 'Лимит подписки исчерпан' : 'Лимит подписки почти исчерпан'}</strong><span className="caption">{low.resetRelative || 'Подробности в профиле'}</span></span>
   </button>;
 }
@@ -228,26 +342,37 @@ function LimitsWarning() {
 export function TodayScreen() {
   const app = useApp();
   const state = app.data.state!;
-  const primary = useMemo(() => todayPrimary(state), [state]);
+  const primary = useMemo(() => {
+    const value = todayPrimary(state);
+    // While the test is being scored it waits in the status row; the day's card is the next thing to do.
+    return value.kind === 'placement' && value.view.status === 'scoring' ? todayPrimary({ ...state, placement: undefined }) : value;
+  }, [state]);
   const [hello] = useState(() => { const first = !greetedThisLaunch; greetedThisLaunch = true; return first; });
-  const primaryKey = primary.kind + ':' + (primary.kind === 'continue' ? primary.session.id : primary.kind === 'drill' ? primary.drill.id : primary.kind === 'plan' ? primary.recommendation.familyId + (primary.recommendation.drillId ?? '') : primary.kind === 'call' ? primary.call.id : '');
+  // Greeting hop only where it is seen: after the launch layer has handed over (never under it), as the hero settles.
+  const revealed = useShellRevealed();
+  const [greet, setGreet] = useState(false);
+  useEffect(() => {
+    if (!hello || !revealed) return;
+    const timer = setTimeout(() => setGreet(true), HERO_GREET_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [hello, revealed]);
+  const primaryKey = primary.kind + ':' + (primary.kind === 'continue' ? primary.session.id : primary.kind === 'drill' ? primary.drill.id : primary.kind === 'plan' ? primary.recommendation.familyId + (primary.recommendation.drillId ?? '') : primary.kind === 'call' ? primary.call.id : primary.kind === 'placement' ? primary.view.status : '');
   return <div className={`screen ${styles.today}`} data-screen="today">
-    <header className={styles.hero}>
+    <header className={styles.hero} data-enter>
       <div className={styles.heroCopy}>
         <h1 tabIndex={-1} data-screen-heading>{greeting(state.profile.name)}</h1>
         <p className="muted">{todayLine()} · {primary.kind === 'placement' && !primary.retake ? 'начнём с теста уровня, потом всё подстроится под тебя.' : 'один шаг на сегодня, остальное — по желанию.'}</p>
       </div>
       <div className={styles.heroMascot}>
-        <Companion state="idle" emotion={primary.kind === 'placement' && primary.view.status === 'scoring' ? 'thinking' : undefined} greeting={hello}
-          status="Твой собеседник. Потрогай его" />
+        <Companion state="idle" emotion={heroEmotion(state, primary)} greeting={greet} status="Твой собеседник. Потрогай его" />
       </div>
     </header>
     <div className={styles.grid}>
       <div className={styles.main}>
         <PrimaryCard key={primaryKey} primary={primary} />
-        <StatusStrip />
+        <StatusStrip primary={primary} />
         <QuickActions />
-        <LaterList />
+        <LaterList primary={primary} />
       </div>
       <aside className={styles.aside} aria-label="Твой прогресс">
         <LimitsWarning />

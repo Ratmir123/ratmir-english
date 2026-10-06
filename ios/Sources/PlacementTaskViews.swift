@@ -446,11 +446,19 @@ struct PlacementRoleplayView: View {
     @State private var stage: PlacementVoiceStage = .ready
     @State private var notice: String?
     @State private var lineError: String?
+    /// The task whose line could not be played: its text is shown instead (MOTION-PASS §6 fallback).
+    @State private var unvoicedTask: String?
+    /// The task whose line the learner opened; the next line arrives hidden.
+    @State private var revealedTask: String?
     @State private var confirmSkip = false
 
     private var lineKey: String { "placement-line-" + task.id }
     private var lineActive: Bool { player.activeKey == lineKey }
     private var linePlaying: Bool { lineActive && player.isPlaying }
+    /// The line has no voice (no clip, voice off, or playback failed): it is read, not hidden.
+    private var lineForced: Bool {
+        task.partnerLine?.audioUrl?.isEmpty != false || store.view?.audioAvailable == false || unvoicedTask == task.id
+    }
     private var partnerName: String {
         let first = task.partnerRole.split(separator: ",").first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
         return first.isEmpty ? "Собеседник" : first
@@ -518,10 +526,11 @@ struct PlacementRoleplayView: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 8) {
                 Text(partnerName).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(task.partnerLine?.text ?? "")
-                    .font(.title3.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                // Heard first, like every partner line (§6); «Показать текст» opens this line only.
+                PartnerLineReveal(text: task.partnerLine?.text ?? "", font: .title3.weight(.semibold),
+                                  shown: lineForced || revealedTask == task.id, canHide: !lineForced,
+                                  note: "Реплика звучит голосом. Текст можно открыть, если не расслышал.",
+                                  reveal: { revealedTask = task.id }, hide: { revealedTask = nil })
                 if task.partnerLine?.audioUrl != nil {
                     Button {
                         replay()
@@ -566,9 +575,16 @@ struct PlacementRoleplayView: View {
                 return
             }
             await player.play(data: data, key: lineKey)
+            if player.error != nil && player.activeKey != lineKey {
+                unvoicedTask = task.id
+                lineError = "Звук реплики не включился — прочитай её текст."
+            }
         } catch {
             player.cancelLoading(lineKey)
-            if !FeatureErrorText.isCancellation(error) { lineError = "Звук реплики не загрузился — прочитай её текст." }
+            if !FeatureErrorText.isCancellation(error) {
+                unvoicedTask = task.id
+                lineError = "Звук реплики не загрузился — прочитай её текст."
+            }
         }
     }
 

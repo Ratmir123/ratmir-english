@@ -1,9 +1,10 @@
 'use client';
 
 /**
- * Personal drills from calls, patterns and the placement result: one surface, one row per drill
- * (title, why, the line to replay, a meta line, one start action). Also rendered by Practice («Для тебя»).
- * The start mode follows Today's rule: pressure tier 2–3 runs as a call, tier 1 with supports.
+ * Personal drills from calls, patterns and the placement result as rows (title, why, the line to replay, a meta line, the
+ * start actions); hosts put them inside their own surface. One start behaviour everywhere (MOTION-PASS-0.5.2 §8.6, the rule
+ * of Practice «Для тебя»): the button starts the default mode — pressure tier 2–3 «Как на созвоне», tier 1 «С опорами» —
+ * and a small text action beside it starts the other one. One order everywhere: today-plan `drillOrder`, done ones last.
  */
 import {
   ArrowRightIcon, CardsIcon, ChatsCircleIcon, CheckCircleIcon, CurrencyDollarIcon, EnvelopeSimpleIcon, FlagIcon, LightningIcon,
@@ -12,8 +13,10 @@ import {
 import type { DrillType, PersonalDrill } from '@/lib/calls/types';
 import type { Mode } from '@/lib/types';
 import { MODE_LABEL } from '../app/labels';
+import { sortDrillRows } from '../app/today-plan';
+import { drillTile } from '../practice/for-you-model';
 import { cx, kit, TtsButton } from './kit';
-import { DRILL_TYPE_LABEL, dueLabel, formatClock, plural, sortDrills } from './format';
+import { DRILL_TYPE_LABEL, dueLabel, formatClock, plural } from './format';
 import styles from './patterns.module.css';
 
 export const DRILL_ICON: Record<DrillType, Icon> = {
@@ -21,8 +24,13 @@ export const DRILL_ICON: Record<DrillType, Icon> = {
   story: ChatsCircleIcon, followup: EnvelopeSimpleIcon, rapidfire: LightningIcon, cards: CardsIcon,
 };
 
-/** Same default as Today's drill card: harder drills run as a real call, easier ones with supports. */
-export function drillMode(drill: Pick<PersonalDrill, 'tier'>): Mode { return drill.tier >= 2 ? 'call' : 'learning'; }
+const lower = (mode: Mode) => MODE_LABEL[mode].toLowerCase();
+
+/** The start rule of Practice (for-you-model `drillTile`): the default mode and the other one (none for a written follow-up). */
+export function drillModes(drill: PersonalDrill): { mode: Mode; other: Mode | null } {
+  const { mode, other } = drillTile(drill, 15); // the daily budget only sets the tile's minutes
+  return { mode, other };
+}
 
 function Tier({ tier }: { tier: 1 | 2 | 3 }) {
   return (
@@ -40,7 +48,8 @@ export function DrillRow({ drill, onStartDrill, labelled, primary = true }: {
 }) {
   const due = dueLabel(drill.dueAt);
   const done = drill.status === 'done';
-  const mode = drillMode(drill);
+  const { mode, other } = drillModes(drill);
+  const verb = done ? 'Ещё раз' : drill.status === 'started' ? 'Продолжить' : 'Начать';
   const moment = drill.source.type === 'call' && drill.source.at !== null ? `момент ${formatClock(drill.source.at)}` : null;
   return (
     <div className={styles.drill} data-status={drill.status}>
@@ -59,28 +68,36 @@ export function DrillRow({ drill, onStartDrill, labelled, primary = true }: {
               : <span className={styles.drillState} data-tone={due.due ? 'lime' : undefined} data-dot={due.due || undefined}>{due.label}</span>}
           <span>{labelled ? `Тренировка: ${DRILL_TYPE_LABEL[drill.type].toLowerCase()}` : DRILL_TYPE_LABEL[drill.type]}{moment ? `, ${moment}` : ''}</span>
           <Tier tier={drill.tier} />
-          {done ? null : <span>Режим: {MODE_LABEL[mode].toLowerCase()}</span>}
+          {/* As on the Practice tile: the mode the button starts, «Текст» for a written follow-up. */}
+          <span>{other ? MODE_LABEL[mode] : 'Текст'}</span>
           {drill.attempts ? <span className="tabular">{drill.attempts} {plural(drill.attempts, ['попытка', 'попытки', 'попыток'])}</span> : null}
         </p>
       </div>
-      <button type="button" className={cx(kit.btn, done || !primary ? kit.secondary : kit.primary, kit.small, styles.drillStart)} onClick={() => onStartDrill(drill.id, mode)}
-        aria-label={`${done ? 'Ещё раз' : drill.status === 'started' ? 'Продолжить' : 'Начать'}: ${drill.title}`}>
-        {done ? 'Ещё раз' : drill.status === 'started' ? 'Продолжить' : 'Начать'}<ArrowRightIcon size={14} weight="bold" />
-      </button>
+      <div className={styles.drillActions}>
+        <button type="button" className={cx(kit.btn, done || !primary ? kit.secondary : kit.primary, kit.small)} onClick={() => onStartDrill(drill.id, mode)}
+          aria-label={`${verb} ${lower(mode)}: ${drill.title}`}>
+          {verb}<ArrowRightIcon size={14} weight="bold" />
+        </button>
+        {other ? (
+          <button type="button" className={styles.drillAlt} onClick={() => onStartDrill(drill.id, other)} aria-label={`${verb} ${lower(other)}: ${drill.title}`}>
+            или {lower(other)}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-export function DrillsList({ drills, onStartDrill, limit }: { drills: PersonalDrill[]; onStartDrill: (drillId: string, mode: Mode) => void; limit?: number }) {
-  const sorted = sortDrills(drills);
-  const visible = limit ? sorted.slice(0, limit) : sorted;
-  if (!visible.length) {
+/** The drills of one call (one call date for all, so the shared order needs no call list). */
+export function DrillsList({ drills, onStartDrill }: { drills: PersonalDrill[]; onStartDrill: (drillId: string, mode: Mode) => void }) {
+  const sorted = sortDrillRows(drills);
+  if (!sorted.length) {
     return <p className={cx(kit.scope, kit.muted)} style={{ margin: 0, fontSize: 14 }}>Тренировок пока нет — они появятся из разборов звонков и теста уровня.</p>;
   }
   return (
     <ul className={cx(kit.scope, kit.glass, styles.drills)} aria-label="Тренировки">
       {/* One filled button per list: the drill to do first; the rest are the same action, quieter. */}
-      {visible.map((drill, index) => <li key={drill.id}><DrillRow drill={drill} onStartDrill={onStartDrill} primary={index === 0} /></li>)}
+      {sorted.map((drill, index) => <li key={drill.id}><DrillRow drill={drill} onStartDrill={onStartDrill} primary={index === 0} /></li>)}
     </ul>
   );
 }

@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { easeOutExpo, MOTION_MS } from './motion';
 
-/** Numbers roll to their new value (≈ 900 ms, ease-out); instant with reduced motion or a hidden page. */
+/** Numbers roll to their new value (the 900 ms fill, expo-out like the bars); instant with reduced motion or a hidden page. */
 export function RollingNumber({ value, className }: { value: number; className?: string }) {
   const [shown, setShown] = useState(value);
   const from = useRef(value);
@@ -14,8 +15,8 @@ export function RollingNumber({ value, className }: { value: number; className?:
     if (typeof window === 'undefined' || document.hidden || window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setShown(value); return; }
     const began = performance.now();
     const step = (now: number) => {
-      const t = Math.min(1, (now - began) / 900);
-      const eased = 1 - Math.pow(1 - t, 3);
+      const t = Math.min(1, (now - began) / MOTION_MS.fill);
+      const eased = easeOutExpo(t);
       setShown(Math.round(start + (value - start) * eased));
       if (t < 1) frame.current = requestAnimationFrame(step);
     };

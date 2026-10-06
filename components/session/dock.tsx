@@ -9,25 +9,37 @@ import { RecordingEvidence } from './recording-panels';
 import { usePushToTalk } from './use-push-to-talk';
 import styles from './session.module.css';
 
-/** Big round mic that morphs into Stop; its ring follows the live microphone level without React renders. */
+/**
+ * Big round mic that morphs into Stop. Its ring follows the live microphone level without React renders, drawn with
+ * transform + opacity on its own layer behind the button (no box-shadow repaint per level step).
+ */
 export function MicButton({ contextKey, disabled, size = 'large', testId = 'record-toggle' }: { contextKey: string; disabled: boolean; size?: 'large' | 'small'; testId?: string }) {
   const { lesson } = useApp();
   const voice = lesson.voice;
-  const ref = useRef<HTMLButtonElement>(null);
+  const ring = useRef<HTMLSpanElement>(null);
   const listening = voice.state === 'listening';
   const working = voice.state === 'transcribing' || (voice.state === 'thinking' && !lesson.busy);
+  const state = listening ? 'listening' : working ? 'working' : 'idle';
   useEffect(() => {
-    if (!listening) { ref.current?.style.setProperty('--level', '0'); return; }
+    const element = ring.current;
+    if (!element) return;
+    if (!listening) { element.style.removeProperty('transform'); return; }
     const store = voice.meterStore;
+    const diameter = size === 'large' ? 56 : 44;
     let frame = 0;
-    const paint = () => { frame = 0; ref.current?.style.setProperty('--level', store.getSnapshot().toFixed(2)); };
+    // 3–17 px of ring around the button, as before, now as a scale of the ring layer.
+    const paint = () => { frame = 0; element.style.transform = `scale(${(1 + (6 + store.getSnapshot() * 28) / diameter).toFixed(3)})`; };
+    paint();
     const unsubscribe = store.subscribe(() => { if (!frame) frame = requestAnimationFrame(paint); });
     return () => { unsubscribe(); if (frame) cancelAnimationFrame(frame); };
-  }, [listening, voice.meterStore]);
-  return <button ref={ref} type="button" className={styles.mic} data-size={size} data-state={listening ? 'listening' : working ? 'working' : 'idle'} data-testid={testId}
-    disabled={!listening && disabled} onClick={() => void voice.record(contextKey)} aria-label={listening ? 'Закончить запись' : working ? 'Распознаю запись' : 'Говорить'}>
-    {listening ? <SquareIcon size={size === 'large' ? 22 : 16} weight="fill" /> : working ? <CircleNotchIcon size={size === 'large' ? 24 : 18} className={styles.spin} /> : <MicrophoneIcon size={size === 'large' ? 26 : 18} weight="fill" />}
-  </button>;
+  }, [listening, voice.meterStore, size]);
+  return <span className={styles.micWrap} data-size={size} data-state={state}>
+    <span ref={ring} className={styles.micRing} aria-hidden="true" />
+    <button type="button" className={styles.mic} data-size={size} data-state={state} data-testid={testId}
+      disabled={!listening && disabled} onClick={() => void voice.record(contextKey)} aria-label={listening ? 'Закончить запись' : working ? 'Распознаю запись' : 'Говорить'}>
+      {listening ? <SquareIcon size={size === 'large' ? 22 : 16} weight="fill" /> : working ? <CircleNotchIcon size={size === 'large' ? 24 : 18} className={styles.spin} /> : <MicrophoneIcon size={size === 'large' ? 26 : 18} weight="fill" />}
+    </button>
+  </span>;
 }
 
 function AutoTextarea({ value, onChange, disabled, placeholder, label, onSubmit, rows = 1, id }: {
@@ -72,7 +84,8 @@ export function Dock({ intent, retryId, placeholder, label, sendLabel, onSend, s
   const submit = () => { if (canSend) { voice.stop(); onSend(); } };
   const desktop = typeof window !== 'undefined' && !!window.matchMedia?.('(hover: hover) and (pointer: fine)').matches;
   return <div className={`glass ${styles.dock}`} data-testid={testId} data-listening={listening}>
-    {capturing && <LiveCaptions text={voice.liveTranscript} status={voice.liveTranscriptStatus} state={voice.state} />}
+    {/* Mounted with the dock: it opens at full height when this composer records and only its own view re-renders per word. */}
+    {showMic && <LiveCaptions store={voice.transcriptStore} contextKey={contextKey} />}
     <RecordingEvidence intent={intent} retryId={retryId} />
     {lesson.sessionError && <div className={styles.dockError} role="alert"><span>{lesson.sessionError}</span>
       <button type="button" className="icon-button plain" style={{ width: 32, height: 32 }} onClick={() => lesson.setSessionError('')} aria-label="Скрыть ошибку"><XIcon size={14} /></button></div>}

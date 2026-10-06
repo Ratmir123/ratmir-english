@@ -5,13 +5,15 @@
 .detail { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
 .detail > * { min-width: 0; }
 .head { display: grid; gap: 12px; padding: clamp(18px, 2.4vw, 24px); }
-.headTop { display: flex; align-items: flex-start; gap: 12px; }
-.headTitle { flex: 1; min-width: 0; display: grid; gap: 8px; }
+/* The actions wrap under the title when the pane is narrow, instead of squeezing it. */
+.headTop { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+.headTitle { flex: 1 1 240px; min-width: 0; display: grid; gap: 8px; }
 .headTitle h2 { margin: 0; font-family: var(--k-display); font-size: clamp(22px, 2.8vw, 28px); font-weight: 800; letter-spacing: -.02em; line-height: 1.15; overflow-wrap: anywhere; text-wrap: balance; }
 .metaLine { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 13px; line-height: 1.4; color: var(--k-text-2); }
 .metaLine > span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .outcome { margin: 0; font-size: 16px; line-height: 1.5; font-weight: 600; max-width: 68ch; }
-.headActions { display: flex; gap: 6px; flex-shrink: 0; }
+.headActions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto; }
+.whoButton { min-height: 44px; }
 
 .progressCard { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; padding: 20px; }
 .progressCard strong { font-size: 16px; }
@@ -30,6 +32,8 @@
 .samples li { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .samples li::marker { color: var(--k-text-3); }
 .speakerName { max-width: 260px; }
+/* «Кто есть кто» sheet: what confirming does, under the choice. */
+.sheetNote { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--k-text-2); max-width: 68ch; }
 
 /* ───────── review ───────── */
 .review { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }

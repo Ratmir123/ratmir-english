@@ -5,6 +5,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 const BROWSER_PROTOCOL = 'realtime-transcription';
 const EPHEMERAL_PROTOCOL_PREFIX = 'openai-insecure-api-key.';
 const EPHEMERAL_TOKEN = /^ek_[A-Za-z0-9_-]{10,2048}$/;
+const PENDING_UPSTREAM_BYTES = 2 * 1024 * 1024;
 
 function voiceRequestCredential(req, code, publicOrigin) {
   if (!code || !publicOrigin) return null;
@@ -65,9 +66,10 @@ export function transcriptionEvent(event) {
   if (!permittedVoiceEvent(event)) return null;
   if (event.type === 'session.update') {
     const config = event.session.audio.input.transcription;
+    // The relay decides the delay for every client (web, iPhone): 'minimal' shows the learner's words almost at once.
     return { type: 'session.update', session: { type: 'transcription', audio: { input: {
       format: { type: 'audio/pcm', rate: 24000 }, turn_detection: null,
-      transcription: { model: 'gpt-live-transcribe', languages: ['en', 'ru'], delay: 'low',
+      transcription: { model: 'gpt-live-transcribe', languages: ['en', 'ru'], delay: 'minimal',
         ...(typeof config.prompt === 'string' && config.prompt.length <= 2500 ? { prompt: config.prompt } : {}) },
     } } } };
   }
@@ -129,7 +131,9 @@ export function startVoiceRelay({ port = 3001, code = process.env.TRAINING_ACCES
         }
         const encoded = JSON.stringify(permitted);
         if (upstream.readyState === WebSocket.OPEN) forward(encoded);
-        else if (upstream.readyState === WebSocket.CONNECTING && waitingBytes + encoded.length <= 512000) {
+        // Clients connect in parallel with the microphone and flush audio queued meanwhile: hold up to ~2 MB
+        // (the browser queues at most 20 s of PCM ≈ 1.3 MB as base64) while the provider connection opens.
+        else if (upstream.readyState === WebSocket.CONNECTING && waitingBytes + encoded.length <= PENDING_UPSTREAM_BYTES) {
           waiting.push(encoded); waitingBytes += encoded.length;
         } else close(1013, 'Connection is not ready');
       });

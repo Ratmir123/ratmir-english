@@ -37,7 +37,7 @@ struct PreviewAccessibility: ViewModifier {
         let state = stateFixture(screen, now: now, conversation: conversation)
         client.previewMode = true
         client.state = decode(state, as: TrainingState.self)
-        client.status = decode(["app": ["name": "Smooth Talk", "version": "0.5.0", "channel": "alpha"],
+        client.status = decode(["app": ["name": "Smooth Talk", "version": "0.5.2", "channel": "alpha"],
                                 "brain": ["model": "gpt-6.1-sol", "verified": true], "audio": ["configured": true]], as: ServerStatus.self)
         client.subscriptionUsage = decode(usageFixture(), as: SubscriptionUsage.self)
         client.catalog = decode(["catalog": catalogFixture()], as: FamiliesResponse.self)?.catalog ?? []
@@ -64,7 +64,7 @@ struct PreviewAccessibility: ViewModifier {
             client.recording = true
             client.audioLevel = 0.48
             client.liveTranscript = "Yeah, um, I like sport too. I, I think climbing sounds really fun, and I would like to try it with you one weekend if the gym is not too busy."
-            client.liveTranscriptStatus = "Живые субтитры"
+            client.liveTranscriptStatus = LiveCaptionCopy.listening
         }
         if screen == "dictation-preview" { startDictation(client) }
         return true
@@ -85,15 +85,17 @@ struct PreviewAccessibility: ViewModifier {
             let words = ["And", "right", "now", "I", "am", "watching", "the", "newest", "words", "stay", "visible", "while", "the", "older", "lines", "move", "up.", "Um,", "I", "I", "can", "pause", "and", "continue", "at", "my", "own", "pace."]
             var hypothesis = prefix
             for (index, word) in words.enumerated() {
+                hypothesis += " " + word
+                // Recognizer-like rhythm: mostly one word at a time, now and then a burst of three for the reveal queue.
+                if index % 6 == 4 || index % 6 == 5 { continue }
                 do { try await Task.sleep(for: .milliseconds(240)) } catch { return }
                 guard let client, client.previewMode, client.recording else { return }
-                hypothesis += " " + word
-                client.liveTranscript = hypothesis
+                client.liveCaptions.receive(hypothesis)
                 if index == 12 {
                     // A final recognition can revise an earlier word while
-                    // preserving the tail. It must not replay the whole text.
-                    hypothesis = hypothesis.replacingOccurrences(of: "Sometimes I stop,", with: "Sometimes I pause,")
-                    client.liveTranscript = hypothesis
+                    // preserving the tail. It cross-fades in place, never replays the text.
+                    hypothesis = hypothesis.replacingOccurrences(of: "the newest words", with: "the latest words")
+                    client.liveCaptions.receive(hypothesis)
                 }
             }
         }
@@ -222,7 +224,7 @@ struct PreviewAccessibility: ViewModifier {
             sessions.append(done)
         }
         var state: [String: Any] = [
-            "app": ["name": "Smooth Talk", "version": "0.5.0"],
+            "app": ["name": "Smooth Talk", "version": "0.5.2"],
             "profile": ["name": "Alex", "dailyMinutes": 15, "goals": "Уверенно вести созвоны с клиентами на английском.",
                         "interests": ["AI", "игры", "спорт"], "professionalContext": "CG-художник, работает с брендами.",
                         "relocation": "Переезд через месяц.", "feedback": "Прямо и по делу.", "audioRetentionDays": 30, "budgetUsd": 35],

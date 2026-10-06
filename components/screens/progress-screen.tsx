@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useState, type CSSProperties } from 'react';
-import { ArrowRightIcon, CaretRightIcon, DownloadSimpleIcon, MagnifyingGlassIcon, TrashIcon } from '@phosphor-icons/react';
+import { ArrowLeftIcon, ArrowRightIcon, CaretRightIcon, MagnifyingGlassIcon, TrashIcon } from '@phosphor-icons/react';
 import { SKILLS, type AppState, type ProgressionState, type SkillState } from '@/lib/types';
 import { PlacementLevelCard, PlacementResultView } from '../placement/placement-result';
 import { useApp } from '../app/app-context';
 import { count, MODE_LABEL, SKILL_GROUPS, SKILL_STATE_LABEL, sessionStatusLabel, sessionTone, shortDate } from '../app/labels';
 import { weeklyRhythm } from '../app/today-plan';
+import { ScreenMascot } from '../shell/screen-mascot';
 import { Segmented } from '../ui/segmented';
 import { Achievements, rankProgress, RankLadder, RankMedal, XpBar } from '../ui/rewards';
 import styles from './progress.module.css';
@@ -55,8 +56,8 @@ function Skills({ state }: { state: AppState }) {
   const app = useApp();
   const observed = state.skills.filter(skill => skill.state !== 'unknown' || skill.examples.length > 0).length;
   return <div className={styles.stack}>
-    <p className={styles.intro}>Наблюдения из практики есть по {observed} из {SKILLS.length - 1} навыков. Четыре отметки: получается с опорой → самостоятельно → в новой ситуации → держится спустя время. «Говорить понятно» по тексту не оцениваем.</p>
-    {SKILL_GROUPS.map(group => <section key={group.id} className={`surface ${styles.group}`} aria-labelledby={`skills-${group.id}`}>
+    <p className={styles.intro} data-enter>Наблюдения из практики есть по {observed} из {SKILLS.length - 1} навыков. Четыре отметки: получается с опорой → самостоятельно → в новой ситуации → держится спустя время. «Говорить понятно» по тексту не оцениваем.</p>
+    {SKILL_GROUPS.map(group => <section key={group.id} className={`surface ${styles.group}`} aria-labelledby={`skills-${group.id}`} data-enter>
       <h2 id={`skills-${group.id}`}>{group.title}</h2>
       <ul className={`rows ${styles.skillList}`}>{SKILLS.filter(skill => skill.group === group.id).map(skill => {
         const value = state.skills.find(item => item.id === skill.id);
@@ -88,15 +89,14 @@ function History({ state }: { state: AppState }) {
   const sessions = [...state.sessions].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .filter(session => !query || (session.lesson.title + ' ' + session.lesson.goal).toLowerCase().includes(query));
   return <div className={styles.stack}>
-    <div className={styles.historyTools}>
+    <div className={styles.historyTools} data-enter>
       <label className={styles.search}><MagnifyingGlassIcon size={18} aria-hidden="true" /><span className="visually-hidden">Найти занятие</span>
         <input type="search" placeholder="Найти по названию или цели" value={search} onChange={event => setSearch(event.target.value)} /></label>
-      <a className="button secondary" href="/api/export" download><DownloadSimpleIcon size={17} />Скачать историю</a>
     </div>
-    {!state.sessions.length && <div className={`surface ${styles.empty}`}><strong>Пока пусто</strong><p className="caption">Твоя попытка, разбор и улучшенная версия сохранятся здесь.</p>
+    {!state.sessions.length && <div className={`surface ${styles.empty}`} data-enter><strong>Пока пусто</strong><p className="caption">Твоя попытка, разбор и улучшенная версия сохранятся здесь.</p>
       <button type="button" className="button secondary" onClick={() => app.go('practice')}>К практике<ArrowRightIcon size={16} /></button></div>}
-    {state.sessions.length > 0 && !sessions.length && <div className={`surface ${styles.empty}`}><strong>Ничего не нашлось</strong><button type="button" className="text-button" onClick={() => setSearch('')}>Показать всё</button></div>}
-    {sessions.length > 0 && <ul className={`surface rows ${styles.history}`} aria-label="Занятия">{sessions.map((session, index) => {
+    {state.sessions.length > 0 && !sessions.length && <div className={`surface ${styles.empty} reveal`}><strong>Ничего не нашлось</strong><button type="button" className="text-button" onClick={() => setSearch('')}>Показать всё</button></div>}
+    {sessions.length > 0 && <ul className={`surface rows ${styles.history}`} aria-label="Занятия" data-enter>{sessions.map((session, index) => {
       const tone = sessionTone(session);
       return <li key={session.id} className="reveal" style={{ '--i': Math.min(index, 6) } as CSSProperties}>
         <button type="button" className={styles.historyOpen} onClick={() => app.lesson.open(session, 'progress')}>
@@ -120,11 +120,11 @@ function Rewards({ progression, state }: { progression: ProgressionState; state:
   const opened = progression.achievements.filter(item => item.unlocked).length;
   const rank = rankProgress(progression);
   return <div className={styles.stack}>
-    <section className={styles.block} aria-labelledby="progress-achievements">
+    <section className={styles.block} aria-labelledby="progress-achievements" data-enter>
       <div className={styles.blockHead}><h2 id="progress-achievements">Достижения</h2><span className="caption">Открыто {opened} из {progression.achievements.length}</span></div>
       <Achievements value={progression} state={state} onTarget={app.onAchievementTarget} />
     </section>
-    <section className={`surface ${styles.group}`} aria-labelledby="progress-ladder">
+    <section className={`surface ${styles.group}`} aria-labelledby="progress-ladder" data-enter>
       <div className={styles.blockHead}><h2 id="progress-ladder">Ранги опыта</h2><span className="caption">Сейчас «{rank.band.title}», {progression.xp} XP</span></div>
       <RankLadder value={progression} />
     </section>
@@ -135,28 +135,58 @@ export function ProgressScreen() {
   const app = useApp();
   const state = app.data.state!;
   const progression = state.progression;
-  const [section, setSection] = useState<Section>(app.nav.progressSection.id);
-  useEffect(() => { if (app.nav.progressSection.nonce) setSection(app.nav.progressSection.id); }, [app.nav.progressSection]);
+  const target = app.nav.progressSection.id;
+  const [section, setSectionValue] = useState<Section>(target === 'report' ? 'overview' : target);
+  // The full test report opens from the compact level card (or straight from Today's «Подробнее»).
+  const [report, setReport] = useState(target === 'report' && !!state.placement?.result);
+  // A section picked here (not the screen's arrival) slides its panel in softly; the arrival runs the staircase.
+  const [switched, setSwitched] = useState(false);
+  const setSection = (value: Section) => { setSectionValue(value); setReport(false); setSwitched(true); };
+  useEffect(() => {
+    if (!app.nav.progressSection.nonce) return;
+    const next = app.nav.progressSection.id;
+    setSectionValue(next === 'report' ? 'overview' : next); setReport(next === 'report'); setSwitched(true);
+  }, [app.nav.progressSection]);
   const placement = state.placement;
+  const showReport = report && section === 'overview' && !!placement?.result;
+  const openReport = () => { setReport(true); setSwitched(true); window.scrollTo({ top: 0, behavior: 'auto' }); };
+  // The companion (MOTION-PASS-0.5.2 §3): proud of any progress; with none yet it sleeps — in the overview's empty
+  // state (one companion per screen), in the header on the other tabs. The full report brings its own companion.
+  const hasProgress = (progression?.xp ?? 0) > 0 || !!placement?.result || state.sessions.some(session => session.status === 'completed');
+  const headCompanion = (hasProgress || section !== 'overview') && !showReport;
   const rankCard = progression ? <RankCard progression={progression} state={state} onRewards={() => setSection('rewards')} /> : null;
+  const panelKey = showReport ? 'report' : section;
   return <div className={`screen ${styles.progress}`} data-screen="progress">
-    <header className="screen-header">
+    <header className="screen-header with-mascot" data-enter>
       <div><h1 tabIndex={-1} data-screen-heading style={{ outline: 'none' }}>Прогресс</h1><p className="lede">Уровень английского меняет только тест, опыт растёт от практики.</p></div>
+      {headCompanion ? <ScreenMascot emotion={hasProgress ? 'proud' : 'sleepy'} fluid className="screen-mascot" /> : null}
     </header>
-    <Segmented kind="tabs" label="Разделы прогресса" value={section} onChange={setSection} options={SECTIONS} controls="progress" />
-    <div id={`progress-${section}`} role="tabpanel" aria-labelledby={`progress-tab-${section}`} className={styles.panel}>
-      {section === 'overview' && (placement?.result
-        // Level and why (hero) next to the experience rank, then what to do next, then the details — one place each.
-        ? <PlacementResultView view={placement} onRetake={app.openPlacement} onStartPractice={() => app.go('practice')} aside={rankCard} />
-        : <div className={styles.pair}>
-          {placement && <PlacementLevelCard view={placement} onOpen={app.openPlacement} onStart={app.openPlacement} />}
-          {rankCard}
+    <div className={styles.tabs} data-enter><Segmented kind="tabs" label="Разделы прогресса" value={section} onChange={setSection} options={SECTIONS} controls="progress" /></div>
+    {/* The overview and the report are one block each in the staircase; the other sections mark their own surfaces. */}
+    <div key={panelKey} id={`progress-${section}`} role="tabpanel" aria-labelledby={`progress-tab-${section}`} className={styles.panel}
+      data-switched={switched || undefined} data-enter={section === 'overview' ? '' : undefined}>
+      {section === 'overview' && (showReport && placement
+        ? <div className={styles.report}>
+          <button type="button" className={`text-button muted ${styles.back}`} onClick={() => { setReport(false); setSwitched(true); }}><ArrowLeftIcon size={16} />Обзор</button>
+          {/* «Начать практику» from the report: the day's step is on Today. */}
+          <PlacementResultView view={placement} onRetake={app.openPlacement} onStartPractice={() => app.go('today')} />
+        </div>
+        : <div className={styles.stack}>
+          {!hasProgress && <div className={`surface ${styles.quiet}`}>
+            <div className={styles.quietCopy}><strong>Пока тут тихо</strong>
+              <p className="caption">Пройди тест уровня или первое занятие с разбором — здесь появятся уровень, опыт и навыки.</p></div>
+            <ScreenMascot emotion="sleepy" fluid className={styles.quietMascot} />
+          </div>}
+          <div className={styles.pair}>
+            {placement && <PlacementLevelCard view={placement} onOpen={placement.result ? openReport : app.openPlacement} onStart={app.openPlacement} />}
+            {rankCard}
+          </div>
         </div>)}
       {section === 'skills' && <Skills state={state} />}
       {section === 'history' && <History state={state} />}
       {section === 'rewards' && (progression
         ? <Rewards progression={progression} state={state} />
-        : <p className={styles.intro}>Награды появятся после первой практики с разбором.</p>)}
+        : <p className={styles.intro} data-enter>Награды появятся после первой практики с разбором.</p>)}
     </div>
   </div>;
 }

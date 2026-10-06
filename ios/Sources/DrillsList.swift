@@ -1,59 +1,128 @@
 import SwiftUI
 
-/// Personal drills (from calls, patterns or the placement result). Due ones first, done ones last.
-/// One surface, one row per drill (web: components/calls/drills-list.tsx). `grouped: false` renders
-/// bare rows for a host surface (a pattern card), so cards never nest.
-/// «Начать» opens the practice conversation through `TrainingClient.startDrill(id:mode:)`:
-/// tier 1 starts «С опорами», tiers 2–3 start «Как на созвоне»; the other mode is in the context menu.
+// MARK: - One order and one start rule (MOTION-PASS-0.5.2 §8.6)
+
+/// The drill order and start rule shared by Today's step, Practice («Для тебя», «Все тренировки»), a call's
+/// «Тренировки» and the pattern cards. Web: `drillOrder` / `pendingDrills` / `sortDrillRows`
+/// (components/app/today-plan.ts) and the drill start in components/practice/for-you-model.ts. Pure, so it is unit-tested.
+enum DrillOrder {
+    /// Not done: due first, then the newest call, then the newest drill. Without `calls` the call date is unknown and
+    /// the rest decides; equal drills keep their incoming order.
+    static func pending(_ drills: [PersonalDrill], calls: [CallSummary], now: Date = Date()) -> [PersonalDrill] {
+        var callTimes: [String: TimeInterval] = [:]
+        for call in calls where callTimes[call.id] == nil {
+            let occurred = call.occurredAt.flatMap { $0.isEmpty ? nil : $0 }
+            callTimes[call.id] = time(occurred ?? call.createdAt)
+        }
+        let current = now.timeIntervalSince1970
+        let ranked = drills.enumerated().filter { !$0.element.isDone }.map { entry -> Ranked in
+            let drill = entry.element
+            let callTime = drill.source.type == "call" ? (drill.source.callId.flatMap { callTimes[$0] } ?? 0) : 0
+            let due = (drill.dueAt ?? "").isEmpty || time(drill.dueAt) <= current
+            return Ranked(drill: drill, index: entry.offset, due: due, call: callTime, created: time(drill.createdAt))
+        }
+        return ranked.sorted { left, right in
+            if left.due != right.due { return left.due }
+            if left.call != right.call { return left.call > right.call }
+            if left.created != right.created { return left.created > right.created }
+            return left.index < right.index
+        }.map { $0.drill }
+    }
+
+    static func pending(_ state: TrainingState, now: Date = Date()) -> [PersonalDrill] {
+        pending(state.drills ?? [], calls: state.calls ?? [], now: now)
+    }
+
+    /// Done drills, the most recently finished first.
+    static func done(_ drills: [PersonalDrill]) -> [PersonalDrill] {
+        drills.enumerated().filter { $0.element.isDone }.sorted { left, right in
+            let leftTime = time(left.element.completedAt ?? left.element.createdAt)
+            let rightTime = time(right.element.completedAt ?? right.element.createdAt)
+            return leftTime != rightTime ? leftTime > rightTime : left.offset < right.offset
+        }.map { $0.element }
+    }
+
+    /// List rows: the pending drills in the shared order, then the done ones.
+    static func rows(_ drills: [PersonalDrill], calls: [CallSummary], now: Date = Date()) -> [PersonalDrill] {
+        pending(drills, calls: calls, now: now) + done(drills)
+    }
+
+    /// A follow-up drill is a written message: always with supports, no second way to run it.
+    static func isWritten(_ drill: PersonalDrill) -> Bool { drill.type == "followup" }
+
+    /// What a tap starts: pressure tier 2–3 runs «Как на созвоне», tier 1 «С опорами».
+    static func startMode(_ drill: PersonalDrill) -> String {
+        isWritten(drill) ? "learning" : (drill.tier >= 2 ? "call" : "learning")
+    }
+
+    /// The other way to run it (a small text action next to the start); nil for written drills.
+    static func otherMode(_ drill: PersonalDrill) -> String? {
+        isWritten(drill) ? nil : (startMode(drill) == "call" ? "learning" : "call")
+    }
+
+    private struct Ranked {
+        let drill: PersonalDrill
+        let index: Int
+        let due: Bool
+        let call: TimeInterval
+        let created: TimeInterval
+    }
+
+    private static let dayOnly: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate]
+        return formatter
+    }()
+
+    /// Web `time()`: a missing or unreadable date counts as 0, the oldest.
+    private static func time(_ value: String?) -> TimeInterval {
+        guard let value, !value.isEmpty else { return 0 }
+        let date = NativeDate.parse(value) ?? dayOnly.date(from: String(value.prefix(10)))
+        return date?.timeIntervalSince1970 ?? 0
+    }
+}
+
+// MARK: - List
+
+/// Personal drills (from calls, patterns or the placement result) as rows of one surface, in the shared order: pending
+/// first, done ones last (web: components/calls/drills-list.tsx). `grouped: false` renders bare rows for a host surface
+/// (a pattern card), so cards never nest. «Начать» runs the default mode (`DrillOrder.startMode`); the small
+/// «или …» action next to it runs the other one.
 struct DrillsList: View {
     let drills: [PersonalDrill]
-    var limit: Int? = nil
     var grouped = true
     /// Inside a pattern card the meta line starts with «Тренировка: <тип>».
     var inPattern = false
     @EnvironmentObject private var client: TrainingClient
     @State private var startingId: String?
 
-    private var sorted: [PersonalDrill] {
-        drills.sorted { left, right in
-            if left.isDone != right.isDone { return !left.isDone }
-            let leftDue = FeatureFormat.date(left.dueAt) ?? .distantFuture
-            let rightDue = FeatureFormat.date(right.dueAt) ?? .distantFuture
-            if leftDue != rightDue { return leftDue < rightDue }
-            return left.createdAt > right.createdAt
-        }
-    }
-    private var visible: [PersonalDrill] {
-        guard let limit else { return sorted }
-        return Array(sorted.prefix(max(0, limit)))
+    private var blocked: Bool {
+        startingId != nil || client.busy || client.startingIntent != nil || client.recording
     }
 
     var body: some View {
+        let rows = DrillOrder.rows(drills, calls: client.state?.calls ?? [])
         VStack(alignment: .leading, spacing: 10) {
-            if visible.isEmpty {
+            if rows.isEmpty {
                 Text("Тренировок пока нет — они появятся из разборов звонков и теста уровня.")
                     .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else if grouped {
-                rows
+                list(rows)
                     .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                     .contentSurface()
             } else {
-                rows
-            }
-            if let limit, drills.count > limit {
-                Text("Ещё " + FeatureFormat.count(drills.count - limit, "тренировка", "тренировки", "тренировок") + " — на вкладке «Практика».")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                list(rows)
             }
         }
     }
 
-    private var rows: some View {
+    private func list(_ rows: [PersonalDrill]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(visible.enumerated()), id: \.element.id) { index, drill in
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, drill in
                 if index > 0 { RowDivider(inset: grouped ? 16 : 0) }
-                DrillCard(drill: drill, starting: startingId == drill.id, disabled: startingId != nil, inset: grouped ? 16 : 0,
-                          prominent: index == 0, inPattern: inPattern) { mode in
+                DrillCard(drill: drill,
+                          starting: startingId == drill.id || client.isStarting(TrainingClient.drillKey(drill.id)),
+                          disabled: blocked, inset: grouped ? 16 : 0, prominent: index == 0, inPattern: inPattern) { mode in
                     start(drill, mode: mode)
                 }
             }
@@ -61,7 +130,7 @@ struct DrillsList: View {
     }
 
     private func start(_ drill: PersonalDrill, mode: String) {
-        guard startingId == nil else { return }
+        guard !blocked else { return }
         startingId = drill.id
         Task {
             await client.startDrill(id: drill.id, mode: mode)
@@ -70,7 +139,8 @@ struct DrillsList: View {
     }
 }
 
-/// One drill as a row (no surface of its own): title, why, the line to replay, a meta line, one action.
+/// One drill as a row (no surface of its own): title, why, the line to replay, a meta line, «Начать» in the default
+/// mode and «или …» for the other mode (§8.6, the same wording as the Practice tiles). A done drill can be run again.
 struct DrillCard: View {
     let drill: PersonalDrill
     let starting: Bool
@@ -84,8 +154,11 @@ struct DrillCard: View {
     private var lineKey: String { "drill-seed:" + drill.id }
     private var playing: Bool { client.playingModelLine == lineKey || client.loadingModelLine == lineKey }
 
-    private var defaultMode: String { drill.tier >= 2 ? "call" : "learning" }
-    private var otherMode: String { defaultMode == "call" ? "learning" : "call" }
+    private var defaultMode: String { DrillOrder.startMode(drill) }
+    private var otherMode: String? { DrillOrder.otherMode(drill) }
+    private var verb: String { drill.isDone ? "Ещё раз" : drill.status == "started" ? "Продолжить" : "Начать" }
+    /// A written follow-up reads «Текст», like its Practice tile.
+    private var modeTitle: String { otherMode == nil ? "Текст" : ModeCopy.title(defaultMode) }
     /// Same wording as the web's `dueLabel`: overdue drills are simply «можно сегодня».
     private var dueText: (label: String, due: Bool) {
         guard let due = FeatureFormat.date(drill.dueAt) else { return ("Когда удобно", false) }
@@ -101,9 +174,9 @@ struct DrillCard: View {
         let due = dueText
         return (due.label, due.due ? FeaturePalette.success : Color.secondary)
     }
+    /// The mode the button starts (as on the Practice tile), then the attempts.
     private var modeLine: String {
-        var parts: [String] = []
-        if !drill.isDone { parts.append("Режим: " + (defaultMode == "call" ? "созвон" : "с опорами")) }
+        var parts = [modeTitle]
         if drill.attempts > 0 { parts.append(FeatureFormat.count(drill.attempts, "попытка", "попытки", "попыток")) }
         return parts.joined(separator: " · ")
     }
@@ -115,10 +188,13 @@ struct DrillCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // A done drill reads quieter; its «Ещё раз» stays crisp.
             Text(drill.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                .opacity(drill.isDone ? 0.75 : 1)
             if !drill.why.isEmpty {
                 Text(drill.why).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
+                    .opacity(drill.isDone ? 0.75 : 1)
             }
             if let seed = drill.seedLine, !seed.isEmpty {
                 HStack(alignment: .center, spacing: 8) {
@@ -135,18 +211,17 @@ struct DrillCard: View {
                 HStack(alignment: .center, spacing: 12) {
                     meta
                     Spacer(minLength: 8)
-                    startButton
+                    actions
                 }
                 VStack(alignment: .leading, spacing: 10) {
                     meta
-                    startButton
+                    actions
                 }
             }
             .padding(.top, 2)
         }
         .padding(.horizontal, inset).padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .opacity(drill.isDone ? 0.75 : 1)
     }
 
     private var meta: some View {
@@ -160,30 +235,53 @@ struct DrillCard: View {
                 Text(modeLine).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
+        .opacity(drill.isDone ? 0.75 : 1)
     }
 
-    @ViewBuilder private var startButton: some View {
-        if !drill.isDone {
-            Button {
-                onStart(defaultMode)
-            } label: {
-                HStack(spacing: 6) {
-                    if starting { ProgressView() }
-                    Text(starting ? "Готовлю…" : drill.status == "started" ? "Продолжить" : "Начать")
-                }
-                .padding(.horizontal, 4)
-            }
-            .modifier(DrillStartStyle(prominent: prominent))
-            .fixedSize()
-            .disabled(disabled)
-            .contextMenu {
-                Button(otherMode == "call" ? "Как на созвоне" : "С опорами",
-                       systemImage: otherMode == "call" ? "phone" : "lightbulb") { onStart(otherMode) }
-            }
-            .accessibilityLabel((drill.status == "started" ? "Продолжить: " : "Начать: ") + drill.title)
-            .accessibilityHint(defaultMode == "call" ? "Без подсказок, как на настоящем звонке" : "С подсказками")
-            .accessibilityAction(named: Text(otherMode == "call" ? "Начать как на созвоне" : "Начать с опорами")) { onStart(otherMode) }
+    /// «Начать» (default mode) and, beside it, «или с опорами» / «или как на созвоне».
+    private var actions: some View {
+        HStack(alignment: .center, spacing: 4) {
+            startButton
+            if let otherMode { otherButton(otherMode) }
         }
+    }
+
+    private var startButton: some View {
+        Button {
+            onStart(defaultMode)
+        } label: {
+            HStack(spacing: 6) {
+                if starting { ProgressView() }
+                Text(starting ? "Готовлю…" : verb)
+            }
+            .padding(.horizontal, 4)
+        }
+        .modifier(DrillStartStyle(prominent: prominent && !drill.isDone))
+        .fixedSize()
+        .disabled(disabled)
+        .accessibilityLabel(verb + " " + ModeCopy.title(defaultMode).lowercased() + ": " + drill.title)
+        .accessibilityHint(startHint)
+    }
+
+    private var startHint: String {
+        guard otherMode != nil else { return "Письменное задание с опорами." }
+        return ModeCopy.title(defaultMode) + ". " + ModeCopy.explanation(defaultMode)
+    }
+
+    private func otherButton(_ mode: String) -> some View {
+        Button { onStart(mode) } label: {
+            Text("или " + ModeCopy.title(mode).lowercased())
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 8)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressButton())
+        .foregroundStyle(Theme.violet)
+        .fixedSize()
+        .disabled(disabled)
+        .accessibilityLabel(verb + " " + ModeCopy.title(mode).lowercased() + ": " + drill.title)
+        .accessibilityHint(ModeCopy.explanation(mode))
     }
 }
 

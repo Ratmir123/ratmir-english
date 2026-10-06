@@ -38,12 +38,14 @@ struct PatternsView: View {
                     .padding(.bottom, 32)
                     .frame(maxWidth: 720)
                     .frame(maxWidth: .infinity)
+                    .entranceStage()
             }
             .background { FeatureBackdrop() }
             .navigationTitle("Мои паттерны")
         }
     }
 
+    /// Blocks carry their staircase step; embedded in a host without a stage they simply show.
     private var content: some View {
         VStack(alignment: .leading, spacing: 18) {
             if !embedded {
@@ -51,6 +53,7 @@ struct PatternsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .entrance(0)
             }
             if let error {
                 FeatureBanner(message: error, onDismiss: { self.error = nil })
@@ -59,12 +62,14 @@ struct PatternsView: View {
                 FeatureEmptyState(icon: "point.3.connected.trianglepath.dotted", title: "Паттернов пока нет",
                                   text: "Они появятся после первого разобранного звонка: например, «называешь чужой гонорар» или «соглашаешься на первую цифру».")
                     .featureGlass(radius: 24)
+                    .entrance(1)
             }
-            ForEach(weaknesses) { pattern in
+            ForEach(Array(weaknesses.enumerated()), id: \.element.id) { index, pattern in
                 PatternCard(pattern: pattern, drills: related(pattern), busy: busy.contains(pattern.id),
                             onConfirm: { update(pattern, confirm: true) },
                             onDismiss: { update(pattern, dismiss: true) },
                             onRestore: nil)
+                    .entrance(1 + index)
             }
             if !strengths.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
@@ -89,6 +94,7 @@ struct PatternsView: View {
                         }
                     }
                 }
+                .entrance(1 + weaknesses.count)
             }
             if !hidden.isEmpty {
                 DisclosureGroup {
@@ -111,13 +117,16 @@ struct PatternsView: View {
                 }
                 .padding(16)
                 .featureGlass(radius: 22)
+                .entrance(2 + weaknesses.count)
             }
         }
         .onChange(of: signature) { _, _ in overrides = nil }
     }
 
+    /// The pattern's drills in the shared order (§8.6), so its card shows the two that come first everywhere else too.
     private func related(_ pattern: CommunicationPattern) -> [PersonalDrill] {
-        drills.filter { $0.patternIds.contains(pattern.id) || $0.source.patternId == pattern.id }
+        DrillOrder.rows(drills.filter { $0.patternIds.contains(pattern.id) || $0.source.patternId == pattern.id },
+                        calls: client.state?.calls ?? [])
     }
 
     private func update(_ pattern: CommunicationPattern, confirm: Bool? = nil, dismiss: Bool? = nil) {

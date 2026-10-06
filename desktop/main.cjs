@@ -7,6 +7,7 @@ const {
   SHORTCUT, USAGE_URL, IPC, isAllowedExternalLink,
   safeClipboardText, readConfiguration, prepareRuntime, configureSessionProxy,
   validReminderMinutes, safeNetworkError, safeNotification,
+  readThemePreference, writeThemePreference,
 } = require('./runtime.cjs');
 const { prepareCallAudio } = require('./call-audio.cjs');
 
@@ -48,6 +49,9 @@ const windowDiagnostics = {
   quick: { created: false, event: 'none', loadErrorCode: null, preloadFailed: false, rendererGone: false, rendererReason: null, bridgeConnected: false, shown: false, presentedOnce: false, paintReady: false },
 };
 const diagnosticPath = join(userDataPath, 'desktop-status.json');
+// The in-app appearance choice, remembered here so the next start creates its window in that theme (no flash).
+const appearancePath = join(userDataPath, 'appearance.json');
+let rememberedTheme = 'system';
 const iconPath = app.isPackaged
   ? join(process.resourcesPath, 'app-icons', 'icon.ico')
   : join(app.getAppPath(), '..', 'public', 'icon-smooth-v051.ico');
@@ -207,7 +211,7 @@ function makeWindow(quick) {
     minHeight: quick ? 480 : 600,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0B0B10' : '#EEEEF3',
+    backgroundColor: windowBackground(),
     icon: iconPath,
     alwaysOnTop: quick,
     webPreferences: {
@@ -396,11 +400,15 @@ function registerIpc() {
   handle(IPC.prepareCallAudio, (event, filePath) => runCallAudioJob(event.sender, filePath));
   handle(IPC.notify, (_event, value) => showAppNotification(value));
   // The in-app appearance choice also drives the native title bar and window background (Windows follows themeSource).
+  // It is remembered for the next start (applied before the first window in boot), written only when it changes.
   handle(IPC.setTheme, (_event, value) => {
     if (!['system', 'light', 'dark'].includes(value)) throw new Error('Unknown theme.');
     nativeTheme.themeSource = value;
-    const background = nativeTheme.shouldUseDarkColors ? '#0B0B10' : '#EEEEF3';
+    const background = windowBackground();
     for (const window of [mainWindow, quickWindow]) if (window && !window.isDestroyed()) window.setBackgroundColor(background);
+    if (value !== rememberedTheme) {
+      try { writeThemePreference(appearancePath, value); rememberedTheme = value; } catch { }
+    }
     return { theme: value };
   });
   handle(IPC.reminder, (_event, minutes) => scheduleReminder(minutes));
@@ -437,7 +445,16 @@ function setupDailyReminders() {
   powerMonitor.on('resume', () => dailyReminders.resume());
 }
 
+/** The app background of the current theme (globals.css --bg-base), so a window never paints the other theme first. */
+function windowBackground() {
+  return nativeTheme.shouldUseDarkColors ? '#0B0B10' : '#EEEEF3';
+}
+
 async function boot() {
+  // Before any window exists: the remembered appearance drives the native frame, backgroundColor and the page's
+  // prefers-color-scheme from the very first paint (MOTION-PASS-0.5.2 §4).
+  rememberedTheme = readThemePreference(appearancePath);
+  nativeTheme.themeSource = rememberedTheme;
   startupStage = 'configuration';
   writeDiagnostics();
   const configPath = app.isPackaged

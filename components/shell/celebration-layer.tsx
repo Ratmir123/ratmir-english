@@ -5,6 +5,7 @@ import { ArrowRightIcon, SparkleIcon } from '@phosphor-icons/react';
 import { fireConfetti } from '../mascot/confetti';
 import type { Celebration } from '../app/celebrations';
 import { AchievementMedal, RankMedal } from '../ui/rewards';
+import { MOTION_MS } from '../ui/motion';
 import { Sheet } from '../ui/sheet';
 import { Companion } from './companion';
 import styles from './celebration.module.css';
@@ -40,7 +41,7 @@ function XpFlyout({ item, origin, onDone: done }: { item: Extract<Celebration, {
       { transform: `translate(${x0 + dx}px, ${y0 + dy}px) scale(.55)`, opacity: end ? 0.9 : 0 },
     ], { duration: 1500, easing: 'cubic-bezier(.45,0,.2,1)', fill: 'forwards' });
     animation.onfinish = () => {
-      target?.animate?.([{ transform: 'scale(1)' }, { transform: 'scale(1.08)' }, { transform: 'scale(1)' }], { duration: 520, easing: 'cubic-bezier(.34,1.56,.64,1)' });
+      target?.animate?.([{ transform: 'scale(1)' }, { transform: 'scale(1.08)' }, { transform: 'scale(1)' }], { duration: MOTION_MS.bouncy, easing: 'cubic-bezier(.34,1.56,.64,1)' } /* a reward: overshoot allowed */);
       onDone();
     };
     return () => animation.cancel();

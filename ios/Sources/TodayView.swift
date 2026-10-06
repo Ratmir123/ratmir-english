@@ -3,7 +3,8 @@ import SwiftUI
 // MARK: - Decision order (DESIGN-SYSTEM §3 Today)
 
 /// Exactly one primary card: pending recording → placement test → unfinished session or review →
-/// call waiting for the speaker → personal drill → the server's plan.
+/// a retake in progress → call waiting for the speaker → personal drill → the server's plan.
+/// The same rules as the web (components/app/today-plan.ts, MOTION-PASS 0.5.2 §8.1).
 enum TodayHero: Equatable {
     case pendingRecording
     case placement(status: String)
@@ -15,32 +16,51 @@ enum TodayHero: Equatable {
 }
 
 enum TodayPlanner {
-    static func hero(state: TrainingState?, hasPendingRecording: Bool) -> TodayHero {
+    static func hero(state: TrainingState?, hasPendingRecording: Bool, now: Date = Date()) -> TodayHero {
         if hasPendingRecording { return .pendingRecording }
         guard let state else { return .empty }
         if let placement = state.placementSignal, !placement.hasResult, placement.status != "scoring" {
             return .placement(status: placement.status)
         }
-        if let session = resumableSession(state) { return .resume(sessionID: session.id) }
+        if let session = resumableSession(state, now: now) { return .resume(sessionID: session.id) }
+        if let placement = state.placementSignal, placement.hasResult, placement.status == "in-progress" {
+            return .placement(status: placement.status)
+        }
         if let call = state.callSignals.first(where: { $0.status == "needs-speaker" }) { return .confirmSpeaker(callID: call.id) }
-        if let drill = pendingDrill(state) { return .drill(id: drill.id) }
+        if let drill = pendingDrill(state, now: now) { return .drill(id: drill.id) }
         if state.progression?.recommendation != nil { return .recommendation }
         return .empty
     }
 
-    static func resumableSession(_ state: TrainingState) -> Conversation? {
-        let candidates = state.sessions.filter { $0.isResumable }
+    /// Today's «Продолжить»: the newest unfinished lesson touched within 72 h. A retry parked with «Отложить попытку»
+    /// never comes back as today's step; older lessons stay in «Незаконченные». A lesson being analysed is a
+    /// status row instead.
+    static func resumableSession(_ state: TrainingState, now: Date = Date()) -> Conversation? {
+        let candidates = state.sessions.filter { $0.isInProgress && $0.status != "analysing" && $0.isFresh(now: now) }
         return candidates.max { ($0.latestDate ?? .distantPast) < ($1.latestDate ?? .distantPast) }
     }
 
-    /// The newest unfinished drill that is not already open as a session.
-    static func pendingDrill(_ state: TrainingState) -> TodayDrillSignal? {
+    /// The next drill not already open as a session, in the one shared order (`DrillOrder`, web `pendingDrills`):
+    /// due first, then the newest call, then the newest drill.
+    static func pendingDrill(_ state: TrainingState, now: Date = Date()) -> TodayDrillSignal? {
         let open = Set(state.sessions.filter { $0.isResumable }.map(\.id))
-        return state.drillSignals.first { drill in
+        let candidates = state.drillSignals.filter { drill in
             guard drill.status != "done" else { return false }
             if let id = drill.sessionId, open.contains(id) { return false }
             return true
         }
+        var order: [String: Int] = [:]
+        for (index, drill) in DrillOrder.pending(state, now: now).enumerated() where order[drill.id] == nil {
+            order[drill.id] = index
+        }
+        return candidates.min { (order[$0.id] ?? Int.max) < (order[$1.id] ?? Int.max) }
+    }
+
+    /// «Незаконченные занятия»: everything unfinished that is not today's card, parked retries and older lessons
+    /// included, newest first.
+    static func laterSessions(_ state: TrainingState?, heroSessionID: String?) -> [Conversation] {
+        (state?.sessions ?? []).filter { $0.isResumable && !$0.isBaseline && $0.id != heroSessionID }
+            .sorted { ($0.latestDate ?? .distantPast) > ($1.latestDate ?? .distantPast) }
     }
 
     /// Top active weaknesses for «Над чем работаем».
@@ -112,12 +132,19 @@ struct RhythmDots: View {
 /// «Над чем работаем» and the weekly rhythm. No kickers, no glass on content.
 struct TodayScreen: View {
     var select: (ShellTab) -> Void = { _ in }
+    /// False while the launch greeting covers Home; the staircase starts with its hand-off.
     var entryVisible = true
-    var animateEntry = false
+    /// False when the learner skipped the greeting: Home appears at once.
+    var animateEntry = true
     @EnvironmentObject private var client: TrainingClient
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showFreeTopic = false
     @State private var pendingFree: FreeTopicRequest? = nil
     @State private var showPlacementResult = false
+    /// «Убрать» on an unfinished lesson: hidden at once, deleted only when «Вернуть» was not tapped in time.
+    @State private var removal: SessionRemoval? = nil
+    @State private var removedIDs: Set<String> = []
+    @State private var removalTimer: Task<Void, Never>? = nil
 
     private var state: TrainingState? { client.state }
     private var hero: TodayHero { TodayPlanner.hero(state: state, hasPendingRecording: client.hasUnuploadedRecording) }
@@ -126,27 +153,30 @@ struct TodayScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    TodayHeader(completedToday: completedToday, placementFirst: placementFirst)
-                        .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 0))
+                    TodayHeader(completedToday: completedToday, placementFirst: placementFirst, mood: heroMood)
+                        .entrance(0)
                     heroSection
-                        .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 1))
+                        .entrance(1)
                     TodayStatusRows(select: select)
-                        .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 2))
+                        .entrance(2)
                     TodayUploadProgress()
-                    TodayQuickActions(select: select, openFreeTopic: { showFreeTopic = true })
-                        .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 3))
-                    TodayLaterList(heroSessionID: heroSessionID)
-                        .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 3))
+                        .entrance(2)
+                    TodayQuickActions(openFreeTopic: { showFreeTopic = true })
+                        .entrance(3)
+                    TodayLaterList(heroSessionID: heroSessionID, hidden: hiddenSessionIDs, remove: remove)
+                        .entrance(4)
                     TodayLevelSection(select: select, openPlacementResult: { showPlacementResult = true })
-                        .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 4))
+                        .entrance(5)
                     TodayFocusSection(select: select)
-                        .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 5))
+                        .entrance(6)
                     rhythmSection
-                        .modifier(NativeHomeEntrance(visible: entryVisible, animated: animateEntry, index: 5))
+                        .entrance(7)
                 }
                 .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 32)
                 .frame(maxWidth: 640).frame(maxWidth: .infinity)
+                .entranceStage(ready: entryVisible, animated: animateEntry)
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) { removalCapsule }
             .modifier(LiquidCanvas())
             .refreshable { await client.refreshQuietly() }
             .toolbar(.hidden, for: .navigationBar)
@@ -177,6 +207,68 @@ struct TodayScreen: View {
         return nil
     }
 
+    /// MOTION-PASS 0.5.2 §3: the test ahead → curious; a drill or the plan ready → determined; a review ready →
+    /// excited; trained today → proud; otherwise happy.
+    private var heroMood: VoiceOrbMood {
+        switch hero {
+        case .placement:
+            return .curious
+        case .drill, .recommendation:
+            return .determined
+        case .resume(let id):
+            if state?.session(id)?.status == "review" { return .excited }
+        default:
+            break
+        }
+        return completedToday ? .proud : .happy
+    }
+
+    private var hiddenSessionIDs: Set<String> {
+        var ids = removedIDs
+        if let removal { ids.insert(removal.id) }
+        return ids
+    }
+
+    @ViewBuilder private var removalCapsule: some View {
+        if removal != nil {
+            SessionRemovedCapsule(undo: undoRemoval)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+                .transition(reduceMotion ? AnyTransition.opacity : AnyTransition.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    /// «Убрать» (MOTION-PASS 0.5.2 §8.4): the row disappears at once, «Занятие убрано · Вернуть» stays ≈ 6 s, and only
+    /// then DELETE /api/sessions/:id goes out. A second «Убрать» meanwhile confirms the first one right away.
+    private func remove(_ session: Conversation) {
+        removalTimer?.cancel()
+        if let pending = removal { commitRemoval(pending) }
+        let item = SessionRemoval(id: session.id, title: session.lesson.title)
+        withAnimation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard) { removal = item }
+        removalTimer = Task {
+            do { try await Task.sleep(for: .seconds(6)) } catch { return }
+            commitRemoval(item)
+        }
+    }
+
+    private func undoRemoval() {
+        removalTimer?.cancel()
+        removalTimer = nil
+        withAnimation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard) { removal = nil }
+    }
+
+    private func commitRemoval(_ item: SessionRemoval) {
+        removedIDs.insert(item.id)
+        if removal?.id == item.id {
+            withAnimation(reduceMotion ? NativeMotion.crossFade : NativeMotion.exit) { removal = nil }
+        }
+        Task {
+            // A failed delete (offline, busy) brings the row back; the server's state stays the truth.
+            let deleted = await client.deleteSession(id: item.id)
+            if !deleted { removedIDs.remove(item.id) }
+        }
+    }
+
     @ViewBuilder private var heroSection: some View {
         switch hero {
         case .pendingRecording:
@@ -190,7 +282,7 @@ struct TodayScreen: View {
                 TodayPrimaryCard(title: call.title, why: "Подтверди, кто из собеседников ты, — и разбор созвона продолжится.",
                                  facts: call.counterpart.map { [$0] } ?? []) {
                     Button { openCalls(.call(id)) } label: {
-                        PrimaryActionLabel(title: "Подтвердить", icon: "person.2.fill")
+                        PrimaryActionLabel(title: "Выбрать, кто я", icon: "person.2.fill")
                     }.buttonStyle(PrimaryButton())
                 }
             }
@@ -246,6 +338,8 @@ struct TodayScreen: View {
 private struct TodayHeader: View {
     let completedToday: Bool
     let placementFirst: Bool
+    /// The companion's mood follows Today's one task (MOTION-PASS 0.5.2 §3).
+    let mood: VoiceOrbMood
     @EnvironmentObject private var client: TrainingClient
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var dateLine: String {
@@ -279,7 +373,8 @@ private struct TodayHeader: View {
 
     private var copy: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Привет, \(client.state?.profile.name ?? "ты").")
+            // The web Today heading: the time of day and the name, never a placeholder name («Доброе утро, …»).
+            Text(OpeningGreeting.dayGreeting(name: client.state?.profile.name))
                 .font(TypeScale.hero).tracking(-0.6)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
@@ -290,7 +385,34 @@ private struct TodayHeader: View {
     }
 
     private var orb: some View {
-        VoiceOrb(mode: .ready, level: 0, mood: completedToday ? .proud : .calm, statusDescription: "Твой собеседник")
+        VoiceOrb(mode: .ready, level: 0, mood: mood, statusDescription: "Твой собеседник")
+    }
+}
+
+/// An unfinished lesson removed from Today, still within its «Вернуть» window.
+private struct SessionRemoval: Equatable {
+    let id: String
+    let title: String
+}
+
+/// «Занятие убрано · Вернуть»: floating chrome above the tab bar while the delete can still be undone.
+private struct SessionRemovedCapsule: View {
+    let undo: () -> Void
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle").font(.body.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
+                .accessibilityHidden(true)
+            Text("Занятие убрано").font(.footnote.weight(.semibold))
+            Spacer(minLength: 8)
+            Button("Вернуть", action: undo)
+                .buttonStyle(QuietButton())
+                .accessibilityHint("Возвращает занятие в список")
+        }
+        .foregroundStyle(Theme.ink)
+        .padding(.leading, 18).padding(.trailing, 6).padding(.vertical, 6)
+        .frame(maxWidth: 560)
+        .modifier(LiquidChrome(radius: 28, tint: nil, interactive: false))
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -393,7 +515,7 @@ private struct TodayPlacementCard: View {
                 LiquidProgressBar(value: Double(signal.completedSections) / Double(max(1, signal.totalSections)), color: Theme.lime, height: 6)
             }
             if !signal.audioAvailable {
-                Label("Голос не подключён: аудио и речь пропустим. Подключается на компьютере в настройках.", systemImage: "speaker.slash")
+                Label("Голос не подключён: аудио и речь пропустим. Голос подключается на компьютере: Профиль → Голос.", systemImage: "speaker.slash")
                     .font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
             }
         } actions: {
@@ -422,7 +544,7 @@ private struct ResumeHeroCard: View {
         return "Продолжить разговор"
     }
     private var facts: [String] {
-        var parts = [session.mode == "call" ? "Созвон" : "С опорами"]
+        var parts = [ModeCopy.title(session.mode)]
         if let date = session.latestDate { parts.append(RuFormat.relativeDay(date)) }
         return parts
     }
@@ -437,23 +559,70 @@ private struct ResumeHeroCard: View {
     }
 }
 
+/// Today's drill (§8.6): «Переиграть момент» starts the default mode, the small «или …» under it starts the other one,
+/// in the same words as the Practice tiles and the drill rows.
 private struct DrillHeroCard: View {
     let drill: TodayDrillSignal
     @EnvironmentObject private var client: TrainingClient
     private var starting: Bool { client.isStarting(TrainingClient.drillKey(drill.id)) }
+    private var blocked: Bool { client.busy || client.startingIntent != nil || client.recording }
+    /// The full drill knows its type: a written follow-up always runs with supports and has no second mode.
+    private var personal: PersonalDrill? { client.state?.drills?.first(where: { $0.id == drill.id }) }
+    private var mode: String { personal.map(DrillOrder.startMode) ?? drill.preferredMode }
+    private var otherMode: String? {
+        if let personal { return DrillOrder.otherMode(personal) }
+        return drill.preferredMode == "call" ? "learning" : "call"
+    }
     private var source: String {
         guard let callID = drill.sourceCallId else { return "Тренировка по твоим паттернам" }
         if let call = client.state?.callSignals.first(where: { $0.id == callID }) { return "Из созвона «" + call.title + "»" }
         return "Из твоего созвона"
     }
-    var body: some View {
-        TodayPrimaryCard(title: drill.title, why: drill.why, facts: [source]) {
-            Button { Task { await client.startDrill(id: drill.id, mode: drill.preferredMode) } } label: {
-                StartButtonLabel(title: "Переиграть момент", starting: starting)
-            }
-            .buttonStyle(PrimaryButton())
-            .disabled(client.busy || client.startingIntent != nil || client.recording)
+    /// The same facts as the web card: where it comes from, about how long, and what the button starts.
+    private var facts: [String] {
+        var parts = [source]
+        if let personal {
+            parts.append("~\(PracticeForYouPlan.tile(personal, daily: client.state?.profile.dailyMinutes ?? 15).minutes) мин")
         }
+        parts.append(otherMode == nil ? "Текст" : ModeCopy.title(mode))
+        return parts
+    }
+    private var goal: String { personal?.goal.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+    var body: some View {
+        TodayPrimaryCard(title: drill.title, why: drill.why, facts: facts) {
+            if !goal.isEmpty {
+                (Text("Цель: ").fontWeight(.semibold) + Text(goal))
+                    .font(.subheadline).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } actions: {
+            VStack(spacing: 4) {
+                Button { start(mode) } label: {
+                    StartButtonLabel(title: "Переиграть момент", starting: starting)
+                }
+                .buttonStyle(PrimaryButton())
+                .disabled(blocked)
+                .accessibilityHint(ModeCopy.title(mode) + ". " + ModeCopy.explanation(mode))
+                if let otherMode {
+                    Button { start(otherMode) } label: {
+                        Text("или " + ModeCopy.title(otherMode).lowercased())
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressButton())
+                    .foregroundStyle(Theme.violet)
+                    .disabled(blocked)
+                    .accessibilityLabel("Переиграть момент " + ModeCopy.title(otherMode).lowercased())
+                    .accessibilityHint(ModeCopy.explanation(otherMode))
+                }
+            }
+        }
+    }
+
+    private func start(_ mode: String) {
+        Task { await client.startDrill(id: drill.id, mode: mode) }
     }
 }
 
@@ -467,7 +636,7 @@ private struct RecommendationHeroCard: View {
     private var minutes: Int { client.state?.profile.dailyMinutes ?? 15 }
     private var facts: [String] {
         ["≈ " + RuFormat.minutes(minutes),
-         recommendation.preferredMode == "call" ? "созвон: слушаешь и отвечаешь" : "с опорами: текст и подсказки рядом"]
+         ModeCopy.title(recommendation.preferredMode)]
     }
     var body: some View {
         TodayPrimaryCard(title: recommendation.title, why: recommendation.why, facts: facts) {
@@ -619,18 +788,41 @@ private struct StatusRowLabel: View {
 }
 
 /// «Быстрый старт»: everything else you can start right now, as one list (no clipped chip row).
+/// «Загрузить созвон» opens the file picker with one tap (the same flow as the upload card in «Созвоны»); the upload
+/// then runs in the progress card above.
 private struct TodayQuickActions: View {
-    let select: (ShellTab) -> Void
     let openFreeTopic: () -> Void
     @EnvironmentObject private var client: TrainingClient
+    @ObservedObject private var uploads: CallUploadCenter
+    @State private var importing = false
+    @State private var pickError: String?
     private var pitch: CatalogFamily? { client.catalogFamily("strategy-pitch-30") }
+
+    init(openFreeTopic: @escaping () -> Void) {
+        self.openFreeTopic = openFreeTopic
+        _uploads = ObservedObject(wrappedValue: CallUploadCenter.shared)
+    }
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            rows
+            if let pickError {
+                FeatureBanner(message: pickError, onDismiss: { self.pickError = nil })
+            }
+        }
+        .callFileImport(isPresented: $importing, error: $pickError, client: client)
+        .task { await client.loadCatalog() }
+    }
+
+    private var rows: some View {
         GroupedRows("Быстрый старт") {
-            Button { select(.calls) } label: {
-                ListRowLabel(icon: "square.and.arrow.up", title: "Загрузить созвон", detail: "Запись, видео или текст звонка")
+            Button { importing = true } label: {
+                ListRowLabel(icon: "square.and.arrow.up", title: "Загрузить созвон",
+                             detail: uploads.isActive ? "Сначала дождись текущей загрузки" : "Запись, видео или текст звонка")
             }
             .buttonStyle(RowButtonStyle())
-            .accessibilityHint("Открывает вкладку «Созвоны»")
+            .disabled(uploads.isActive)
+            .accessibilityHint("Открывает выбор файла")
             if let pitch {
                 let starting = client.isStarting(TrainingClient.familyKey(pitch.id))
                 RowDivider(inset: 56)
@@ -645,48 +837,48 @@ private struct TodayQuickActions: View {
             }
             RowDivider(inset: 56)
             Button(action: openFreeTopic) {
-                ListRowLabel(icon: "sparkles", title: "Свободная тема", detail: "Разговор о том, что интересно")
+                ListRowLabel(icon: "sparkles", title: "Своя тема", detail: "Разговор о том, что интересно")
             }
             .buttonStyle(RowButtonStyle())
             .disabled(client.hasUnuploadedRecording)
         }
-        .task { await client.loadCatalog() }
     }
 }
 
-/// «Незаконченные занятия»: other sessions that can be resumed (the newest one is the primary card).
+/// «Незаконченные занятия»: every unfinished lesson that is not today's card (parked retries and lessons older than
+/// 72 h included), newest first. Each row has «Убрать»; the undo window lives in TodayScreen.
 private struct TodayLaterList: View {
     let heroSessionID: String?
+    var hidden: Set<String> = []
+    var remove: (Conversation) -> Void = { _ in }
     @EnvironmentObject private var client: TrainingClient
     @State private var expanded = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var later: [Conversation] {
-        (client.state?.sessions ?? []).filter { $0.isResumable && $0.id != heroSessionID }
-            .sorted { ($0.latestDate ?? .distantPast) > ($1.latestDate ?? .distantPast) }
+        TodayPlanner.laterSessions(client.state, heroSessionID: heroSessionID).filter { !hidden.contains($0.id) }
     }
     var body: some View {
         let sessions = later
         if !sessions.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                Button { expanded.toggle() } label: {
+                Button {
+                    withAnimation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard) { expanded.toggle() }
+                } label: {
                     ListRowLabel(title: "Незаконченные занятия",
                                  detail: "\(sessions.count) — можно вернуться в любой момент", showsChevron: false) {
                         Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
                             .rotationEffect(.degrees(expanded ? 90 : 0))
-                            .animation(reduceMotion ? nil : NativeMotion.standard, value: expanded)
                     }
                 }
                 .buttonStyle(RowButtonStyle())
                 .accessibilityValue(expanded ? "Развёрнуто" : "Свёрнуто")
                 if expanded {
                     ForEach(Array(sessions.prefix(8))) { session in
-                        RowDivider()
-                        Button { client.resume(session) } label: {
-                            ListRowLabel(title: session.lesson.title,
-                                         detail: Self.status(session) + (session.latestDate.map { " · " + RuFormat.relativeDay($0) } ?? ""))
+                        VStack(spacing: 0) {
+                            RowDivider()
+                            row(session)
                         }
-                        .buttonStyle(RowButtonStyle())
-                        .disabled(client.recording || client.startingIntent != nil)
+                        .transition(reduceMotion ? AnyTransition.opacity : NativeMotion.insertion)
                     }
                 }
             }
@@ -694,14 +886,46 @@ private struct TodayLaterList: View {
             .contentSurface()
         }
     }
-    /// Same wording as the web's `sessionStatusLabel`.
-    static func status(_ session: Conversation) -> String {
+
+    private func row(_ session: Conversation) -> some View {
+        HStack(spacing: 0) {
+            Button { client.resume(session) } label: {
+                ListRowLabel(title: session.lesson.title,
+                             detail: SessionStatusCopy.label(session) + (session.latestDate.map { " · " + RuFormat.relativeDay($0) } ?? ""),
+                             showsChevron: false)
+            }
+            .buttonStyle(RowButtonStyle())
+            .disabled(client.recording || client.startingIntent != nil)
+            Button("Убрать") { remove(session) }
+                .buttonStyle(QuietButton())
+                .padding(.trailing, 12)
+                .disabled(client.recording && client.conversation?.id == session.id)
+                .accessibilityLabel("Убрать «\(session.lesson.title)»")
+        }
+        .contextMenu {
+            Button("Убрать", systemImage: "minus.circle", role: .destructive) { remove(session) }
+        }
+    }
+}
+
+/// Session status words, identical to the web `sessionStatusLabel` / `sessionTone` (components/app/labels.ts).
+enum SessionStatusCopy {
+    static func label(_ session: Conversation) -> String {
         if session.retryDeferred == true { return "Попытка на потом" }
         if session.status == "completed" { return "Завершено" }
         if session.status == "analysing" { return "Готовится разбор" }
         if session.status == "review" { return "Разбор готов" }
         if session.status == "error" { return session.analysis != nil ? "Можно повторить разбор" : "Разбор не получился" }
         return "Можно продолжить"
+    }
+
+    /// A pill colour only for a state that still changes; nil reads as plain text in the meta line.
+    static func tone(_ session: Conversation) -> Color? {
+        if session.status == "review" && session.retryDeferred != true { return Theme.lime }
+        if session.status == "analysing" { return Theme.cyan }
+        if session.status == "error" { return Theme.warning }
+        if session.status == "active" { return Theme.violet }
+        return nil
     }
 }
 
@@ -875,7 +1099,7 @@ struct FreeTopicRequest {
     let topic: String
 }
 
-/// «Свободная тема»: context, mode and an optional topic. The sheet closes before the lesson starts.
+/// «Своя тема»: context, mode and an optional topic. The sheet closes before the lesson starts.
 struct FreeTopicSheet: View {
     let onStart: (FreeTopicRequest) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -896,8 +1120,8 @@ struct FreeTopicSheet: View {
                     VStack(alignment: .leading, spacing: 10) {
                         InputLabel(title: "Как тренируемся")
                         SelectionRow(selection: $mode, options: [
-                            SelectionOption(id: "learning", title: "С опорами", icon: "lightbulb"),
-                            SelectionOption(id: "call", title: "Созвон", icon: "phone")])
+                            SelectionOption(id: "learning", title: ModeCopy.title("learning"), icon: "lightbulb"),
+                            SelectionOption(id: "call", title: ModeCopy.title("call"), icon: "phone")])
                         Text(ModeCopy.explanation(mode)).font(.footnote).foregroundStyle(Theme.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -918,7 +1142,7 @@ struct FreeTopicSheet: View {
                 .padding(20)
             }
             .modifier(LiquidCanvas(intensity: 0.6))
-            .navigationTitle("Свободная тема")
+            .navigationTitle("Своя тема")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { SheetCloseButton { dismiss() } }
@@ -929,10 +1153,16 @@ struct FreeTopicSheet: View {
     }
 }
 
+/// Practice mode names and hints, equal to the web `MODE_LABEL` / `MODE_HINT` (MOTION-PASS 0.5.2 §8).
+/// «Созвон» alone is reserved for real calls (the «Созвоны» tab); partner text is hidden in both modes (§6),
+/// so the hints speak only of support and pressure.
 enum ModeCopy {
+    static func title(_ mode: String) -> String {
+        mode == "call" ? "Как на созвоне" : "С опорами"
+    }
     static func explanation(_ mode: String) -> String {
         mode == "call"
-            ? "Как настоящий созвон: слушаешь и отвечаешь. Текст можно открыть, если понадобится."
-            : "Собеседник говорит вслух, текст и подсказки рядом, когда нужны."
+            ? "Без подсказок и поблажек, в темпе настоящего созвона."
+            : "Подсказки под рукой, собеседник говорит проще — удобно пробовать новое."
     }
 }

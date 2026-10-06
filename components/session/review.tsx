@@ -65,7 +65,7 @@ function AnalysisDetails({ analysis }: { analysis: Analysis }) {
   const errors = (analysis.languageErrors ?? []).filter(error => error.impact !== 'minor');
   const debatable = (analysis.debatable ?? []).slice(0, 2);
   return <>
-    {moves.length > 0 && <section className={`surface ${styles.details}`} aria-labelledby="review-moves">
+    {moves.length > 0 && <section className={`surface ${styles.details}`} data-enter="" aria-labelledby="review-moves">
       <h3 id="review-moves">Ходы разговора</h3>
       <ul className={styles.moves}>{moves.map(move => {
         const meta = STRATEGY_MOVES.find(item => item.id === move.id);
@@ -78,7 +78,7 @@ function AnalysisDetails({ analysis }: { analysis: Analysis }) {
         </li>;
       })}</ul>
     </section>}
-    {(errors.length > 0 || !!analysis.minorErrorsIgnored) && <section className={`surface ${styles.details}`} aria-labelledby="review-language">
+    {(errors.length > 0 || !!analysis.minorErrorsIgnored) && <section className={`surface ${styles.details}`} data-enter="" aria-labelledby="review-language">
       <h3 id="review-language">Английский</h3>
       {errors.length > 0 && <ul className={styles.errors}>{errors.map((error, index) => <li key={index}>
         <span className={styles.errorPair}><s lang="en">{error.quote}</s><ArrowRightIcon size={14} aria-hidden="true" /><span className="visually-hidden">лучше:</span><strong lang="en">{error.correction}</strong></span>
@@ -86,7 +86,7 @@ function AnalysisDetails({ analysis }: { analysis: Analysis }) {
       </li>)}</ul>}
       {!!analysis.minorErrorsIgnored && <p className="caption">Мелких неточностей не трогаем: {analysis.minorErrorsIgnored}. Они не мешают смыслу.</p>}
     </section>}
-    {debatable.length > 0 && <section className={`surface ${styles.details}`} aria-labelledby="review-debatable">
+    {debatable.length > 0 && <section className={`surface ${styles.details}`} data-enter="" aria-labelledby="review-debatable">
       <h3 id="review-debatable">Спорные моменты</h3>
       {debatable.map((item, index) => <div key={index} className={styles.debatable}>
         <strong>{item.title}</strong>{item.quote && <blockquote lang="en" className={styles.quote}>{item.quote}</blockquote>}
@@ -107,7 +107,7 @@ export function AnalysisWaiting() {
   const text = stage === 'queued' ? 'Разбор в очереди. Твои ответы сохранены.' : stage === 'evaluating' ? 'Сравниваю реплики и выбираю ближайшую правку.'
     : stage === 'waiting-retry' ? 'Сервис задержал разбор — попробую ещё раз сам.' : 'Проверяю смысл, английский и то, как ты использовал слова собеседника.';
   const started = Date.parse(s.processing?.startedAt || s.updatedAt);
-  return <section className={`surface ${styles.waiting}`} aria-labelledby="analysis-title">
+  return <section className={`surface ${styles.waiting}`} data-enter="" aria-labelledby="analysis-title">
     <div className={styles.waitingMascot}><Companion state="thinking" status="Готовлю разбор" /></div>
     <h2 id="analysis-title">Разбираю твою попытку</h2>
     <p aria-live="polite" className="muted">{text}</p>
@@ -127,7 +127,7 @@ function Outcome({ session }: { session: Session }) {
   const result = app.data.state?.progression?.recentResults.find(item => item.sessionId === session.id) ?? practiceResult(session);
   const fresh = app.lesson.lastCompletedId === session.id && !session.retryDeferred;
   const [celebrate] = useState(() => fresh ? 1 : 0);
-  return <section className={`surface ${styles.outcome}`} data-testid="session-outcome" aria-labelledby={`outcome-${session.id}`}>
+  return <section className={`surface ${styles.outcome}`} data-enter="" data-testid="session-outcome" aria-labelledby={`outcome-${session.id}`}>
     <div className={styles.outcomeMascot}><Companion emotion={fresh ? 'love' : 'proud'} celebrate={celebrate} celebrateEmotion="love" status="Занятие сохранено" /></div>
     <div className={styles.outcomeCopy}>
       <h2 id={`outcome-${session.id}`}>{session.retryDeferred ? 'Новую попытку сделаешь позже.' : result?.improvedRetry ? 'Твоя мысль стала сильнее.' : 'Ещё одна практика за плечами.'}</h2>
@@ -137,9 +137,11 @@ function Outcome({ session }: { session: Session }) {
           <span>Навыков с наблюдениями: {Math.min(result.quality.observedTargets, result.quality.targetCount)} из {result.quality.targetCount}</span>
           {result.quality.independentSuccesses > 0 && <span>Самостоятельно: {result.quality.independentSuccesses}</span>}</>}
       </p>
+      {/* MOTION-PASS-0.5.2 §8.5: right after finishing, «Следующий шаг» leads to Сегодня (the plan picks it up there);
+          a finished lesson opened later is simply left with «На главную». One action each, never both to the same place. */}
       <div className={styles.outcomeActions}>
-        <button type="button" className="button primary" onClick={() => app.go('practice')}>Выбрать следующую практику<ArrowRightIcon size={17} /></button>
-        <button type="button" className="text-button muted" onClick={() => app.go('today')}>На сегодня всё</button>
+        {fresh ? <button type="button" className="button primary" data-testid="outcome-next" onClick={() => app.go('today')}>{CTA.next}<ArrowRightIcon size={17} /></button>
+          : <button type="button" className="button secondary" data-testid="outcome-home" onClick={() => app.go('today')}>{CTA.home}</button>}
       </div>
     </div>
   </section>;
@@ -178,7 +180,7 @@ function Aside({ session }: { session: Session }) {
   const [editing, setEditing] = useState<string | null>(null);
   const busy = !!lesson.busy || lesson.voice.state === 'listening' || lesson.voice.state === 'transcribing';
   const caret = <CaretRightIcon size={14} weight="bold" className={styles.caret} />;
-  return <aside className={`surface ${styles.aside}`} aria-label="Детали разбора">
+  return <aside className={`surface ${styles.aside}`} data-enter="" aria-label="Детали разбора">
     <section className={styles.asideBlock}><h3>Над чем работать дальше</h3><p>{a.nextFocus}</p><span className="caption">{shortDate(a.createdAt)}</span></section>
     {a.evidence.length > 0 && <details className={styles.asideBlock}><summary>Наблюдения по навыкам · {a.evidence.length}{caret}</summary>
       <ul className={styles.observations}>{a.evidence.map((item, index) => <li key={index}><strong>{skillLabel(item.skill)}</strong>
@@ -220,22 +222,23 @@ export function ReviewView() {
   const showDock = retryAllowed && (needsRetry || optionalRetry);
   const audioReady = !!app.data.status?.audio.configured;
   const capturing = voice.state === 'listening' || voice.state === 'transcribing';
-  const retryDraft = lesson.draftFor(s.id, 'retry');
+  // Any unsent attempt (or a reply left over from the conversation) would be lost by finishing; a pushback draft is not.
+  const unsentDraft = lesson.draftFor(s.id, 'retry') ?? lesson.draftFor(s.id, 'message');
   const blockedReason = capturing ? 'Сначала закончи запись.' : voice.hasUnuploadedRecording ? 'Сначала распознай или удали запись.' : lesson.busy ? 'Подожди, идёт действие.' : null;
   const emotion: MascotEmotion = hasImprovedRetry || s.status === 'completed' ? 'proud' : a.priorities.length ? 'curious' : 'happy';
   const headline = hasImprovedRetry ? 'Вот, уже сильнее.' : s.retryDeferred ? 'Осталась одна попытка.' : !a.priorities.length ? 'Разбор готов.' : textActivity ? 'Сделаем твой ответ сильнее.' : 'Сделаем одну реплику сильнее.';
   const doComplete = (defer: boolean) => void lesson.sessionAction('complete', { ...(lesson.comfort ? { comfort: lesson.comfort } : {}), ...(defer ? { deferRetry: true } : {}) });
+  // MOTION-PASS-0.5.2 §8.5: confirm only when an unsent draft would be lost; otherwise finish / park at once.
+  const requestComplete = (intent: 'complete' | 'defer') => { if (unsentDraft?.text.trim()) setFinishIntent(intent); else doComplete(intent === 'defer'); };
   const patternTitle = (id?: string | null) => id ? app.data.state?.patterns?.find(pattern => pattern.id === id)?.title : undefined;
 
   return <div className={styles.reviewLayout}>
-    <FinishDialog intent={finishIntent} textActivity={textActivity} hasDraft={!!retryDraft?.text.trim()}
+    <FinishDialog intent={finishIntent} textActivity={textActivity}
       onCancel={() => setFinishIntent(null)}
-      onConfirm={() => { const intent = finishIntent; setFinishIntent(null); doComplete(intent === 'defer'); }}
-      onSendAndFinish={() => setFinishIntent(null)}
       onDiscardAndConfirm={() => { const intent = finishIntent; setFinishIntent(null); lesson.discardDraft(); doComplete(intent === 'defer'); }} />
     <div className={styles.reviewMain}>
       {s.status === 'completed' && <Outcome session={s} />}
-      <section className={`surface ${styles.intro}`} aria-labelledby="review-title">
+      <section className={`surface ${styles.intro}`} data-enter="" aria-labelledby="review-title">
         {/* A completed lesson already has its outcome card with the mascot: no second headline or mascot (audit U-30). */}
         {s.status === 'completed' ? <h2 id="review-title" className={styles.blockTitle}>Разбор</h2> : <div className={styles.introHead}>
           <div className={styles.introMascot}><Companion emotion={emotion} celebrate={celebrate} celebrateEmotion="joy" confetti={false} status={hasImprovedRetry ? 'Улучшение подтверждено' : 'Разбор готов'} /></div>
@@ -250,7 +253,7 @@ export function ReviewView() {
 
       {a.priorities.map((priority, index) => {
         const pattern = patternTitle(priority.patternId);
-        return <section key={index} className={`surface ${styles.priority}`} aria-labelledby={`priority-${index}`}>
+        return <section key={index} className={`surface ${styles.priority}`} data-enter="" aria-labelledby={`priority-${index}`}>
           <div className={styles.priorityHead}>
             <span className={styles.priorityNumber} aria-hidden="true">{index + 1}</span>
             <div className={styles.priorityTitle}><h3 id={`priority-${index}`}>{priority.title}</h3>
@@ -271,7 +274,7 @@ export function ReviewView() {
         const id = retry.id ?? String(index);
         const improved = retry.improved === true;
         const pushbackOpen = improved && retry.pushback;
-        return <section key={id} className={`surface ${styles.retry}`} data-improved={improved} data-glow={lesson.glowRetryId === id} aria-labelledby={`retry-${id}`}>
+        return <section key={id} className={`surface ${styles.retry}`} data-improved={improved} data-glow={lesson.glowRetryId === id} data-enter="" aria-labelledby={`retry-${id}`}>
           <div className={styles.retryHead}>
             {improved ? <CheckCircleIcon size={20} weight="fill" /> : <ArrowsClockwiseIcon size={19} />}
             <h3 id={`retry-${id}`}>Попытка {index + 1}</h3>
@@ -284,13 +287,13 @@ export function ReviewView() {
         </section>;
       })}
 
-      {showDock && <div className={styles.retryPrompt}>
+      {showDock && <div className={styles.retryPrompt} data-enter="">
         <h3>Теперь твоя версия{needsRetry ? '' : <span> · по желанию</span>}</h3>
         <p className="caption">{textActivity ? 'Вырази мысль заново — сравню с исходной попыткой.' : 'Скажи важный момент своими словами — сравню с исходной попыткой.'}</p>
       </div>}
       <UnuploadedRecording />
 
-      {s.status === 'review' && <section className={`surface ${styles.finish}`} aria-label="Завершение">
+      {s.status === 'review' && <section className={`surface ${styles.finish}`} data-enter="" aria-label="Завершение">
         <div className={styles.comfort} role="radiogroup" aria-label="Как ощущалось занятие: от 1 (сложно) до 5 (комфортно)">
           <span className={styles.comfortLabel} aria-hidden="true">Как ощущалось занятие?</span>
           <div className={styles.comfortScale}>
@@ -300,19 +303,19 @@ export function ReviewView() {
           </div>
         </div>
         {completion.canComplete && <div className={styles.finishActions}>
-          <button type="button" className="button primary large" data-testid="request-complete" disabled={!!blockedReason} onClick={() => setFinishIntent('complete')}>{CTA.complete}<CheckIcon size={18} /></button>
+          <button type="button" className="button primary large" data-testid="request-complete" disabled={!!blockedReason} onClick={() => requestComplete('complete')}>{CTA.complete}<CheckIcon size={18} /></button>
           {blockedReason && <span className="disabled-reason">{blockedReason}</span>}
           {retryAllowed && !needsRetry && !optionalRetry && <button type="button" className="text-button" onClick={() => setOptionalRetry(true)}>Попробовать ещё раз (по желанию)</button>}
         </div>}
         {needsRetry && <div className={styles.finishActions}>
           <p className="caption">{completion.reason}</p>
-          <button type="button" className="text-button muted" data-testid="request-defer" disabled={!!blockedReason} onClick={() => setFinishIntent('defer')}>{CTA.defer} — вернусь к попытке позже</button>
+          <button type="button" className="text-button muted" data-testid="request-defer" disabled={!!blockedReason} onClick={() => requestComplete('defer')}>{CTA.defer}</button>
         </div>}
       </section>}
       <AnalysisDetails analysis={a} />
       <SpeechTimingPanel session={s} />
-      <p className="footnote">Произношение и акцент по тексту не оцениваются.</p>
-      {showDock && <div className={styles.dockArea}>
+      <p className="footnote" data-enter="">Произношение и акцент по тексту не оцениваются.</p>
+      {showDock && <div className={styles.dockArea} data-enter="chrome">
         <Dock intent="retry" placeholder="My improved reply…" label="Твоя улучшенная попытка" sendLabel={CTA.retry}
           onSend={() => void lesson.sessionAction('retry', {}, document.querySelector('[data-testid="session-dock"]'))}
           rows={s.lesson.activity === 'writing' ? 6 : 1} showMic={audioReady && s.lesson.activity !== 'writing'}
@@ -330,7 +333,7 @@ export function ErrorBanner() {
   const [confirm, setConfirm] = useState(false);
   if (s.status !== 'error') return null;
   const retryCount = s.retries.length;
-  return <div className="banner error" role="alert">
+  return <div className="banner error" role="alert" data-enter="">
     <WarningCircleIcon size={18} weight="fill" />
     <span className="banner-copy">
       <strong>{s.analysis ? 'Пересчитать разбор не получилось' : 'Разбор не получился'}</strong>

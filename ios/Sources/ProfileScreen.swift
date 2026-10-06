@@ -15,19 +15,22 @@ struct ProfileScreen: View {
 
     var body: some View {
         NavigationStack {
+            // Staircase: each section is one step; its card fades in while the rows rise (EntranceFill).
             List {
-                profileSection
-                factsSection
-                appearanceSection
-                voiceSection
-                remindersSection
-                limitsSection
-                dataSection
-                aboutSection
+                introSection.entrance(0)
+                profileSection.entrance(1)
+                factsSection.entrance(2)
+                appearanceSection.entrance(3)
+                voiceSection.entrance(4)
+                remindersSection.entrance(5)
+                limitsSection.entrance(6)
+                dataSection.entrance(7)
+                aboutSection.entrance(8)
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .textCase(nil)
+            .entranceStage()
             .modifier(LiquidCanvas())
             .navigationTitle("Профиль")
             .navigationBarTitleDisplayMode(.large)
@@ -78,22 +81,31 @@ struct ProfileScreen: View {
         Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
     }
 
+    // MARK: Intro
+
+    /// The screen's one companion (wink) next to the same lede the web shows (MOTION-PASS-0.5.2 §3).
+    private var introSection: some View {
+        Section {
+            ScreenIntro(text: "Цели, голос, напоминания и твои данные.", mood: .wink)
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+        }
+    }
+
     // MARK: Profile
 
     @ViewBuilder private var profileSection: some View {
         let profile = client.state?.profile
         Section {
-            HStack(alignment: .center, spacing: 14) {
-                VoiceOrb(mode: .ready, level: 0, mood: .happy, statusDescription: "Твой собеседник", interactive: false)
-                    .frame(width: 60, height: 60)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(profile?.name ?? "Профиль").font(TypeScale.title2)
-                    Text("Практика \(RuFormat.minutes(profile?.dailyMinutes ?? 15)) в день")
-                        .font(.subheadline).foregroundStyle(Theme.inkSecondary)
-                }
-                Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(profile?.name ?? "Профиль").font(TypeScale.title2)
+                Text("Практика \(RuFormat.minutes(profile?.dailyMinutes ?? 15)) в день")
+                    .font(.subheadline).foregroundStyle(Theme.inkSecondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 4)
+            .accessibilityElement(children: .combine)
             if let goals = profile?.goals, !goals.isEmpty { profileLine("Цели", goals) }
             if let work = profile?.professionalContext, !work.isEmpty { profileLine("Работа", work) }
             if let relocation = profile?.relocation, !relocation.isEmpty { profileLine("Переезд", relocation) }
@@ -103,7 +115,7 @@ struct ProfileScreen: View {
             }
             .disabled(profile == nil)
         }
-        .listRowBackground(Theme.solid)
+        .listRowBackground(EntranceFill(index: 1))
     }
 
     private func profileLine(_ title: String, _ value: String) -> some View {
@@ -115,22 +127,20 @@ struct ProfileScreen: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// The playbook lives on «Созвоны»; here it is one row (no duplicated block).
+    /// «Мой плейбук» lives on «Созвоны»; here it is one row (no duplicated block), named as on the web.
     @ViewBuilder private var factsSection: some View {
         if let facts = client.state?.profileFacts {
             let suggested = facts.filter { $0.status == "suggested" }.count
-            let accepted = facts.filter { $0.status == "accepted" }.count
             Section {
                 NavigationLink {
                     FactsView(facts: facts)
                 } label: {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Факты о тебе").font(.body)
-                            Text(suggested > 0
-                                 ? FeatureFormat.count(suggested, "новое предложение", "новых предложения", "новых предложений") + " — проверь"
-                                 : FeatureFormat.count(accepted, "факт", "факта", "фактов") + " в плейбуке")
+                            Text("Мой плейбук").font(.body)
+                            Text(PlaybookCopy.detail(facts))
                                 .font(.footnote).foregroundStyle(Theme.inkSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 8)
                         if suggested > 0 {
@@ -139,12 +149,10 @@ struct ProfileScreen: View {
                         }
                     }
                 }
-            } header: {
-                sectionHeader("Что я знаю о тебе")
             } footer: {
-                Text("Факты из твоих созвонов. Принятые помогают собеседнику и разбору.")
+                Text("Принятые факты помогают собеседнику и разбору.")
             }
-            .listRowBackground(Theme.solid)
+            .listRowBackground(EntranceFill(index: 2))
         }
     }
 
@@ -162,7 +170,7 @@ struct ProfileScreen: View {
         } footer: {
             Text("Только на этом устройстве")
         }
-        .listRowBackground(Theme.solid)
+        .listRowBackground(EntranceFill(index: 3))
     }
 
     // MARK: Voice and limits
@@ -193,9 +201,9 @@ struct ProfileScreen: View {
         } footer: {
             Text(client.status?.audio.configured == true
                  ? "Реплики звучат автоматически. Звук играет даже в беззвучном режиме — это учебное приложение."
-                 : "Голос подключается на компьютере: Настройки → OpenAI API-ключ. После этого потяни экран вниз.")
+                 : "Голос подключается на компьютере: Профиль → Голос. После этого потяни экран вниз.")
         }
-        .listRowBackground(Theme.solid)
+        .listRowBackground(EntranceFill(index: 4))
     }
 
     private var limitsSection: some View {
@@ -216,7 +224,7 @@ struct ProfileScreen: View {
         } header: {
             sectionHeader("Тренер и лимиты")
         }
-        .listRowBackground(Theme.solid)
+        .listRowBackground(EntranceFill(index: 6))
     }
 
     // MARK: Reminders
@@ -244,7 +252,7 @@ struct ProfileScreen: View {
                 Text("Выбери одно или несколько удобных времён. Напоминания приходят по местному времени этого iPhone.")
             }
         }
-        .listRowBackground(Theme.solid)
+        .listRowBackground(EntranceFill(index: 5))
     }
 
     @ViewBuilder private var reminderPermissionNote: some View {
@@ -328,13 +336,14 @@ struct ProfileScreen: View {
         } footer: {
             Text("Практика хранится на твоём сервере. Можно выгрузить копию или начать с чистого листа.")
         }
-        .listRowBackground(Theme.solid)
+        .listRowBackground(EntranceFill(index: 7))
     }
 
     private var aboutSection: some View {
         Section {
             HStack(spacing: 12) {
-                BrandMark(size: 34)
+                // «О приложении»: the brand is the companion (calm), no letter mark.
+                BrandMark(size: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(AppVersion.display).font(.subheadline.weight(.semibold))
                     if let server = client.status?.app?.version ?? client.state?.app?.version, !server.isEmpty {
@@ -346,7 +355,7 @@ struct ProfileScreen: View {
         } footer: {
             Text(SigningInfo.note)
         }
-        .listRowBackground(Theme.solid)
+        .listRowBackground(EntranceFill(index: 8))
     }
 }
 
@@ -409,7 +418,7 @@ private struct QuotaSection: View {
 
 enum AppVersion {
     static var display: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.0"
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.2"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
         return "Smooth Talk " + short + (build.isEmpty ? "" : " (\(build))")
     }
@@ -573,28 +582,33 @@ private struct ProfileEditor: View {
     }
 }
 
-/// Typed confirmation: the server accepts only the literal word DELETE.
+/// Typed confirmation: the server accepts only the literal word DELETE. The warning says exactly what goes and what
+/// stays (MOTION-PASS 0.5.2 §8.2, the same text on the PC), with the existing export one tap away.
 private struct ResetSheet: View {
     @EnvironmentObject private var client: TrainingClient
     @Environment(\.dismiss) private var dismiss
     @State private var typed = ""
+    @State private var exportURL: URL? = nil
+    @State private var exporting = false
+    @State private var exportError: String? = nil
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Удалятся все занятия, разборы, записи, созвоны и прогресс на сервере. Это не отменить.")
+                Text("Удалятся занятия, записи, созвоны с разборами, паттерны, тренировки и результат теста уровня. Профиль и принятые факты останутся. Отменить нельзя.")
                     .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                exportLink
                 Text("Чтобы подтвердить, введи DELETE.").font(.footnote).foregroundStyle(Theme.inkSecondary)
                 TextField("DELETE", text: $typed)
                     .textInputAutocapitalization(.characters).autocorrectionDisabled()
                     .padding(14)
                     .background(Theme.well, in: RoundedRectangle(cornerRadius: Radius.input, style: .continuous))
-                Button {
+                Button(role: .destructive) {
                     Task {
                         let done = await client.resetAllTraining(confirmation: typed.trimmingCharacters(in: .whitespacesAndNewlines))
                         if done { dismiss() }
                     }
                 } label: {
-                    HStack { Text("Удалить всё"); Spacer(); Image(systemName: "trash") }
+                    HStack { Text("Удалить навсегда"); Spacer(); Image(systemName: "trash") }
                 }
                 .buttonStyle(PrimaryButton())
                 .disabled(typed.trimmingCharacters(in: .whitespacesAndNewlines) != "DELETE" || client.busy)
@@ -602,10 +616,48 @@ private struct ResetSheet: View {
             }
             .padding(24)
             .modifier(LiquidCanvas(intensity: 0.5))
-            .navigationTitle("Удалить практику")
+            .navigationTitle("Удалить всю практику")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } } }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    /// «Сначала скачать копию»: the same export as «Выгрузить данные», then the system share sheet.
+    @ViewBuilder private var exportLink: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let exportURL {
+                ShareLink(item: exportURL) {
+                    Label("Поделиться копией", systemImage: "square.and.arrow.up")
+                }
+            } else {
+                Button {
+                    Task { await prepareExport() }
+                } label: {
+                    Label(exporting ? "Готовлю файл…" : "Сначала скачать копию", systemImage: "arrow.down.doc")
+                }
+                .disabled(exporting || client.busy)
+            }
+            if let exportError {
+                Text(exportError).font(.footnote).foregroundStyle(Theme.danger).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .font(.subheadline.weight(.semibold))
+        .buttonStyle(PressButton())
+        .foregroundStyle(Theme.violet)
+    }
+
+    private func prepareExport() async {
+        exporting = true
+        exportError = nil
+        let url = await client.exportData()
+        exporting = false
+        if let url {
+            exportURL = url
+        } else {
+            // Shown here, inside the sheet: the shell's alert cannot appear over it.
+            exportError = client.error ?? "Не удалось подготовить файл. Попробуй ещё раз."
+            client.error = nil
+        }
     }
 }

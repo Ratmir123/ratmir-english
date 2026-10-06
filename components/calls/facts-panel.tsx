@@ -1,16 +1,23 @@
 'use client';
 
 /**
- * Playbook in Profile: facts suggested by call reviews (accept/reject) and accepted ones grouped by kind (remove).
- * Rendered inside the host's surface, so it brings only headings and hairline-separated rows (no boxes of its own).
+ * «Мой плейбук»: facts suggested by call reviews (accept/reject) and accepted ones grouped by kind. «Убрать» hides an
+ * accepted fact at once with a toast «Факт убран · Вернуть» (≈ 6 s); only when that window ends is it rejected on the server
+ * (the MOTION-PASS-0.5.2 §8.4 undo). Rendered inside the host's surface, so it brings only headings and hairline-separated
+ * rows (no boxes of its own).
  */
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { CheckIcon, XIcon } from '@phosphor-icons/react';
 import { api } from '@/lib/client/api';
 import type { ProfileFact } from '@/lib/calls/types';
+import { AppContext } from '../app/app-context';
+import { createUndoQueue, UNDO_MS, usePendingRemovals } from '../app/undo-queue';
 import { cx, kit, Spinner } from './kit';
 import { FACT_KIND_LABEL, FACT_KIND_ORDER, formatClock } from './format';
 import styles from './patterns.module.css';
+
+/** Accepted facts inside their «Вернуть» window. Outside the panel, so a removal survives leaving the screen. */
+const removals = createUndoQueue(UNDO_MS);
 
 function sourceLabel(fact: ProfileFact): string {
   if (fact.source.type === 'call') return `из звонка${fact.at !== null ? `, ${formatClock(fact.at)}` : ''}`;
@@ -28,11 +35,13 @@ function FactMeta({ fact, withKind }: { fact: ProfileFact; withKind?: boolean })
 }
 
 export function FactsPanel({ facts, onChanged }: { facts: ProfileFact[]; onChanged: () => void }) {
+  const app = useContext(AppContext);
   const [local, setLocal] = useState<ProfileFact[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const removing = usePendingRemovals(removals);
   useEffect(() => { setLocal(null); }, [facts]);
-  const list = local ?? facts;
+  const list = (local ?? facts).filter(fact => !removing.has(fact.id));
   const pending = list.filter(fact => fact.status === 'suggested');
   const accepted = list.filter(fact => fact.status === 'accepted');
   const groups = FACT_KIND_ORDER.map(kind => ({ kind, items: accepted.filter(fact => fact.kind === kind) })).filter(group => group.items.length);
@@ -47,11 +56,28 @@ export function FactsPanel({ facts, onChanged }: { facts: ProfileFact[]; onChang
     finally { setBusy(null); }
   }
 
+  /** Gone at once; the server hears about it only when «Вернуть» was not pressed in time. */
+  function remove(fact: ProfileFact) {
+    if (!app) { void decide(fact, 'reject'); return; } // outside the app shell there is no toast to undo with
+    setError(null);
+    const scheduled = removals.schedule(fact.id, async () => {
+      try {
+        const result = await api<{ profileFacts: ProfileFact[] }>('facts', { factId: fact.id, decision: 'reject' });
+        setLocal(result.profileFacts);
+        onChanged();
+      } catch (reason) {
+        app.toast.error('Не получилось убрать факт — он снова в плейбуке.');
+        throw reason;
+      }
+    });
+    if (scheduled) app.toast.notice('Факт убран', { label: 'Вернуть', run: () => { removals.cancel(fact.id); }, life: UNDO_MS });
+  }
+
   return (
     <section className={cx(kit.scope, styles.panel)} aria-labelledby="playbook-title">
       <div className={styles.panelHead}>
         <h2 id="playbook-title">Мой плейбук</h2>
-        <p>Факты о тебе, которые знают собеседник и тренер: ставки, кейсы, цифры, что конфиденциально. Сюда попадает только то, что ты подтвердил.</p>
+        <p>Что о тебе знают собеседник и тренер: ставки, кейсы, цифры, что конфиденциально. Сюда попадает только то, что ты подтвердил.</p>
       </div>
       {error ? <p className={styles.errorLine} role="alert">{error}</p> : null}
       {pending.length ? (
@@ -90,7 +116,7 @@ export function FactsPanel({ facts, onChanged }: { facts: ProfileFact[]; onChang
                   <FactMeta fact={fact} />
                 </div>
                 <div className={styles.factActions}>
-                  <button type="button" className={cx(kit.btn, kit.quiet, kit.danger, kit.small)} disabled={busy === fact.id} onClick={() => void decide(fact, 'reject')}
+                  <button type="button" className={cx(kit.btn, kit.quiet, kit.danger, kit.small)} disabled={busy === fact.id} onClick={() => remove(fact)}
                     aria-label={`Убрать из плейбука: ${fact.text}`}>
                     {busy === fact.id ? <Spinner /> : <XIcon size={14} weight="bold" />}Убрать
                   </button>

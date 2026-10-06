@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum VoiceOrbMode { case ready, listening, speaking, thinking }
 
@@ -158,9 +159,11 @@ struct MascotView: View {
     private func stage(size: CGSize) -> some View {
         let side = max(1, min(size.width, size.height))
         let live = isLive(side: side)
-        let touchable = interactive && side >= MascotMetrics.thumbnailSide
+        let touchable = interactive && side >= MascotMetrics.touchSide
+        // Small companions (rows, cards, intros) live at 30 fps; the physics steps at a fixed 1/240 s either way.
+        let interval = side < MascotMetrics.fullRateSide ? 1.0 / 30.0 : 1.0 / 60.0
         return ZStack {
-            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !live)) { context in
+            TimelineView(.animation(minimumInterval: interval, paused: !live)) { context in
                 MascotRenderView(pose: renderFrame(date: context.date, side: side, live: live), side: side)
             }
             if touchable {
@@ -311,8 +314,8 @@ struct MascotView: View {
     }
 }
 
-/// Pauses the loop while a ScrollView keeps the mascot alive off screen (iOS 18+).
-/// iOS 17 relies on onDisappear and scene phase.
+/// Pauses the loop while a ScrollView keeps the mascot alive off screen. iOS 17 compares the mascot's
+/// frame with the screen (a stack never calls onDisappear for a row scrolled away).
 private struct MascotScrollVisibility: ViewModifier {
     @Binding var onScreen: Bool
 
@@ -322,7 +325,12 @@ private struct MascotScrollVisibility: ViewModifier {
                 onScreen = visible
             }
         } else {
-            content
+            content.onGeometryChange(for: Bool.self) { proxy in
+                let frame = proxy.frame(in: .global)
+                return frame.width > 0 && frame.height > 0 && frame.intersects(UIScreen.main.bounds)
+            } action: { visible in
+                onScreen = visible
+            }
         }
     }
 }

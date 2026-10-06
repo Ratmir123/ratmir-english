@@ -202,6 +202,7 @@ async function handle(req: NextRequest, route: Route) {
         const previous = value.turns.findIndex(t => t.id === data.id);
         if (previous >= 0 && value.turns.slice(previous + 1).some(t => t.role === 'assistant')) return json(safeSession(value));
         if (previous < 0 && value.turns.at(-1)?.role === 'user') throw new ApiError('Сначала повтори ответ собеседника на сохранённую реплику.', 409);
+        // Partner text is per line (MOTION-PASS-0.5.2 §6): textVisible says whether the line he answers was on screen.
         if (data.textVisible) {
           const heard = [...value.turns].reverse().find(t => t.role === 'assistant');
           if (heard) heard.support = Math.max(heard.support, 1) as 1 | 2 | 3;
@@ -214,7 +215,9 @@ async function handle(req: NextRequest, route: Route) {
         value.processing = { stage: 'responding', startedAt: new Date().toISOString() }; saveSession(value);
         try {
           const text = await respond(value, getAppState().profile);
-          value.turns.push({ id: randomUUID(), role: 'assistant', text, source: 'text', support: data.textVisible ? 1 : 0, createdAt: new Date().toISOString() });
+          // A new partner line always starts hidden and unsupported: only its own reveal (show-text) or the next
+          // message's textVisible may mark it, never the previous line's visibility.
+          value.turns.push({ id: randomUUID(), role: 'assistant', text, source: 'text', support: 0, createdAt: new Date().toISOString() });
           value.support = 0; value.processing = undefined; saveSession(value);
         } catch (error) {
           value.error = error instanceof Error ? error.message : 'Собеседник не смог ответить.'; value.processing = undefined;
@@ -233,10 +236,13 @@ async function handle(req: NextRequest, route: Route) {
         if (value.baseline && ['active', 'error'].includes(value.status)) {
           throw new ApiError('В стартовой пробе сначала слушаем реплику. После разбора её текст будет доступен.', 409);
         }
+        // The revealed line is marked as read. A client may name it (turnId), so a reveal that arrives after the next
+        // message can never mark the newer, still hidden line; without it the latest partner line is meant.
+        const data = z.object({ turnId: z.string().max(100).optional() }).parse(await body(req).catch(() => ({})));
         if (value.status === 'active') {
-          const turn = [...value.turns].reverse().find(t => t.role === 'assistant');
-          if (turn) turn.support = Math.max(turn.support, 1) as 1 | 2 | 3;
-          saveSession(value);
+          const turn = data.turnId ? value.turns.find(t => t.id === data.turnId && t.role === 'assistant')
+            : [...value.turns].reverse().find(t => t.role === 'assistant');
+          if (turn && turn.support < 1) { turn.support = 1; saveSession(value); }
         }
         return json(safeSession(value));
       }

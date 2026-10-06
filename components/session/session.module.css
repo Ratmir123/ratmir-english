@@ -27,18 +27,27 @@ details[open] > summary .caret { transform: rotate(90deg); }
 
 /* ---------- Conversation ---------- */
 .conversation { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
-.stage { display: grid; justify-items: center; gap: 10px; padding: 24px 24px 20px; text-align: center; min-width: 0;
-  transition: box-shadow 200ms var(--ease-out); }
-.stage[data-voice='listening'] { box-shadow: inset 0 0 0 2px var(--accent-lime), var(--e1); }
+.stage { display: grid; justify-items: center; gap: 10px; padding: 24px 24px 20px; text-align: center; min-width: 0; }
+/* Recording outline: a static ring that only fades (opacity), never an animated box-shadow. */
+.stage::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--accent-lime); opacity: 0; transition: opacity 240ms var(--ease-out);
+}
+.stage[data-voice='listening']::after { opacity: 1; }
 .stageMascot { width: 200px; height: 200px; }
 .voiceState { font-family: var(--font-display); font-size: 19px; font-weight: 800; }
 .partnerLine { display: grid; justify-items: center; gap: 12px; width: 100%; margin-top: 4px; padding-top: 16px; border-top: 1px solid var(--hairline); }
 .partnerText { max-width: 60ch; font-size: 20px; line-height: 1.55; text-wrap: pretty; overflow-wrap: break-word; }
-.partnerHidden { max-width: 52ch; color: var(--text-secondary); }
+.partnerHidden { max-width: 52ch; color: var(--text-secondary); animation: quiet-in 320ms var(--ease-out) both; }
 .partnerActions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; align-items: center; }
 .stageBanner { width: 100%; text-align: left; }
 .seed { display: grid; gap: 4px; width: 100%; max-width: 640px; margin: 0; padding: 12px 16px; border-radius: 14px; background: var(--accent-cyan-soft); text-align: left; }
 .seed blockquote { margin: 0; font-size: var(--text-17); font-weight: 600; overflow-wrap: break-word; }
+.seedHidden { color: var(--text-secondary); font-size: var(--text-15); animation: quiet-in 320ms var(--ease-out) both; }
+/* Partner text (MOTION-PASS-0.5.2 §6) arrives hidden; a revealed line settles in out of a soft blur, a hidden one simply fades. */
+.revealed { animation: text-reveal 420ms var(--ease-out) both; }
+@keyframes text-reveal { from { opacity: 0; transform: translate3d(0, 6px, 0); filter: blur(4px); } }
+@keyframes quiet-in { from { opacity: 0; } }
 
 .material, .prompt { display: grid; gap: 10px; padding: 22px 24px; min-width: 0; }
 .material[data-embedded='true'] { padding: 0 0 12px; }
@@ -60,6 +69,7 @@ details[open] > summary .caret { transform: rotate(90deg); }
 .turns { list-style: none; display: grid; gap: 14px; padding: 2px 0 16px; }
 .turns li { display: grid; gap: 2px; min-width: 0; justify-items: start; }
 .turns li > p { font-size: var(--text-15); line-height: 1.55; overflow-wrap: break-word; }
+.turns li > p.turnHidden { color: var(--text-secondary); }
 .turns li audio { width: 100%; height: 36px; margin-top: 4px; }
 .speaker { font-size: var(--text-12); font-weight: 700; color: var(--text-secondary); }
 .turns li[data-role='user'] .speaker { color: var(--accent-violet-ink); }
@@ -67,8 +77,13 @@ details[open] > summary .caret { transform: rotate(90deg); }
 
 /* ---------- Dock (floating glass chrome) ---------- */
 .dockArea { position: sticky; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 12; display: grid; gap: 6px; }
-.dock { display: grid; gap: 8px; padding: 10px 10px 8px; border-radius: 30px; --glass-fill: var(--surface-glass-strong); }
-.dock[data-listening='true'] { box-shadow: inset 0 1px 0 var(--surface-glass-highlight), inset 0 0 0 1.5px var(--accent-lime), var(--e3); }
+.dock { display: grid; gap: 8px; padding: 10px 10px 8px; border-radius: 30px; --glass-fill: var(--surface-glass-strong); --caption-gap: 8px; }
+/* Recording edge fades in on its own layer: the glass and its backdrop are not repainted for it. */
+.dock::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 1.5px var(--accent-lime); opacity: 0; transition: opacity 240ms var(--ease-out);
+}
+.dock[data-listening='true']::after { opacity: 1; }
 .dockRow { display: flex; align-items: flex-end; gap: 10px; }
 .field { flex: 1; min-width: 0; min-height: 48px; max-height: 320px; padding: 12px 16px; border-radius: 22px; resize: none; font-size: var(--text-17); line-height: 1.45;
   background: var(--surface-solid); border: 1px solid var(--surface-glass-hairline); }
@@ -80,17 +95,23 @@ details[open] > summary .caret { transform: rotate(90deg); }
 .dockError span { flex: 1; min-width: 0; }
 .finishReason { padding: 0 14px; }
 
+.micWrap { position: relative; display: grid; place-items: center; flex-shrink: 0; width: 56px; height: 56px; }
+.micWrap[data-size='small'] { width: 44px; height: 44px; }
 .mic {
-  --level: 0;
   position: relative; display: grid; place-items: center; flex-shrink: 0; width: 56px; height: 56px; border-radius: 50%;
   background: var(--cta-bg); color: var(--cta-fg); box-shadow: var(--cta-glow);
-  transition: border-radius 220ms var(--ease-out), transform var(--press-ms) var(--ease-out), background-color 200ms var(--ease-out), box-shadow 120ms linear;
+  transition: border-radius 220ms var(--ease-out), transform var(--press-ms) var(--ease-out), background-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
 }
 .mic[data-size='small'] { width: 44px; height: 44px; }
 .mic:active:not(:disabled) { transform: scale(.94); transition-duration: 90ms; }
 .mic:disabled { opacity: .4; box-shadow: none; }
-/* The ring is the live microphone level, not decoration. */
-.mic[data-state='listening'] { border-radius: 18px; background: var(--accent-lime); color: var(--on-lime); box-shadow: 0 0 0 calc(3px + var(--level) * 14px) var(--accent-lime-soft); }
+/* The ring is the live microphone level, not decoration: a layer behind the button, scaled by the level (transform only). */
+.micRing {
+  position: absolute; inset: 0; border-radius: 50%; background: var(--accent-lime-soft); pointer-events: none;
+  opacity: 0; transform: scale(1); transition: transform 110ms linear, opacity 200ms var(--ease-out), border-radius 220ms var(--ease-out);
+}
+.micWrap[data-state='listening'] .micRing { opacity: 1; border-radius: 18px; }
+.mic[data-state='listening'] { border-radius: 18px; background: var(--accent-lime); color: var(--on-lime); box-shadow: none; }
 .mic[data-state='working'] { background: var(--surface-sunken-2); color: var(--text-primary); box-shadow: none; }
 .spin { animation: spin 800ms linear infinite; display: inline-block; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -158,12 +179,14 @@ details[open] > summary .caret { transform: rotate(90deg); }
 .comfortItem[aria-checked='true'] { background: var(--accent-violet); color: var(--on-violet); }
 .finishActions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 
-.pushback { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--hairline); }
+.pushback { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--hairline); --caption-gap: 10px; }
 .pushbackHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
 .pushbackHead h4 { font-size: var(--text-15); font-weight: 700; }
 .pushbackHead h4 span { font-weight: 500; color: var(--text-secondary); }
-.pushbackObjection { display: flex; align-items: center; gap: 10px; }
-.pushbackLine { flex: 1; min-width: 0; font-size: var(--text-17); font-weight: 600; line-height: 1.5; }
+.pushbackObjection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.pushbackLine { flex: 1 1 260px; min-width: 0; font-size: var(--text-17); font-weight: 600; line-height: 1.5; }
+.pushbackHidden { flex: 1 1 260px; min-width: 0; color: var(--text-secondary); font-size: var(--text-15); animation: quiet-in 320ms var(--ease-out) both; }
+.pushbackTools { display: flex; align-items: center; gap: 8px; }
 .pushbackComposer { display: flex; align-items: flex-end; gap: 8px; }
 .pushbackComposer .field { min-height: 44px; font-size: var(--text-15); }
 .pushbackComposer :global(.button) { flex-shrink: 0; }
@@ -251,5 +274,7 @@ details[open] > summary .caret { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
   .spin { animation-duration: 2s; }
   .retry[data-glow='true'] { animation: none; }
-  .mic, .comfortItem, .stage, .caret { transition: none; }
+  .revealed { animation: quiet-in 200ms linear both; }
+  .mic, .comfortItem, .caret { transition: none; }
+  .micRing { transition: opacity 160ms linear; }
 }

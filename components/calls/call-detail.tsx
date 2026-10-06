@@ -1,12 +1,16 @@
 'use client';
 
-/** One call: header, processing/upload/speaker states, then «Разбор · Тренировки · Транскрипт». */
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+/**
+ * One call: header, processing/upload/speaker states, then «Разбор · Тренировки · Транскрипт». «Кто есть кто» in the header
+ * (as on the iPhone) changes who «я» is after the review too: the server then rebuilds the review.
+ */
+import { useCallback, useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import {
-  ArrowCounterClockwiseIcon, CalendarBlankIcon, CheckIcon, ClockIcon, FileTextIcon, PencilSimpleIcon, TrashIcon, UploadSimpleIcon, UserIcon, WarningIcon, XIcon,
+  ArrowCounterClockwiseIcon, CalendarBlankIcon, CheckIcon, ClockIcon, FileTextIcon, PencilSimpleIcon, TrashIcon, UploadSimpleIcon, UserIcon, UsersIcon,
+  WarningIcon, XIcon,
 } from '@phosphor-icons/react';
 import { api } from '@/lib/client/api';
-import type { CallContext, CallDetail, CallSummary, CommunicationPattern, ProfileFact } from '@/lib/calls/types';
+import type { CallContext, CallDetail, CallSpeaker, CallStatus, CallSummary, CommunicationPattern, ProfileFact } from '@/lib/calls/types';
 import type { Mode } from '@/lib/types';
 import { Chip, cx, kit, ProgressBar, ProgressRing, Segmented, Sheet, Spinner, useInterval } from './kit';
 import {
@@ -20,6 +24,8 @@ import styles from './review.module.css';
 
 type Tab = 'review' | 'drills' | 'transcript';
 const CONTEXTS: CallContext[] = ['work', 'life', 'relocation', 'other'];
+/** States in which the server takes a new «кто есть кто» (POST calls/:id/speakers) for a call that is past that step. */
+const SPEAKERS_EDITABLE: CallStatus[] = ['ready', 'error', 'analysing'];
 
 export function UploadProgress({ job, compact }: { job: UploadJob; compact?: boolean }) {
   const fraction = job.total ? job.sent / job.total : 0;
@@ -49,7 +55,7 @@ export function CallDetailView({ callId, summary, patterns, uploads, onChanged, 
   const [seek, setSeek] = useState<{ at: number; nonce: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sheet, setSheet] = useState<'delete' | 'edit' | null>(null);
+  const [sheet, setSheet] = useState<'delete' | 'edit' | 'speakers' | null>(null);
   const previousStatus = useRef<string | null>(null);
   const resumeInput = useRef<HTMLInputElement>(null);
   const prefix = `call-${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
@@ -113,6 +119,9 @@ export function CallDetailView({ callId, summary, patterns, uploads, onChanged, 
   const statusInfo = CALL_STATUS[head.status];
   const review = detail?.review ?? null;
   const tabs = detail && (review || detail.segments.length) && head.status !== 'awaiting-upload';
+  // Only a recording or a transcript has voices; the needs-speaker step asks inline instead.
+  const canPickSpeakers = !!detail && detail.speakers.length > 0 && (detail.source === 'audio' || detail.source === 'transcript')
+    && SPEAKERS_EDITABLE.includes(detail.status);
   const facts = (next: ProfileFact[]) => {
     setDetail(current => current ? { ...current, facts: current.facts.map(fact => next.find(item => item.id === fact.id) ?? fact) } : current);
     onChanged();
@@ -133,6 +142,11 @@ export function CallDetailView({ callId, summary, patterns, uploads, onChanged, 
             </div>
           </div>
           <div className={styles.headActions}>
+            {canPickSpeakers ? (
+              <button type="button" className={cx(kit.btn, kit.secondary, kit.small, styles.whoButton)} onClick={() => setSheet('speakers')} aria-haspopup="dialog">
+                <UsersIcon size={16} weight="bold" aria-hidden="true" />Кто есть кто
+              </button>
+            ) : null}
             {detail ? <button type="button" className={kit.iconBtn} onClick={() => setSheet('edit')} aria-label="Изменить детали звонка" title="Детали"><PencilSimpleIcon size={18} weight="bold" /></button> : null}
             <button type="button" className={kit.iconBtn} onClick={() => setSheet('delete')} aria-label="Удалить звонок" title="Удалить"><TrashIcon size={18} weight="bold" /></button>
           </div>
@@ -237,6 +251,44 @@ export function CallDetailView({ callId, summary, patterns, uploads, onChanged, 
           setDetail(next); setSheet(null); onChanged();
           if (reanalyse) void act('reanalyse', () => api<CallDetail>(`calls/${encodeURIComponent(callId)}/reanalyse`, next.notes ? { notes: next.notes } : {}));
         }} /> : null}
+      {detail ? <SpeakerSheet open={sheet === 'speakers'} detail={detail} onClose={() => setSheet(null)}
+        onSaved={next => { setDetail(next); setSheet(null); onChanged(); }} /> : null}
+    </div>
+  );
+}
+
+/** POST calls/:id/speakers: who «я» is plus optional names for the others. The server re-runs the analysis from it. */
+function saveSpeakers(callId: string, me: string, labels: Record<string, string>): Promise<CallDetail> {
+  const clean = Object.fromEntries(Object.entries(labels).map(([key, value]) => [key, value.trim()]).filter(([key, value]) => key !== me && value));
+  return api<CallDetail>(`calls/${encodeURIComponent(callId)}/speakers`, { me, ...(Object.keys(clean).length ? { labels: clean } : {}) });
+}
+
+/** The voices with their lines: pick yourself, name the others if you like. Used by the needs-speaker step and «Кто есть кто». */
+function SpeakerChoice({ speakers, me, setMe, labels, setLabels, labelledBy, label }: {
+  speakers: CallSpeaker[]; me: string | null; setMe: (id: string) => void;
+  labels: Record<string, string>; setLabels: Dispatch<SetStateAction<Record<string, string>>>; labelledBy?: string; label?: string;
+}) {
+  return (
+    <div className={styles.speakerList} role="radiogroup" aria-labelledby={labelledBy} aria-label={labelledBy ? undefined : label}>
+      {speakers.map(speaker => {
+        // The voice marked as yours so far keeps the plain «Ты» only while it is still the one picked.
+        const name = speaker.isMe && speaker.label === 'Ты' && me !== speaker.id ? 'Был отмечен как ты' : speaker.label;
+        return (
+          <div key={speaker.id} className={styles.speaker} data-me={me === speaker.id}>
+            <div className={styles.speakerHead}>
+              <strong>{name}{speaker.talkSeconds ? <span className={kit.faint} style={{ fontWeight: 600 }}> · {formatDuration(speaker.talkSeconds)}</span> : null}</strong>
+              <button type="button" role="radio" aria-checked={me === speaker.id} className={cx(kit.btn, kit.secondary, kit.small, styles.meButton)} onClick={() => setMe(speaker.id)}>
+                {me === speaker.id ? <CheckIcon size={14} weight="bold" aria-hidden="true" /> : null}Это я
+              </button>
+            </div>
+            {speaker.sample.length ? <ul className={styles.samples}>{speaker.sample.slice(0, 3).map((line, index) => <li key={index} lang="en">{line}</li>)}</ul> : null}
+            {me && me !== speaker.id ? (
+              <input className={cx(kit.input, styles.speakerName)} placeholder="Имя (необязательно)" aria-label={`Имя для «${name}»`} maxLength={60}
+                value={labels[speaker.id] ?? ''} onChange={event => setLabels(current => ({ ...current, [speaker.id]: event.target.value }))} />
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -250,38 +302,69 @@ function SpeakerConfirm({ detail, onDone }: { detail: CallDetail; onDone: (next:
   async function confirm() {
     if (!me) return;
     setBusy(true); setError(null);
-    try {
-      const clean = Object.fromEntries(Object.entries(labels).map(([key, value]) => [key, value.trim()]).filter(([key, value]) => key !== me && value));
-      onDone(await api<CallDetail>(`calls/${encodeURIComponent(detail.id)}/speakers`, { me, ...(Object.keys(clean).length ? { labels: clean } : {}) }));
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Не получилось сохранить.'); }
+    try { onDone(await saveSpeakers(detail.id, me, labels)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Не получилось сохранить.'); }
     finally { setBusy(false); }
   }
   return (
     <section className={cx(kit.glass, styles.speakers)} aria-labelledby={`${ids}-who`}>
       <h3 id={`${ids}-who`}>Кто из собеседников ты?</h3>
       <p className={styles.muted}>Я не узнал твой голос уверенно. Посмотри на реплики и выбери себя — разбор будет про твои слова.</p>
-      <div className={styles.speakerList} role="radiogroup" aria-labelledby={`${ids}-who`}>
-        {detail.speakers.map(speaker => (
-          <div key={speaker.id} className={styles.speaker} data-me={me === speaker.id}>
-            <div className={styles.speakerHead}>
-              <strong>{speaker.label}{speaker.talkSeconds ? <span className={kit.faint} style={{ fontWeight: 600 }}> · {formatDuration(speaker.talkSeconds)}</span> : null}</strong>
-              <button type="button" role="radio" aria-checked={me === speaker.id} className={cx(kit.btn, kit.secondary, kit.small, styles.meButton)} onClick={() => setMe(speaker.id)}>
-                {me === speaker.id ? <CheckIcon size={14} weight="bold" aria-hidden="true" /> : null}Это я
-              </button>
-            </div>
-            {speaker.sample.length ? <ul className={styles.samples}>{speaker.sample.slice(0, 3).map((line, index) => <li key={index} lang="en">{line}</li>)}</ul> : null}
-            {me && me !== speaker.id ? (
-              <input className={cx(kit.input, styles.speakerName)} placeholder="Имя (необязательно)" aria-label={`Имя для «${speaker.label}»`} maxLength={60}
-                value={labels[speaker.id] ?? ''} onChange={event => setLabels(current => ({ ...current, [speaker.id]: event.target.value }))} />
-            ) : null}
-          </div>
-        ))}
-      </div>
+      <SpeakerChoice speakers={detail.speakers} me={me} setMe={setMe} labels={labels} setLabels={setLabels} labelledBy={`${ids}-who`} />
       {error ? <p className={styles.muted} role="alert" style={{ color: 'var(--k-error-ink)' }}>{error}</p> : null}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button type="button" className={cx(kit.btn, kit.primary)} disabled={!me || busy} onClick={() => void confirm()}>{busy ? <Spinner /> : null}Подтвердить и разобрать</button>
       </div>
     </section>
+  );
+}
+
+/**
+ * «Кто есть кто» from the header (iPhone: CallSpeakerSheet): pick yourself again after the review. The server rebuilds the
+ * review: patterns are recounted, drills from this call that were never started are replaced; started and done drills and
+ * accepted facts stay (lib/server/calls/service.ts confirmSpeakers → the analyse stage).
+ */
+function SpeakerSheet({ open, detail, onClose, onSaved }: { open: boolean; detail: CallDetail; onClose: () => void; onSaved: (next: CallDetail) => void }) {
+  const current = detail.speakers.find(speaker => speaker.isMe)?.id ?? null;
+  const [me, setMe] = useState<string | null>(current);
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // A fresh choice on every opening; a background reload of the call while it is open keeps the choice in progress.
+  const latest = useRef(detail);
+  latest.current = detail;
+  useEffect(() => {
+    if (!open) return;
+    setMe(latest.current.speakers.find(speaker => speaker.isMe)?.id ?? null); setLabels({}); setError(null);
+  }, [open]);
+  const named = Object.entries(labels).some(([key, value]) => key !== me && value.trim());
+  // Nothing new → nothing to rebuild.
+  const changed = !!me && (me !== current || named);
+  const rebuilt = !!detail.review;
+  async function save() {
+    if (!me || !changed) return;
+    setBusy(true); setError(null);
+    try { onSaved(await saveSpeakers(detail.id, me, labels)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Не получилось сохранить.'); }
+    finally { setBusy(false); }
+  }
+  return (
+    <Sheet open={open} onClose={onClose} title="Кто есть кто"
+      footer={<>
+        <button type="button" className={cx(kit.btn, kit.quiet)} onClick={onClose}>Отмена</button>
+        <button type="button" className={cx(kit.btn, kit.primary)} disabled={!changed || busy} onClick={() => void save()}>
+          {busy ? <Spinner /> : null}{rebuilt ? 'Пересобрать разбор' : 'Подтвердить и разобрать'}
+        </button>
+      </>}>
+      <p className={styles.muted}>Выбери себя по репликам — разбор будет про твои слова. Остальным можно дать имена.</p>
+      <SpeakerChoice speakers={detail.speakers} me={me} setMe={setMe} labels={labels} setLabels={setLabels} label="Кто из собеседников ты" />
+      <p className={styles.sheetNote}>
+        {rebuilt
+          ? 'После подтверждения разбор соберётся заново — это займёт пару минут. Паттерны пересчитаются, а тренировки из этого звонка, которые ты ещё не начинал, заменятся новыми. Начатые и пройденные тренировки и принятые факты останутся.'
+          : 'Разбор начнётся заново с этим выбором — это займёт пару минут.'}
+      </p>
+      {error ? <p className={styles.muted} role="alert" style={{ color: 'var(--k-error-ink)' }}>{error}</p> : null}
+    </Sheet>
   );
 }
 

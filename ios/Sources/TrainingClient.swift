@@ -150,11 +150,19 @@ extension Notification.Name {
     @Published var state: TrainingState?
     @Published var conversation: Conversation?
     @Published var status: ServerStatus?
+    /// The last `/api/status` read failed and no status is known: partner lines may not be audible, so they are shown.
+    @Published private(set) var statusUnavailable = false
     @Published var subscriptionUsage: SubscriptionUsage?
     @Published var busy = false
     @Published var error: String?
     @Published var hint: String?
     @Published var signedIn = false
+    /// MOTION-PASS 0.5.2 §4: true from launch while a saved access key is being checked. The launch layer covers
+    /// the screen meanwhile, so the login card never flashes before Home.
+    @Published private(set) var restoring = false
+    /// Why the saved key did not open the server at launch; shown inline (never the «Не получилось» alert).
+    @Published private(set) var restoreFailure: RestoreFailure?
+    private var restoreInFlight = false
     @Published var recording = false
     @Published var microphoneStarting = false
     @Published var microphoneDenied = false
@@ -168,7 +176,10 @@ extension Notification.Name {
     @Published var draft = ""
     @Published var recordedFile: String?
     @Published var pendingMessageID: String?
-    @Published var assistantTextShown = true
+    /// The latest partner line the learner opened (MOTION-PASS §6). Every new line arrives hidden; nil hides it again.
+    @Published private(set) var revealedPartnerTurn: String?
+    /// Lines whose voice failed to load or play («turn:<id>», «pushback:<retryId>»): their text stays on screen.
+    @Published private(set) var unvoicedLines: Set<String> = []
     @Published var conversationPresented = false
     @Published var placementPresented = false
     /// Deep links from nested screens (e.g. «Как получить» → Созвоны); the shell consumes it.
@@ -187,8 +198,19 @@ extension Notification.Name {
         get { voiceMeter.level }
         set { voiceMeter.level = newValue }
     }
-    @Published var liveTranscript = ""
-    @Published var liveTranscriptStatus = ""
+    /// Live captions of the learner's speech. Only LiveTranscriptView observes this model, so recognizer
+    /// deltas never re-render the screens observing the client (MOTION-PASS §5).
+    let liveCaptions = LiveTranscriptModel()
+    /// The latest live hypothesis. Assigning shows text at once (restore, clear, previews); the recognizer
+    /// streams through `liveCaptions.receive(_:)` and its reveal queue instead.
+    var liveTranscript: String {
+        get { liveCaptions.text }
+        set { liveCaptions.reset(to: newValue) }
+    }
+    var liveTranscriptStatus: String {
+        get { liveCaptions.status }
+        set { liveCaptions.setStatus(newValue) }
+    }
     @Published var voiceLoading = false
     @Published private(set) var playbackAcknowledgementTurn: String?
     @Published var operationStage: String?
@@ -244,6 +266,8 @@ extension Notification.Name {
         let liveText: String
     }
     private var savedDrafts: [String: DraftSnapshot] = [:]
+    /// Partner lines whose text was on screen at some point (MOTION-PASS §6): what `textVisible` reports.
+    private var seenPartnerTurns = Set<String>()
     let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 180
@@ -257,6 +281,11 @@ extension Notification.Name {
     init(reminderCenter: any PracticeReminderCenter = SystemPracticeReminderCenter(), reminderDefaults: UserDefaults = .standard) {
         self.reminderCenter = reminderCenter
         self.defaults = reminderDefaults
+        restoring = TrainingClient.hasSavedAccess(server: server)
+#if DEBUG
+        // Previews install their fixtures right after the first frame: start on the launch layer, not the login card.
+        if PreviewFixtures.screen != nil { restoring = true }
+#endif
         if let data = reminderDefaults.data(forKey: PracticeReminder.storageKey),
            let stored = try? JSONDecoder().decode([PracticeReminder].self, from: data),
            let checked = try? PracticeReminder.checked(stored) { reminders = checked }
@@ -458,18 +487,85 @@ extension Notification.Name {
 
     // MARK: Access and refresh
 
+    /// The login form. Errors use the shared «Не получилось» alert, as every other action does.
     func login(code: String) async {
         var accepted = false
         await perform(stage: "Подключаю твой профиль") {
-            let _: Confirmation = try await request("login", body: ["code": code])
-            try AccessKey.save(code)
-            UserDefaults.standard.set(server, forKey: "training-server")
-            try await refreshState()
-            signedIn = true
-            recoverPendingRecording()
+            try await signIn(code: code)
             accepted = true
         }
         guard accepted else { return }
+        loadAfterSignIn()
+    }
+
+    /// Launch with a saved key (MOTION-PASS 0.5.2 §4). Its own path, never `perform()`: no alert and no busy flag.
+    /// A refused code (401/403) leads to the login card with an inline note and forgets the key; anything else
+    /// keeps the launch layer with «Повторить». A request that hangs gives up after `NativeLaunch.restoreTimeoutSeconds`.
+    func restore() async {
+        guard !signedIn, !restoreInFlight else { return }
+        guard !server.isEmpty, let code = AccessKey.read(), !code.isEmpty else {
+            restoring = false
+            return
+        }
+        restoreInFlight = true
+        restoring = true
+        defer { restoreInFlight = false }
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask { try await self.signIn(code: code) }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(NativeLaunch.restoreTimeoutSeconds))
+                    throw URLError(.timedOut)
+                }
+                _ = try await group.next()
+                group.cancelAll()
+            }
+        } catch {
+            if !signedIn {
+                let failure = TrainingClient.classifyRestoreFailure(error)
+                if failure == .codeRefused { AccessKey.delete() }
+                restoreFailure = failure
+                restoring = false
+                return
+            }
+        }
+        restoreFailure = nil
+        restoring = false
+        loadAfterSignIn()
+    }
+
+    /// «Ввести код заново» on the launch layer: the login card with the saved server filled in.
+    func dismissRestoreFailure() {
+        guard !restoreInFlight else { return }
+        restoreFailure = nil
+        restoring = false
+    }
+
+    /// A server address and a saved code: launch checks them instead of asking (the Keychain read is synchronous).
+    nonisolated static func hasSavedAccess(server: String) -> Bool {
+        guard !server.isEmpty, let code = AccessKey.read() else { return false }
+        return !code.isEmpty
+    }
+
+    /// 401/403: the saved code no longer opens the server. Anything else (offline, timeout, 5xx, odd data) is
+    /// «Нет связи с сервером» with the reason underneath.
+    nonisolated static func classifyRestoreFailure(_ error: Error) -> RestoreFailure {
+        if let failure = error as? TrainingHTTPError, failure.status == 401 || failure.status == 403 { return .codeRefused }
+        return .unreachable(describe(error))
+    }
+
+    /// One sign-in for the form and the launch: the access cookie, the saved key and server, the first state.
+    private func signIn(code: String) async throws {
+        let _: Confirmation = try await request("login", body: ["code": code])
+        try AccessKey.save(code)
+        UserDefaults.standard.set(server, forKey: "training-server")
+        try await refreshState()
+        signedIn = true
+        restoreFailure = nil
+        recoverPendingRecording()
+    }
+
+    private func loadAfterSignIn() {
         Task { [weak self] in
             guard let self else { return }
             await self.refreshMeta()
@@ -478,16 +574,21 @@ extension Notification.Name {
         }
     }
 
-    func restore() async {
-        guard !server.isEmpty, let code = AccessKey.read() else { return }
-        await login(code: code)
+#if DEBUG
+    /// Previews install their fixtures instead of checking a saved key.
+    func finishPreviewLaunch() {
+        restoring = false
+        restoreFailure = nil
     }
+#endif
 
     /// Leaves this iPhone; practice history stays on the server.
     func signOut() {
         guard !recording, !microphoneStarting, !busy else { return }
         stopSpeaking()
         AccessKey.delete()
+        restoring = false
+        restoreFailure = nil
         if let url = URL(string: server), let cookies = HTTPCookieStorage.shared.cookies(for: url) {
             for cookie in cookies { HTTPCookieStorage.shared.deleteCookie(cookie) }
         }
@@ -496,6 +597,7 @@ extension Notification.Name {
         conversation = nil
         state = nil
         status = nil
+        statusUnavailable = false
         subscriptionUsage = nil
         catalog = []
         savedDrafts.removeAll()
@@ -520,7 +622,12 @@ extension Notification.Name {
         async let statusValue: ServerStatus? = try? request("status")
         async let usageValue: SubscriptionUsage? = try? request("usage")
         let (newStatus, newUsage) = await (statusValue, usageValue)
-        if let newStatus { status = newStatus }
+        if let newStatus {
+            status = newStatus
+            statusUnavailable = false
+        } else if status == nil {
+            statusUnavailable = true
+        }
         if let newUsage { subscriptionUsage = newUsage }
     }
 
@@ -697,7 +804,7 @@ extension Notification.Name {
         conversation = value
         playbackAcknowledgementTurn = pendingPlaybackAcknowledgements[value.id]
         conversationPresented = true
-        assistantTextShown = value.mode == "learning"
+        // Partner text is hidden in every mode (§6); a line the learner opened stays open (it is keyed by turn).
         hint = nil
         let saved = savedDrafts[value.id]
         draft = saved?.text ?? ""; pendingMessageID = saved?.pendingID; recordedFile = saved?.file
@@ -766,7 +873,7 @@ extension Notification.Name {
             stage: "Готовлю тренировку", body: ["mode": mode, "drillId": id])
     }
 
-    /// «Свободная тема»: a context, a mode and an optional topic.
+    /// «Своя тема»: a context, a mode and an optional topic.
     func startFree(mode: String, context: String, topic: String? = nil) async {
         var body: [String: Any] = ["mode": mode, "context": context]
         let cleanTopic = topic?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -855,6 +962,13 @@ extension Notification.Name {
         draft = ""; pendingMessageID = nil; originalTranscript = ""
     }
 
+    /// What the composer still holds before leaving a step the learner confirmed (MOTION-PASS §8.5):
+    /// a recording (local or already transcribed) or a text draft. A reply the server holds is never dropped.
+    func discardUnsentAnswer() {
+        guard !busy, !recording, !microphoneStarting else { return }
+        if recordedFile != nil || hasUnuploadedRecording { discardRecording() } else { clearDraft() }
+    }
+
     func resendUnanswered() async {
         guard let turn = unansweredTurn else { return }
         draft = turn.text; pendingMessageID = turn.id; recordedFile = turn.audioFile
@@ -892,7 +1006,8 @@ extension Notification.Name {
                 pendingMessageID = id
                 body["id"] = id
                 body["source"] = recordedFile == nil ? "text" : "audio"
-                body["textVisible"] = assistantTextShown
+                // The answered line was read (opened, or shown because its voice was unavailable): the server marks it.
+                body["textVisible"] = partnerTextWasVisible(in: conversation)
                 path = "sessions/\(conversation.id)/message"
             case .retry:
                 let id = pendingMessageID ?? UUID().uuidString.lowercased()
@@ -918,7 +1033,8 @@ extension Notification.Name {
             guard self.conversation?.id == conversation.id else { return }
             self.conversation = updated
             draft = ""; recordedFile = nil; pendingMessageID = nil; hint = nil; originalTranscript = ""; liveTranscript = ""
-            assistantTextShown = conversation.mode == "learning"
+            // The partner's next line arrives hidden (§6).
+            revealedPartnerTurn = nil
             accepted = true
         }
         guard accepted else { return }
@@ -1026,17 +1142,61 @@ extension Notification.Name {
         return min(3, (hintLevels[turn.id] ?? 0) + 1)
     }
 
-    /// Shows the partner's text without stopping speech or refreshing everything (C-06).
-    func revealText() async {
-        guard let conversation else { return }
-        assistantTextShown = true
+    // MARK: Partner text (MOTION-PASS §6)
+
+    static func partnerLineKey(_ turnID: String) -> String { "turn:" + turnID }
+    static func pushbackLineKey(_ retryID: String) -> String { "pushback:" + retryID }
+
+    /// Partner lines can only be read: the server says voice is not configured, or its status could not be read.
+    /// While the status is simply not loaded yet, lines stay hidden (MOTION-PASS §6). Same rule as the web client.
+    var voiceUnavailable: Bool { status.map { !$0.audio.configured } ?? statusUnavailable }
+
+    func voiceFailed(_ key: String) -> Bool { unvoicedLines.contains(key) }
+
+    /// The learner cannot hear this line (no voice, its playback failed, or it is a reading/writing task):
+    /// its text is shown and cannot be hidden.
+    func partnerTextForced(_ turn: Turn, in value: Conversation) -> Bool {
+        value.isTextActivity || voiceUnavailable || unvoicedLines.contains(TrainingClient.partnerLineKey(turn.id))
+    }
+
+    /// Partner lines arrive hidden in every mode; opening applies to that line only.
+    func partnerTextShown(_ turn: Turn, in value: Conversation) -> Bool {
+        revealedPartnerTurn == turn.id || partnerTextForced(turn, in: value)
+    }
+
+    /// Whether the line the learner answers was read (sent as `textVisible`): it was on screen at some point —
+    /// opened (even if hidden again), shown for lack of voice, or already marked on the server. Task prompts are
+    /// not partner speech.
+    func partnerTextWasVisible(in value: Conversation) -> Bool {
+        guard !value.isTextActivity, let turn = value.turns.last(where: { $0.role == "assistant" }) else { return false }
+        return partnerTextForced(turn, in: value) || seenPartnerTurns.contains(turn.id) || (turn.support ?? 0) >= 1
+    }
+
+    /// Opens the latest partner line at once. Only the line about to be answered is marked on the server right away
+    /// (`show-text`, without stopping speech or refreshing everything, C-06); while busy or recording, the next
+    /// message's `textVisible` marks it instead. The request names the line (`turnId`), so a reveal that reaches the
+    /// server after the next message can never mark the newer, still hidden line.
+    func revealPartnerText() {
+        guard let conversation, let turn = conversation.turns.last(where: { $0.role == "assistant" }) else { return }
+        revealedPartnerTurn = turn.id
+        seenPartnerTurns.insert(turn.id)
+        guard conversation.status == "active", !conversation.isTextActivity, conversation.turns.last?.id == turn.id,
+              (turn.support ?? 0) < 1, !busy, !recording, !microphoneStarting else { return }
 #if DEBUG
         if previewMode { return }
 #endif
-        if let value: Conversation = try? await request("sessions/\(conversation.id)/show-text", body: [:]),
-           self.conversation?.id == value.id {
+        let sessionID = conversation.id
+        let turnID = turn.id
+        Task { [weak self] in
+            guard let self, let value: Conversation = try? await self.request("sessions/\(sessionID)/show-text", body: ["turnId": turnID]),
+                  let current = self.conversation, current.id == value.id, TrainingClient.isNotOlder(value, than: current) else { return }
             self.conversation = value
         }
+    }
+
+    /// Hides the opened line again; the next line arrives hidden anyway.
+    func hidePartnerText() {
+        revealedPartnerTurn = nil
     }
 
     // MARK: Partner speech
@@ -1098,7 +1258,12 @@ extension Notification.Name {
                     client.voiceMeter.speechLevel = 0; client.pendingSpeechTurn = nil
                     client.meterTask?.cancel(); client.meterTask = nil
                     NativeAudioRoute.deactivate(ifOwnedBy: owner); client.playbackAudioOwner = nil
-                    guard completed else { client.error = "Озвучка прервалась. Нажми «Слушать», чтобы повторить."; return }
+                    guard completed else {
+                        // Playback failed: the line is read instead (§6 fallback).
+                        client.unvoicedLines.insert(TrainingClient.partnerLineKey(turn.id))
+                        client.error = "Озвучка прервалась — текст реплики открыт. Нажми «Слушать», чтобы повторить."
+                        return
+                    }
                     client.heardTurns.insert(turn.id)
                     await client.savePlaybackAcknowledgement(sessionID: conversation.id, turnID: turn.id)
                 }
@@ -1112,7 +1277,9 @@ extension Notification.Name {
         catch {
             guard generation == voiceGeneration else { return }
             resetPlayback(cancelLoading: false)
-            self.error = "Не удалось озвучить реплику. Текст сохранён; нажми «Слушать», чтобы повторить. " + TrainingClient.describe(error)
+            // The voice is unavailable for this line: its text is shown instead (§6 fallback).
+            unvoicedLines.insert(TrainingClient.partnerLineKey(turn.id))
+            self.error = "Не удалось озвучить реплику — её текст открыт. Нажми «Слушать», чтобы попробовать ещё раз. " + TrainingClient.describe(error)
         }
     }
 
@@ -1173,7 +1340,7 @@ extension Notification.Name {
     /// Plays the partner's objection after an improved retry (POST sessions/:id/pushback-speech).
     func pushbackSpeech(retryId: String) async {
         guard let conversation else { return }
-        let key = "pushback:" + retryId
+        let key = TrainingClient.pushbackLineKey(retryId)
         if playingModelLine == key || loadingModelLine == key { stopSpeaking(); return }
         guard !recording, !microphoneStarting else { return }
 #if DEBUG
@@ -1193,7 +1360,9 @@ extension Notification.Name {
         } catch {
             guard generation == voiceGeneration else { return }
             resetPlayback(cancelLoading: false)
-            self.error = "Не удалось озвучить возражение. Текст на экране. " + TrainingClient.describe(error)
+            // The objection is read instead (§6 fallback).
+            unvoicedLines.insert(key)
+            self.error = "Не удалось озвучить возражение — его текст открыт. " + TrainingClient.describe(error)
         }
     }
 
@@ -1207,11 +1376,13 @@ extension Notification.Name {
         audioOutput = NativeAudioRoute.outputLabel(); audioRouteMessage = nil
         let audio = try AVAudioPlayer(data: data)
         audio.isMeteringEnabled = true
-        playbackDelegate = PlaybackDelegate { [weak self] _ in
+        playbackDelegate = PlaybackDelegate { [weak self] completed in
             guard let client = self else { return }
             Task { @MainActor [client] in
                 guard generation == client.voiceGeneration else { return }
                 client.finishLinePlayback(owner: owner)
+                // A line that broke off mid-way is read instead (§6 fallback for the objection).
+                if !completed { client.unvoicedLines.insert(key) }
             }
         }
         audio.delegate = playbackDelegate
@@ -1338,6 +1509,7 @@ extension Notification.Name {
         }
         microphoneDenied = false
         guard !busy, conversationPresented, conversation?.id == currentSession, !Task.isCancelled else { return }
+        var startingLive: LiveTranscriber?
         do {
             stopSpeaking()
             let captureGeneration = voiceGeneration
@@ -1346,15 +1518,22 @@ extension Notification.Name {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let url = folder.appendingPathComponent(UUID().uuidString + ".wav")
             let identifier = UUID(); recordingID = identifier
+            // A clean caption line and live accounting before the connection can report anything.
+            liveTranscript = ""; liveFinalText = nil; liveSessionID = nil; liveMinutes = 0
+            liveTranscriptStatus = LiveCaptionCopy.connecting
             let live = LiveTranscriber(serverOrigin: server)
+            startingLive = live
             live.onTranscript = { [weak self] text in
-                guard self?.recordingID == identifier else { return }
-                self?.liveTranscript = text
+                guard let client = self, client.recordingID == identifier else { return }
+                client.liveCaptions.receive(text)
             }
             live.onState = { [weak self] text in
-                guard self?.recordingID == identifier else { return }
-                self?.liveTranscriptStatus = text
+                guard let client = self, client.recordingID == identifier else { return }
+                client.liveTranscriptStatus = text
             }
+            // MOTION-PASS §5: the ticket request and the socket open while the microphone starts, so the first
+            // words are not held back; captured audio queues in the transcriber until the socket is ready.
+            liveConnection = connectLive(live, identifier: identifier)
             let capture = VoiceCapture()
             capture.onChunk = { [weak self, weak live] sequence, bytes, level in
                 guard let client = self, let transcriber = live else { return }
@@ -1375,7 +1554,7 @@ extension Notification.Name {
             guard recordingID == identifier, captureGeneration == voiceGeneration,
                   !busy, conversationPresented, conversation?.id == currentSession, !Task.isCancelled else {
                 _ = capture.stop()
-                live.close()
+                abandonLive(live)
                 try? FileManager.default.removeItem(at: url)
                 return
             }
@@ -1385,26 +1564,7 @@ extension Notification.Name {
             UserDefaults.standard.set(conversation?.id, forKey: "pending-recording-session")
             UserDefaults.standard.set(0.01, forKey: "pending-recording-minutes")
             hasUnuploadedRecording = true; orphanedRecording = false
-            liveTranscript = ""; originalTranscript = ""; liveFinalText = nil; liveSessionID = nil; liveMinutes = 0
-            liveTranscriptStatus = "Запись идёт. Подключаю живой текст…"
-            liveConnection = Task { [weak self, weak live] in
-                guard let self, let live else { return }
-                do {
-                    let credential: LiveSpeechCredential = try await self.request("audio/live-session", body: [:])
-                    guard self.recordingID == identifier, !Task.isCancelled, !live.isClosed else {
-                        if let ticket = credential.ticket {
-                            let _: Confirmation? = try? await self.request("audio/live-session-close", body: ["ticket": ticket, "minutes": 0])
-                        }
-                        return
-                    }
-                    self.liveSessionID = credential.ticket
-                    try await live.connect(credential)
-                } catch {
-                    guard self.recordingID == identifier, !Task.isCancelled else { return }
-                    self.liveTranscriptStatus = "Живой текст недоступен. После остановки распознаю полную запись."
-                    live.close()
-                }
-            }
+            originalTranscript = ""
             recordingLimit = Task { [weak self] in
                 do { try await Task.sleep(for: .seconds(480)) } catch { return }
                 guard let self, self.recordingID == identifier, self.recording else { return }
@@ -1412,8 +1572,59 @@ extension Notification.Name {
                 self.audioRouteMessage = "Прошло 8 минут — запись остановлена и сохранена."
                 await self.stopRecording()
             }
-        } catch is CancellationError { }
-        catch { self.error = TrainingClient.describe(error) }
+        } catch is CancellationError {
+            if let startingLive { abandonLive(startingLive) }
+        } catch {
+            if let startingLive { abandonLive(startingLive) }
+            self.error = TrainingClient.describe(error)
+        }
+    }
+
+    /// The live ticket request and the socket, started together with the microphone. A ticket that arrives
+    /// after the microphone stopped (or never started) is released at once, never lost.
+    private func connectLive(_ live: LiveTranscriber, identifier: UUID) -> Task<Void, Never> {
+        Task { [weak self, weak live] in
+            guard let self, let live else { return }
+            do {
+                let credential: LiveSpeechCredential = try await self.request("audio/live-session", body: [:])
+                guard self.recordingID == identifier, !Task.isCancelled, !live.isClosed else {
+                    if let ticket = credential.ticket { self.releaseLiveTicket(ticket, minutes: 0) }
+                    return
+                }
+                self.liveSessionID = credential.ticket
+                try await live.connect(credential)
+            } catch {
+                guard self.recordingID == identifier, !Task.isCancelled, !live.isClosed else { return }
+                self.liveTranscriptStatus = LiveCaptionCopy.unavailable
+                live.close()
+            }
+        }
+    }
+
+    /// The microphone did not start, or the lesson closed meanwhile: close the socket and settle the reservation.
+    /// A credential still in flight releases itself when it arrives (the transcriber is closed by then).
+    private func abandonLive(_ live: LiveTranscriber) {
+        let streamed = live.streamedMinutes
+        live.close()
+        liveConnection = nil
+        if let ticket = liveSessionID {
+            liveSessionID = nil
+            releaseLiveTicket(ticket, minutes: streamed)
+        }
+    }
+
+    private func releaseLiveTicket(_ ticket: String, minutes: Double) {
+        let settled = minutes.isFinite ? min(8, max(0, minutes)) : 0
+        Task { [weak self] in
+            guard let self else { return }
+            let _: Confirmation? = try? await self.request("audio/live-session-close", body: ["ticket": ticket, "minutes": settled])
+        }
+    }
+
+    /// The live words stay on screen after Stop until the checked draft replaces them (no empty field in between).
+    var showsLiveCaptions: Bool {
+        recording || (busy && hasUnuploadedRecording && recordedFile == nil
+            && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !liveCaptions.text.isEmpty)
     }
 
     func stopRecording() async {
@@ -1482,13 +1693,7 @@ extension Notification.Name {
 
     func discardRecording() {
         guard !busy, !recording else { return }
-        if let ticket = liveSessionID {
-            let minutes = liveMinutes
-            Task { [weak self] in
-                guard let self else { return }
-                let _: Confirmation? = try? await self.request("audio/live-session-close", body: ["ticket": ticket, "minutes": minutes])
-            }
-        }
+        if let ticket = liveSessionID { releaseLiveTicket(ticket, minutes: liveMinutes) }
         if let url = localRecording { try? FileManager.default.removeItem(at: url) }
         localRecording = nil; hasUnuploadedRecording = false; orphanedRecording = false; recordedFile = nil
         clearPendingRecording()

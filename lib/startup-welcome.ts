@@ -7,6 +7,9 @@ export interface StartupWelcomeState {
   fullMinutes: number;
 }
 
+/** Mirrors STALE_SESSION_MS in components/app/today-plan.ts (lib cannot import from components). */
+const STALE_RESUME_MS = 72 * 3600_000;
+
 function validTimestamp(value: string): number {
   const time = Date.parse(value);
   return Number.isFinite(time) ? time : -Infinity;
@@ -23,8 +26,11 @@ export function deriveStartupWelcome(
   const newest = [...state.sessions].sort((left, right) =>
     validTimestamp(right.updatedAt) - validTimestamp(left.updatedAt)
     || validTimestamp(right.createdAt) - validTimestamp(left.createdAt));
+  // Same rule as Today's main card (components/app/today-plan.ts): a conversation untouched for 72 h is no longer
+  // «waiting» — it lives in «Незаконченные», so the greeting must not promise it.
   const resumable = newest.find(session => session.status !== 'completed'
-    && !(session.baseline && state.onboarding?.status === 'ready')) ?? null;
+    && !(session.baseline && state.onboarding?.status === 'ready')
+    && (session.status === 'analysing' || now.getTime() - validTimestamp(session.updatedAt) < STALE_RESUME_MS)) ?? null;
   const completedToday = newest.find(session => {
     const time = validTimestamp(session.updatedAt);
     return session.status === 'completed' && time !== -Infinity && time <= now.getTime()

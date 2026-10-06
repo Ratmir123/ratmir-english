@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { CheckIcon, CopyIcon, PauseIcon, SpeakerHighIcon, XIcon } from '@phosphor-icons/react';
 import { api, mediaUrl } from '@/lib/client/api';
+import { EASE_OUT, MOTION_MS } from '../ui/motion';
+import { useSheetPresence } from '../ui/sheet';
 import type { Tone } from './format';
 import kit from './kit.module.css';
 
@@ -70,7 +72,7 @@ export function Segmented<T extends string>({ value, options, onChange, label, b
       pill.animate([
         { transform: `translateX(${before.x}px) scaleX(${before.width / width})` },
         { transform: `translateX(${x}px) scaleX(1)` },
-      ], { duration: 260, easing: 'cubic-bezier(.23,1,.32,1)' });
+      ], { duration: MOTION_MS.spring, easing: EASE_OUT });
     }
   }, []);
   useLayoutEffect(() => { place(true); }, [value, options.length, place]);
@@ -106,31 +108,29 @@ export function Segmented<T extends string>({ value, options, onChange, label, b
   );
 }
 
-/** Native modal dialog (focus trap, Esc, top layer) styled as a glass sheet. */
+/** Native modal dialog (focus trap, Esc, top layer) styled as a sheet; opens soft and slow, closes faster (0.5.2). */
 export function Sheet({ open, onClose, title, children, footer, labelledBy }: {
   open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; labelledBy?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    if (open && !dialog.open) {
-      try { dialog.showModal(); } catch { dialog.setAttribute('open', ''); }
-    } else if (!open && dialog.open) dialog.close();
-  }, [open]);
+  const rendered = useSheetPresence(ref, open);
+  // The exit keeps the last open content on screen even when the caller has already cleared its data.
+  const shown = useRef({ title, children, footer });
+  if (open) shown.current = { title, children, footer };
+  const view = shown.current;
   return (
     <dialog ref={ref} className={kit.sheet} aria-labelledby={labelledBy ?? titleId}
       onCancel={event => { event.preventDefault(); onClose(); }}
       onClick={event => { if (event.target === ref.current) onClose(); }}>
-      {open ? (
+      {rendered ? (
         <>
           <div className={kit.sheetHead}>
-            <h2 id={titleId}>{title}</h2>
+            <h2 id={titleId}>{view.title}</h2>
             <button type="button" className={kit.iconBtn} onClick={onClose} aria-label="Закрыть"><XIcon size={18} weight="bold" /></button>
           </div>
-          <div className={kit.sheetBody}>{children}</div>
-          {footer ? <div className={kit.sheetFoot}>{footer}</div> : null}
+          <div className={kit.sheetBody}>{view.children}</div>
+          {view.footer ? <div className={kit.sheetFoot}>{view.footer}</div> : null}
         </>
       ) : null}
     </dialog>
