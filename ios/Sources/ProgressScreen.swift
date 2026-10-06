@@ -246,14 +246,25 @@ private struct SkillCard: View {
     }
 }
 
-/// History grouped by day: one surface per day, one row per session; long-press to delete (L-32, fix #21).
+/// Web History's search: the query matches the lesson title or goal, ignoring case and diacritics (ё = е).
+enum HistorySearch {
+    static func filter(_ sessions: [Conversation], query: String) -> [Conversation] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return sessions }
+        return sessions.filter { ($0.lesson.title + " " + $0.lesson.goal).localizedStandardContains(needle) }
+    }
+}
+
+/// History grouped by day: one surface per day, one row per session (L-32, fix #21). The search field in the navigation
+/// bar finds a lesson by title or goal (web History); «…» on each row holds «Удалить занятие» with a confirmation.
 private struct HistoryList: View {
     @EnvironmentObject private var client: TrainingClient
     @State private var pendingDelete: Conversation? = nil
-    private var sessions: [Conversation] {
+    @State private var query = ""
+    private var allSessions: [Conversation] {
         (client.state?.sessions ?? []).sorted { ($0.latestDate ?? .distantPast) > ($1.latestDate ?? .distantPast) }
     }
-    private var groups: [HistoryGroup] {
+    private func groups(_ sessions: [Conversation]) -> [HistoryGroup] {
         var result: [HistoryGroup] = []
         for session in sessions {
             let title = session.latestDate.map { RuFormat.relativeDay($0) } ?? "Без даты"
@@ -266,8 +277,10 @@ private struct HistoryList: View {
         return result
     }
     var body: some View {
+        let all = allSessions
+        let found = HistorySearch.filter(all, query: query)
         VStack(alignment: .leading, spacing: 18) {
-            if sessions.isEmpty {
+            if all.isEmpty {
                 LiquidCard(padding: 18) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Пока пусто").font(.headline)
@@ -275,8 +288,18 @@ private struct HistoryList: View {
                             .font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
+            } else if found.isEmpty {
+                LiquidCard(padding: 18) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Ничего не нашлось").font(.headline)
+                        Text("Поиск идёт по названию и цели занятия.")
+                            .font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                        Button("Показать всё") { query = "" }
+                            .buttonStyle(QuietButton())
+                    }
+                }
             }
-            ForEach(groups) { group in
+            ForEach(groups(found)) { group in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(group.title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
                         .accessibilityAddTraits(.isHeader)
@@ -292,10 +315,8 @@ private struct HistoryList: View {
                 Text("Ещё \(RuFormat.count(skipped, "занятие", "занятия", "занятий")) в новом формате — обнови приложение, чтобы открыть.")
                     .font(.caption).foregroundStyle(Theme.inkSecondary)
             }
-            if !sessions.isEmpty {
-                Text("Удерживай занятие, чтобы удалить его.").font(.caption).foregroundStyle(Theme.inkSecondary)
-            }
         }
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Найти по названию или цели")
         .confirmationDialog("Удалить занятие?", isPresented: deletePresented, titleVisibility: .visible) {
             if let pendingDelete {
                 Button("Удалить «\(pendingDelete.lesson.title)»", role: .destructive) {
@@ -312,13 +333,30 @@ private struct HistoryList: View {
         Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
     }
 
+    /// The row opens the lesson; «…» beside it holds «Удалить занятие» (also on a long press).
     private func historyRow(_ session: Conversation) -> some View {
-        Button { client.resume(session) } label: { HistoryRowLabel(session: session, xp: xp(for: session)) }
+        HStack(spacing: 0) {
+            Button { client.resume(session) } label: {
+                HistoryRowLabel(session: session, xp: xp(for: session), showsChevron: false)
+            }
             .buttonStyle(RowButtonStyle())
             .disabled(client.busy || client.recording)
-            .contextMenu {
-                Button(role: .destructive) { pendingDelete = session } label: { Label("Удалить", systemImage: "trash") }
+            .contextMenu { deleteButton(session) }
+            Menu { deleteButton(session) } label: {
+                Image(systemName: "ellipsis")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
+            .padding(.trailing, 6)
+            .disabled(client.recording && client.conversation?.id == session.id)
+            .accessibilityLabel("Действия с занятием «\(session.lesson.title)»")
+        }
+    }
+
+    private func deleteButton(_ session: Conversation) -> some View {
+        Button(role: .destructive) { pendingDelete = session } label: { Label("Удалить занятие", systemImage: "trash") }
     }
 
     private func xp(for session: Conversation) -> Int? {
@@ -337,6 +375,8 @@ private struct HistoryGroup: Identifiable {
 private struct HistoryRowLabel: View {
     let session: Conversation
     let xp: Int?
+    /// Off when the row carries its «…» menu instead.
+    var showsChevron = true
     private var status: (title: String, color: Color?) {
         (SessionStatusCopy.label(session), SessionStatusCopy.tone(session))
     }
@@ -358,10 +398,12 @@ private struct HistoryRowLabel: View {
             if let xp {
                 Text("+\(xp) XP").font(.footnote.weight(.bold)).foregroundStyle(Theme.limeInk).monospacedDigit()
             }
-            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
+            if showsChevron {
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkTertiary)
+            }
         }
         .foregroundStyle(Theme.ink)
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        .padding(.leading, 16).padding(.trailing, showsChevron ? 16 : 4).padding(.vertical, 12)
         .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

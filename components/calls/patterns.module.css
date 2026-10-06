@@ -111,10 +111,19 @@
 .tierBars { display: inline-flex; gap: 2px; }
 .tierBars i { width: 5px; height: 11px; border-radius: 2px; background: var(--k-sunken-2); }
 .tierBars i[data-on='true'] { background: var(--k-violet); }
-.drillStart { margin-top: 1px; }
+/* Start actions: the button runs the default mode, the small text action under it the other one (as on Practice tiles). */
+.drillActions { display: grid; justify-items: end; align-content: start; gap: 2px; margin-top: 1px; }
+.drillAlt {
+  min-height: 32px; padding: 4px 8px; border: 0; border-radius: 10px; background: none; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 650; line-height: 1.2; color: var(--k-violet-ink); text-align: right; white-space: nowrap;
+  transition: background-color var(--k-hover-ms) var(--k-ease), color var(--k-hover-ms) var(--k-ease);
+}
+@media (hover: hover) and (pointer: fine) { .drillAlt:hover { background: var(--k-sunken); color: var(--k-text); } }
+.drillAlt:focus-visible { outline: 3px solid var(--k-focus); outline-offset: 2px; }
+@media (pointer: coarse) { .drillAlt { min-height: 44px; } }
 @container drills (max-width: 460px) {
   .drill { grid-template-columns: minmax(0, 1fr); }
-  .drillStart { justify-self: start; }
+  .drillActions { grid-auto-flow: column; justify-content: start; align-items: center; gap: 6px; }
 }
 
 /* ───────── playbook facts: rows inside the host surface ───────── */

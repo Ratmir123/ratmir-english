@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { TabId } from './labels';
 
@@ -57,6 +57,11 @@ function focusHeading() {
 
 const toTop = () => window.scrollTo({ top: 0, behavior: 'auto' });
 
+/** Sections reachable by navigation: Созвоны → Звонки · Паттерны · Плейбук; Прогресс → its tabs or the full test report. */
+export type CallsSection = 'calls' | 'patterns' | 'playbook';
+export type ProgressSection = 'overview' | 'skills' | 'history' | 'rewards' | 'report';
+export type NavigationOptions = { callId?: string | null; calls?: CallsSection; progress?: ProgressSection };
+
 /**
  * In-memory navigation only: the Electron bridge trusts just `/` and `/?entry=` URLs (audit C-19),
  * so tabs never touch the address bar.
@@ -65,17 +70,17 @@ export function useNavigation() {
   const [tab, setTab] = useState<TabId>('today');
   const [sessionOpen, setSessionOpen] = useState(false);
   const [returnTab, setReturnTab] = useState<TabId>('today');
-  const [callTarget, setCallTarget] = useState<{ id: string | null; nonce: number }>({ id: null, nonce: 0 });
-  const [progressSection, setProgressSection] = useState<{ id: 'overview' | 'skills' | 'history' | 'rewards'; nonce: number }>({ id: 'overview', nonce: 0 });
+  const [callTarget, setCallTarget] = useState<{ id: string | null; section: CallsSection | null; nonce: number }>({ id: null, section: null, nonce: 0 });
+  const [progressSection, setProgressSection] = useState<{ id: ProgressSection; nonce: number }>({ id: 'overview', nonce: 0 });
   const tabRef = useRef(tab);
   tabRef.current = tab;
   const sessionOpenRef = useRef(sessionOpen);
   sessionOpenRef.current = sessionOpen;
 
-  const go = useCallback((next: TabId, options: { callId?: string | null; progress?: 'overview' | 'skills' | 'history' | 'rewards' } = {}) => {
+  const go = useCallback((next: TabId, options: NavigationOptions = {}) => {
     const update = () => {
       setSessionOpen(false); setTab(next);
-      if (next === 'calls') setCallTarget(previous => ({ id: options.callId ?? null, nonce: previous.nonce + 1 }));
+      if (next === 'calls') setCallTarget(previous => ({ id: options.callId ?? null, section: options.calls ?? null, nonce: previous.nonce + 1 }));
       if (next === 'progress' && options.progress) setProgressSection(previous => ({ id: options.progress!, nonce: previous.nonce + 1 }));
       toTop();
     };
@@ -96,6 +101,8 @@ export function useNavigation() {
     withViewTransition(() => { setSessionOpen(false); setTab(previous => previous); toTop(); }, 'screen', focusHeading);
   }, []);
 
-  return { tab, tabRef, sessionOpen, sessionOpenRef, returnTab, callTarget, progressSection, go, openSession, closeSession };
+  // Stable identity unless a value changes, so the app context is not rebuilt on unrelated renders.
+  return useMemo(() => ({ tab, tabRef, sessionOpen, sessionOpenRef, returnTab, callTarget, progressSection, go, openSession, closeSession }),
+    [tab, sessionOpen, returnTab, callTarget, progressSection, go, openSession, closeSession]);
 }
 export type Navigation = ReturnType<typeof useNavigation>;

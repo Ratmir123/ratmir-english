@@ -127,22 +127,20 @@ struct ProfileScreen: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// The playbook lives on «Созвоны»; here it is one row (no duplicated block).
+    /// «Мой плейбук» lives on «Созвоны»; here it is one row (no duplicated block), named as on the web.
     @ViewBuilder private var factsSection: some View {
         if let facts = client.state?.profileFacts {
             let suggested = facts.filter { $0.status == "suggested" }.count
-            let accepted = facts.filter { $0.status == "accepted" }.count
             Section {
                 NavigationLink {
                     FactsView(facts: facts)
                 } label: {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Факты о тебе").font(.body)
-                            Text(suggested > 0
-                                 ? FeatureFormat.count(suggested, "новое предложение", "новых предложения", "новых предложений") + " — проверь"
-                                 : FeatureFormat.count(accepted, "факт", "факта", "фактов") + " в плейбуке")
+                            Text("Мой плейбук").font(.body)
+                            Text(PlaybookCopy.detail(facts))
                                 .font(.footnote).foregroundStyle(Theme.inkSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 8)
                         if suggested > 0 {
@@ -151,10 +149,8 @@ struct ProfileScreen: View {
                         }
                     }
                 }
-            } header: {
-                sectionHeader("Что я знаю о тебе")
             } footer: {
-                Text("Факты из твоих созвонов. Принятые помогают собеседнику и разбору.")
+                Text("Принятые факты помогают собеседнику и разбору.")
             }
             .listRowBackground(EntranceFill(index: 2))
         }
@@ -422,7 +418,7 @@ private struct QuotaSection: View {
 
 enum AppVersion {
     static var display: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.0"
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.2"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
         return "Smooth Talk " + short + (build.isEmpty ? "" : " (\(build))")
     }

@@ -321,6 +321,8 @@ legend { padding: 0; font-weight: 700; }
 .ambient i:nth-child(3) { left: 12vmax; bottom: -38vmax; --d: 34s; animation-delay: -6s; background: radial-gradient(closest-side, var(--ambient-3), transparent); }
 .ambient[data-mood='listening'] i:nth-child(3) { background: radial-gradient(closest-side, rgb(218 241 99 / .34), transparent); }
 .ambient[data-mood='speaking'] i:nth-child(1) { background: radial-gradient(closest-side, rgb(187 178 245 / .5), transparent); }
+/* While recording, the background holds still: the glass dock never blurs a moving backdrop (cheaper paint, §5). */
+.ambient[data-mood='listening'] i { animation-play-state: paused; }
 @keyframes ambient-drift { to { transform: translate3d(6vmax, -4vmax, 0) scale(1.08); } }
 
 /* ---------- Buttons ---------- */

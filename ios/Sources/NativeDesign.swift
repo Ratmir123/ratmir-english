@@ -1149,6 +1149,50 @@ struct NativeOpeningState {
     }
 }
 
+/// The launch greeting from saved facts only, the same copy as the web `deriveOpeningGreeting`
+/// (lib/startup-welcome.ts): «Привет, <имя>.» — or plain «Привет.» while no real name is saved — and one line chosen
+/// from the history. Launch never waits for a model call.
+struct OpeningGreeting: Equatable {
+    let greeting: String
+    let motivation: String
+
+    init(state: TrainingState?, now: Date = Date(), calendar: Calendar = .current) {
+        greeting = OpeningGreeting.displayName(state?.profile.name).map { "Привет, \($0)." } ?? "Привет."
+        let sessions = state?.sessions ?? []
+        // Web `resumable`: anything not completed (a parked retry is completed); a removed 0.4 probe never counts; and,
+        // like Today's main card, nothing untouched for 72 h (it waits in «Незаконченные» instead).
+        let resumable = sessions.contains { $0.status != "completed" && !$0.isBaseline && $0.isFresh(now: now) }
+        // Web `completedToday`: completed earlier today with at least one spoken or typed answer.
+        let completedToday = sessions.contains { session in
+            guard session.status == "completed", let stamp = session.updatedAt, let updated = NativeDate.parse(stamp),
+                  updated <= now, calendar.isDate(updated, inSameDayAs: now) else { return false }
+            return session.turns.contains { $0.role == "user" && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        }
+        if resumable {
+            motivation = "Разговор ждёт — продолжим с того же места."
+        } else if completedToday {
+            motivation = "Сегодня уже была практика. Дальше — в своём темпе."
+        } else {
+            motivation = "Начнём с одного короткого шага."
+        }
+    }
+
+    /// Today's heading (web `greeting()` in components/app/labels.ts): the time of day, then the name when one is saved.
+    static func dayGreeting(name: String?, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let hour = calendar.component(.hour, from: now)
+        let part = hour < 5 ? "Доброй ночи" : hour < 12 ? "Доброе утро" : hour < 18 ? "Добрый день" : "Добрый вечер"
+        return displayName(name).map { part + ", " + $0 } ?? part
+    }
+
+    /// A real name, or nil for the placeholders the server and the client use when none was given
+    /// (web: 'Ты', 'You', 'Learner'; a missing name decodes as «ты» here).
+    static func displayName(_ name: String?) -> String? {
+        guard let clean = name?.trimmingCharacters(in: .whitespacesAndNewlines), !clean.isEmpty,
+              !["ты", "you", "learner"].contains(clean.lowercased()) else { return nil }
+        return clean
+    }
+}
+
 /// What the launch layer shows. One view and one companion serve every stage, so nothing remounts or jumps.
 enum LaunchStage: Equatable {
     /// The saved access key is being checked: the companion breathes (calm), nothing else.
@@ -1178,7 +1222,8 @@ enum NativeLaunch {
 /// or escaped at any moment; there is no visible continue button.
 struct LaunchView: View {
     let stage: LaunchStage
-    let name: String
+    /// «Привет, <имя>.» or «Привет.» (`OpeningGreeting`).
+    let greeting: String
     let sentence: String
     /// Fading out: the greeting's hand-off to Home or a plain cover fade.
     let leaving: Bool
@@ -1196,11 +1241,11 @@ struct LaunchView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    init(stage: LaunchStage, name: String = "ты", sentence: String = "", leaving: Bool = false,
+    init(stage: LaunchStage, greeting: String = "Привет.", sentence: String = "", leaving: Bool = false,
          leaveSeconds: Double = NativeOpeningState.handoffSeconds, skip: @escaping () -> Void = {},
          retry: @escaping () -> Void = {}, enterCode: @escaping () -> Void = {}) {
         self.stage = stage
-        self.name = name
+        self.greeting = greeting
         self.sentence = sentence
         self.leaving = leaving
         self.leaveSeconds = leaveSeconds
@@ -1284,7 +1329,7 @@ struct LaunchView: View {
 
     private var greetingLines: some View {
         VStack(spacing: 18) {
-            Text("Привет, \(name).")
+            Text(greeting)
                 .font(TypeScale.hero).tracking(-0.6)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)

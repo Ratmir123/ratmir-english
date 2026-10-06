@@ -1,26 +1,51 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowsClockwiseIcon, CaretRightIcon, CheckIcon, DownloadSimpleIcon, KeyIcon, TrashIcon, WarningCircleIcon } from '@phosphor-icons/react';
 import type { AppState, Profile } from '@/lib/types';
 import { APP_CHANNEL, APP_NAME, APP_VERSION } from '@/lib/app-info';
 import { lessonBudget } from '@/lib/lesson-budget';
 import { followThemeChanges, readThemePreference, saveThemePreference, THEME_LABEL, type ThemePreference } from '@/lib/client/theme';
-import { FactsPanel } from '../calls/facts-panel';
 import { useApp } from '../app/app-context';
 import { messageOf, request } from '../app/api';
+import { count } from '../app/labels';
 import { ReminderSettings } from '../reminder-settings';
 import { SubscriptionLimits } from '../subscription-limits';
 import { ScreenMascot } from '../shell/screen-mascot';
 import { Segmented } from '../ui/segmented';
 import styles from './profile.module.css';
 
-type Form = { name: string; goals: string; interests: string; professionalContext: string; relocation: string; dailyMinutes: string; feedback: string; audioRetentionDays: number; budgetUsd: string };
+type Form = { name: string; goals: string; interests: string; professionalContext: string; relocation: string; dailyMinutes: string; feedback: string };
 const toForm = (profile: Profile): Form => ({
   name: profile.name, goals: profile.goals, interests: profile.interests.join(', '), professionalContext: profile.professionalContext,
   relocation: profile.relocation, dailyMinutes: String(profile.dailyMinutes), feedback: profile.feedback,
-  audioRetentionDays: profile.audioRetentionDays, budgetUsd: String(profile.budgetUsd),
 });
+
+type SaveState = 'idle' | 'saving' | 'saved' | 'error';
+/**
+ * One setting that saves on its own, without the «О тебе» form (voice budget, audio retention): the latest server
+ * profile with just this field changed. Unsaved edits in the form stay in the form.
+ */
+function useInstantProfileSave() {
+  const app = useApp();
+  const [state, setState] = useState<SaveState>('idle');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (state !== 'saved') return;
+    const timer = setTimeout(() => setState('idle'), 2400);
+    return () => clearTimeout(timer);
+  }, [state]);
+  const save = async (patch: Partial<Profile>, failure: string) => {
+    const current = app.data.stateRef.current?.profile;
+    if (!current) return;
+    setState('saving'); setError('');
+    try { app.data.setState(await request<AppState>('profile', { ...current, ...patch })); setState('saved'); }
+    catch (reason) { setState('error'); setError(messageOf(reason, failure)); }
+  };
+  const fail = (message: string) => { setState('error'); setError(message); };
+  const reset = () => { setState('idle'); setError(''); };
+  return { state, error, save, fail, reset };
+}
 
 function ProfileForm() {
   const app = useApp();
@@ -33,10 +58,8 @@ function ProfileForm() {
   useEffect(() => { if (!dirty) setForm(toForm(profile)); }, [profile, dirty]);
   const update = <K extends keyof Form>(key: K, value: Form[K]) => { setForm(previous => ({ ...previous, [key]: value })); setDirty(true); setError(''); };
   const minutes = Number(form.dailyMinutes);
-  const budget = Number(form.budgetUsd);
   const problem = !form.name.trim() ? 'Укажи имя.' : !form.goals.trim() ? 'Опиши, что хочешь развивать.'
-    : !Number.isInteger(minutes) || minutes < 5 || minutes > 60 ? 'Минуты в день — целое число от 5 до 60.'
-      : !Number.isFinite(budget) || budget < 1 || budget > 50 ? 'Бюджет голоса — от 1 до 50 $ в месяц.' : '';
+    : !Number.isInteger(minutes) || minutes < 5 || minutes > 60 ? 'Минуты в день — целое число от 5 до 60.' : '';
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!dirty) return;
@@ -44,9 +67,11 @@ function ProfileForm() {
     setSaving(true); setError('');
     try {
       const interests = form.interests.split(',').map(item => item.trim()).filter(Boolean).slice(0, 20);
-      const next = await request<AppState>('profile', { ...profile, name: form.name.trim(), goals: form.goals.trim(), interests,
+      // Budget and audio retention save on their own (Голос, Данные): the latest server values go along unchanged.
+      const latest = app.data.stateRef.current?.profile ?? profile;
+      const next = await request<AppState>('profile', { ...latest, name: form.name.trim(), goals: form.goals.trim(), interests,
         professionalContext: form.professionalContext.trim(), relocation: form.relocation.trim(), dailyMinutes: minutes,
-        feedback: form.feedback.trim(), audioRetentionDays: form.audioRetentionDays, budgetUsd: budget });
+        feedback: form.feedback.trim() });
       app.data.setState(next); setDirty(false);
       app.toast.notice('Профиль сохранён. Следующие занятия учтут изменения.');
     } catch (reason) { setError(messageOf(reason, 'Не удалось сохранить профиль.')); }
@@ -63,11 +88,8 @@ function ProfileForm() {
       <label className={styles.wide}>Переезд и ближайшие интервью<textarea rows={2} value={form.relocation} onChange={event => update('relocation', event.target.value)} maxLength={1000} /></label>
       <label>Минут в день<input type="number" inputMode="numeric" min={5} max={60} step={1} value={form.dailyMinutes} onChange={event => update('dailyMinutes', event.target.value)} />
         <span className="form-help">Одно занятие — до {Number.isFinite(minutes) ? lessonBudget(Math.max(5, minutes || 5)) : 30} мин; остальное время — на следующие.</span></label>
-      <label>Хранить аудио<select value={form.audioRetentionDays} onChange={event => update('audioRetentionDays', Number(event.target.value))}>
-        <option value={7}>7 дней</option><option value={30}>30 дней</option><option value={90}>3 месяца</option><option value={180}>6 месяцев</option></select></label>
       <label className={styles.wide}>Тон тренера<textarea rows={2} value={form.feedback} onChange={event => update('feedback', event.target.value)} maxLength={1000} placeholder="Например: прямо и по делу, с примерами" />
         <span className="form-help">Как объяснять ошибки. На язык собеседника не влияет.</span></label>
-      <label>Бюджет голоса, $ в месяц<input type="number" inputMode="decimal" min={1} max={50} value={form.budgetUsd} onChange={event => update('budgetUsd', event.target.value)} /></label>
     </div>
     {error && <p className="error-text" role="alert">{error}</p>}
     {/* Untouched: a calm saved state instead of a greyed-out button; the action appears with the first edit. */}
@@ -110,7 +132,75 @@ function VoiceCard() {
     {error && <p className="error-text" role="alert">{error}</p>}
     <span className="form-help">Ключ хранится {status?.hosting === 'server' ? 'на твоём сервере' : 'на этом компьютере'} и не возвращается в браузер.</span>
     <div className={styles.usage}><span>Голос за месяц, оценка</span><strong className="tabular">${usage.usedUsd.toFixed(2)} <span className="caption">из ${usage.budgetUsd}</span></strong></div>
+    <BudgetField />
   </section>;
+}
+
+/** Monthly voice budget, saved on its own a moment after typing stops, on Enter or when the field is left. */
+function BudgetField() {
+  const app = useApp();
+  const saved = app.data.state!.profile.budgetUsd;
+  const [value, setValue] = useState(String(saved));
+  const editing = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const instant = useInstantProfileSave();
+  useEffect(() => { if (!editing.current) setValue(String(saved)); }, [saved]);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const commit = (text: string) => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    editing.current = false;
+    const amount = Number(text);
+    if (!text.trim() || !Number.isFinite(amount) || amount < 1 || amount > 50) { instant.fail('Бюджет голоса — от 1 до 50 $ в месяц.'); return; }
+    if (amount === app.data.stateRef.current?.profile.budgetUsd) { instant.reset(); return; }
+    void instant.save({ budgetUsd: amount }, 'Не удалось сохранить бюджет.');
+  };
+  const change = (text: string) => {
+    editing.current = true; setValue(text); instant.reset();
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => commit(text), 900);
+  };
+  return <div className={styles.setting}>
+    <label className={styles.settingLabel} htmlFor="voice-budget">Бюджет голоса, $ в месяц</label>
+    <input id="voice-budget" className={styles.settingInput} type="number" inputMode="decimal" min={1} max={50} value={value}
+      onChange={event => change(event.target.value)} onBlur={() => { if (editing.current) commit(value); }}
+      onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commit(value); } }} />
+    <span className={styles.settingStatus} aria-live="polite">{instant.state === 'saving' ? 'Сохраняю…' : instant.state === 'saved' ? <><CheckIcon size={14} weight="bold" aria-hidden="true" />Сохранено</> : null}</span>
+    {instant.error && <p className={`error-text ${styles.settingError}`} role="alert">{instant.error}</p>}
+  </div>;
+}
+
+/** How long recordings are kept, saved as soon as it is picked. */
+function RetentionField() {
+  const app = useApp();
+  const saved = app.data.state!.profile.audioRetentionDays;
+  const [value, setValue] = useState(saved);
+  const instant = useInstantProfileSave();
+  useEffect(() => { if (instant.state !== 'saving') setValue(saved); }, [saved, instant.state]);
+  return <div className={styles.setting}>
+    <label className={styles.settingLabel} htmlFor="audio-retention">Хранить аудио</label>
+    <select id="audio-retention" className={styles.settingInput} value={value} onChange={event => {
+      const days = Number(event.target.value); setValue(days);
+      void instant.save({ audioRetentionDays: days }, 'Не удалось сохранить срок хранения.');
+    }}>
+      <option value={7}>7 дней</option><option value={30}>30 дней</option><option value={90}>3 месяца</option><option value={180}>6 месяцев</option>
+    </select>
+    <span className={styles.settingStatus} aria-live="polite">{instant.state === 'saving' ? 'Сохраняю…' : instant.state === 'saved' ? <><CheckIcon size={14} weight="bold" aria-hidden="true" />Сохранено</> : null}</span>
+    {instant.error && <p className={`error-text ${styles.settingError}`} role="alert">{instant.error}</p>}
+  </div>;
+}
+
+/** «Мой плейбук» lives in Созвоны (with the calls it comes from); here a short way there. */
+function PlaybookLink() {
+  const app = useApp();
+  const facts = app.data.state!.profileFacts ?? [];
+  const toCheck = facts.filter(fact => fact.status === 'suggested').length;
+  const accepted = facts.filter(fact => fact.status === 'accepted').length;
+  const detail = toCheck ? `${count(toCheck, ['новое предложение', 'новых предложения', 'новых предложений'])} — проверь`
+    : accepted ? `${count(accepted, ['факт', 'факта', 'фактов'])} в плейбуке` : 'Ставки, кейсы и цифры из твоих звонков — попадает только то, что ты подтвердил.';
+  return <button type="button" className={`surface ${styles.card} ${styles.linkCard}`} data-enter onClick={() => app.go('calls', { calls: 'playbook' })}>
+    <span className={styles.linkCopy}><strong>Мой плейбук</strong><span>{detail}</span></span>
+    <span className={styles.linkAction}>Открыть<CaretRightIcon size={16} aria-hidden="true" /></span>
+  </button>;
 }
 
 /** Sol and the subscription it runs on: connection state, a human reason when it fails, then the limits. */
@@ -148,6 +238,7 @@ function DataCard() {
   return <section className={`surface ${styles.card} ${styles.dataCard}`} aria-labelledby="profile-data" data-enter>
     <div className={styles.head}><h2 id="profile-data">Данные</h2></div>
     <p className="caption">{status?.hosting === 'server' ? 'Компьютер и телефон используют одну историю на твоём сервере.' : 'История хранится на этом компьютере.'}</p>
+    <RetentionField />
     <div className="rows">
       <a className={styles.row} href="/api/export" download><DownloadSimpleIcon size={18} aria-hidden="true" /><span>Скачать историю (JSON)</span></a>
       {/* The warning says exactly what goes (MOTION-PASS-0.5.2 §8.2, same text on iPhone). */}
@@ -180,7 +271,6 @@ function AppearanceCard() {
 
 export function ProfileScreen() {
   const app = useApp();
-  const state = app.data.state!;
   const version = app.data.status?.app?.version ?? APP_VERSION;
   return <div className={`screen ${styles.profile}`} data-screen="profile">
     <header className="screen-header with-mascot" data-enter>
@@ -190,10 +280,7 @@ export function ProfileScreen() {
     <div className={styles.grid}>
       <div className={styles.column}>
         <ProfileForm />
-        {/* FactsPanel («Мой плейбук») brings its own heading, explanation and rows; the host gives it the surface. */}
-        <div className={`surface ${styles.card}`} data-enter>
-          <FactsPanel facts={state.profileFacts ?? []} onChanged={() => void app.data.refresh()} />
-        </div>
+        <PlaybookLink />
       </div>
       <div className={styles.column}>
         <AppearanceCard />

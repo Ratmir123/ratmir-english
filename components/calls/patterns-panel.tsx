@@ -4,15 +4,17 @@
  * «Мои паттерны»: weaknesses first by cost, one card per pattern with plain sections (history in words,
  * an inline confirmation question, attached drills as rows, description and quotes on demand), then strengths.
  */
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import {
   ArrowUpRightIcon, CaretRightIcon, CheckCircleIcon, CheckIcon, EyeSlashIcon, LightbulbIcon, MinusCircleIcon, SealCheckIcon, XCircleIcon, type Icon,
 } from '@phosphor-icons/react';
 import { api } from '@/lib/client/api';
-import type { CommunicationPattern, PatternOutcome, PatternUpdateRequest, PersonalDrill } from '@/lib/calls/types';
+import type { CallSummary, CommunicationPattern, PatternOutcome, PatternUpdateRequest, PersonalDrill } from '@/lib/calls/types';
 import type { Mode } from '@/lib/types';
+import { AppContext } from '../app/app-context';
+import { drillOrder } from '../app/today-plan';
 import { Chip, cx, kit, Spinner } from './kit';
-import { COST_CATEGORY_LABEL, costRankLabel, formatClock, formatDay, OUTCOME_GLYPH, PATTERN_STATUS, plural, roundsLabel, sortDrills, sortPatterns } from './format';
+import { COST_CATEGORY_LABEL, costRankLabel, formatClock, formatDay, OUTCOME_GLYPH, PATTERN_STATUS, plural, roundsLabel, sortPatterns } from './format';
 import { DrillRow } from './drills-list';
 import styles from './patterns.module.css';
 
@@ -84,6 +86,8 @@ export function PatternsPanel({ patterns, drills, onStartDrill, compact, onChang
   const [local, setLocal] = useState<CommunicationPattern[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Call dates for the shared drill order (newest call first); absent when rendered outside the app shell.
+  const calls = useContext(AppContext)?.data.state?.calls;
   useEffect(() => { setLocal(null); }, [patterns]);
   const list = local ?? patterns;
   const sorted = sortPatterns(list);
@@ -137,7 +141,7 @@ export function PatternsPanel({ patterns, drills, onStartDrill, compact, onChang
         </div>
       ) : null}
       {sorted.weaknesses.map(pattern => (
-        <PatternCard key={pattern.id} pattern={pattern} drills={drills.filter(drill => drill.patternIds.includes(pattern.id))}
+        <PatternCard key={pattern.id} pattern={pattern} drills={drills.filter(drill => drill.patternIds.includes(pattern.id))} calls={calls}
           busy={busy === pattern.id} onUpdate={body => void update(pattern, body)} onStartDrill={onStartDrill} />
       ))}
       {sorted.strengths.length ? (
@@ -165,12 +169,13 @@ export function PatternsPanel({ patterns, drills, onStartDrill, compact, onChang
   );
 }
 
-function PatternCard({ pattern, drills, busy, onUpdate, onStartDrill }: {
-  pattern: CommunicationPattern; drills: PersonalDrill[]; busy: boolean;
+function PatternCard({ pattern, drills, calls, busy, onUpdate, onStartDrill }: {
+  pattern: CommunicationPattern; drills: PersonalDrill[]; calls?: readonly CallSummary[]; busy: boolean;
   onUpdate: (body: PatternUpdateRequest) => void; onStartDrill: (drillId: string, mode: Mode) => void;
 }) {
   const status = PATTERN_STATUS[pattern.status];
-  const openDrills = sortDrills(drills.filter(drill => drill.status !== 'done')).slice(0, 2);
+  // The two to do first, in the one order Today and Practice use.
+  const openDrills = drills.filter(drill => drill.status !== 'done').sort(drillOrder(calls)).slice(0, 2);
   const cost = pattern.kind === 'weakness' ? costRankLabel(pattern.costRank) : null;
   const ask = pattern.status === 'watch' && !pattern.userConfirmed;
   const titleId = `pattern-${pattern.id}`;

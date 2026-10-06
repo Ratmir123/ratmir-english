@@ -36,12 +36,26 @@ export function laterSessions(state: AppState, now = Date.now()): Session[] {
   return [...stale, ...parked].sort((a, b) => time(b.updatedAt) - time(a.updatedAt));
 }
 
-export function pendingDrills(state: AppState, now = Date.now()): PersonalDrill[] {
-  const calls = new Map((state.calls ?? []).map(call => [call.id, call]));
-  const callTime = (drill: PersonalDrill) => drill.source.type === 'call' ? time(calls.get(drill.source.callId)?.occurredAt ?? calls.get(drill.source.callId)?.createdAt) : 0;
+/**
+ * The one drill order (MOTION-PASS-0.5.2 §8.6) for Today's step, Practice, a call's «Тренировки» and the pattern cards:
+ * due first, then the newest call, then the newest drill. Without `calls` the call date is unknown and the rest decides.
+ */
+export function drillOrder(calls: readonly CallSummary[] = [], now = Date.now()): (a: PersonalDrill, b: PersonalDrill) => number {
+  const byId = new Map(calls.map(call => [call.id, call]));
+  const callTime = (drill: PersonalDrill) => drill.source.type === 'call' ? time(byId.get(drill.source.callId)?.occurredAt ?? byId.get(drill.source.callId)?.createdAt) : 0;
   const due = (drill: PersonalDrill) => !drill.dueAt || time(drill.dueAt) <= now;
-  return (state.drills ?? []).filter(drill => drill.status !== 'done')
-    .sort((a, b) => Number(due(b)) - Number(due(a)) || callTime(b) - callTime(a) || time(b.createdAt) - time(a.createdAt));
+  return (a, b) => Number(due(b)) - Number(due(a)) || callTime(b) - callTime(a) || time(b.createdAt) - time(a.createdAt);
+}
+export function pendingDrills(state: AppState, now = Date.now()): PersonalDrill[] {
+  return (state.drills ?? []).filter(drill => drill.status !== 'done').sort(drillOrder(state.calls, now));
+}
+/** Drills as list rows: the pending ones in the shared order, then the done ones, the most recently finished first. */
+export function sortDrillRows(drills: readonly PersonalDrill[], calls: readonly CallSummary[] = [], now = Date.now()): PersonalDrill[] {
+  const finished = (drill: PersonalDrill) => time(drill.completedAt ?? drill.createdAt);
+  return [
+    ...drills.filter(drill => drill.status !== 'done').sort(drillOrder(calls, now)),
+    ...drills.filter(drill => drill.status === 'done').sort((a, b) => finished(b) - finished(a)),
+  ];
 }
 export const processingCalls = (state: AppState) => (state.calls ?? []).filter(call => ['awaiting-upload', 'queued', 'processing', 'analysing'].includes(call.status));
 export const failedCalls = (state: AppState) => (state.calls ?? []).filter(call => call.status === 'error');

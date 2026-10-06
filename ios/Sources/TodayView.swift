@@ -40,8 +40,8 @@ enum TodayPlanner {
         return candidates.max { ($0.latestDate ?? .distantPast) < ($1.latestDate ?? .distantPast) }
     }
 
-    /// The next drill not already open as a session, in the shared order (web `pendingDrills`): due first,
-    /// then the newest call, then the newest drill.
+    /// The next drill not already open as a session, in the one shared order (`DrillOrder`, web `pendingDrills`):
+    /// due first, then the newest call, then the newest drill.
     static func pendingDrill(_ state: TrainingState, now: Date = Date()) -> TodayDrillSignal? {
         let open = Set(state.sessions.filter { $0.isResumable }.map(\.id))
         let candidates = state.drillSignals.filter { drill in
@@ -49,33 +49,11 @@ enum TodayPlanner {
             if let id = drill.sessionId, open.contains(id) { return false }
             return true
         }
-        let order = drillOrder(state, now: now)
-        return candidates.min { (order[$0.id] ?? Int.max) < (order[$1.id] ?? Int.max) }
-    }
-
-    /// Positions of the pending drills: due first, then the newest call, then the newest drill.
-    static func drillOrder(_ state: TrainingState, now: Date = Date()) -> [String: Int] {
-        let calls = state.calls ?? []
-        func time(_ value: String?) -> TimeInterval { value.flatMap(NativeDate.parse)?.timeIntervalSince1970 ?? 0 }
-        func callTime(_ drill: PersonalDrill) -> TimeInterval {
-            guard drill.source.type == "call", let id = drill.source.callId,
-                  let call = calls.first(where: { $0.id == id }) else { return 0 }
-            return time(call.occurredAt ?? call.createdAt)
-        }
-        func due(_ drill: PersonalDrill) -> Bool {
-            guard let dueAt = drill.dueAt, let date = NativeDate.parse(dueAt) else { return true }
-            return date <= now
-        }
-        let sorted = (state.drills ?? []).filter { $0.status != "done" }.sorted { left, right in
-            let leftDue = due(left), rightDue = due(right)
-            if leftDue != rightDue { return leftDue }
-            let leftCall = callTime(left), rightCall = callTime(right)
-            if leftCall != rightCall { return leftCall > rightCall }
-            return time(left.createdAt) > time(right.createdAt)
-        }
         var order: [String: Int] = [:]
-        for (index, drill) in sorted.enumerated() where order[drill.id] == nil { order[drill.id] = index }
-        return order
+        for (index, drill) in DrillOrder.pending(state, now: now).enumerated() where order[drill.id] == nil {
+            order[drill.id] = index
+        }
+        return candidates.min { (order[$0.id] ?? Int.max) < (order[$1.id] ?? Int.max) }
     }
 
     /// «Незаконченные занятия»: everything unfinished that is not today's card, parked retries and older lessons
@@ -183,7 +161,7 @@ struct TodayScreen: View {
                         .entrance(2)
                     TodayUploadProgress()
                         .entrance(2)
-                    TodayQuickActions(select: select, openFreeTopic: { showFreeTopic = true })
+                    TodayQuickActions(openFreeTopic: { showFreeTopic = true })
                         .entrance(3)
                     TodayLaterList(heroSessionID: heroSessionID, hidden: hiddenSessionIDs, remove: remove)
                         .entrance(4)
@@ -304,7 +282,7 @@ struct TodayScreen: View {
                 TodayPrimaryCard(title: call.title, why: "Подтверди, кто из собеседников ты, — и разбор созвона продолжится.",
                                  facts: call.counterpart.map { [$0] } ?? []) {
                     Button { openCalls(.call(id)) } label: {
-                        PrimaryActionLabel(title: "Подтвердить", icon: "person.2.fill")
+                        PrimaryActionLabel(title: "Выбрать, кто я", icon: "person.2.fill")
                     }.buttonStyle(PrimaryButton())
                 }
             }
@@ -395,7 +373,8 @@ private struct TodayHeader: View {
 
     private var copy: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Привет, \(client.state?.profile.name ?? "ты").")
+            // The web Today heading: the time of day and the name, never a placeholder name («Доброе утро, …»).
+            Text(OpeningGreeting.dayGreeting(name: client.state?.profile.name))
                 .font(TypeScale.hero).tracking(-0.6)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
@@ -580,23 +559,70 @@ private struct ResumeHeroCard: View {
     }
 }
 
+/// Today's drill (§8.6): «Переиграть момент» starts the default mode, the small «или …» under it starts the other one,
+/// in the same words as the Practice tiles and the drill rows.
 private struct DrillHeroCard: View {
     let drill: TodayDrillSignal
     @EnvironmentObject private var client: TrainingClient
     private var starting: Bool { client.isStarting(TrainingClient.drillKey(drill.id)) }
+    private var blocked: Bool { client.busy || client.startingIntent != nil || client.recording }
+    /// The full drill knows its type: a written follow-up always runs with supports and has no second mode.
+    private var personal: PersonalDrill? { client.state?.drills?.first(where: { $0.id == drill.id }) }
+    private var mode: String { personal.map(DrillOrder.startMode) ?? drill.preferredMode }
+    private var otherMode: String? {
+        if let personal { return DrillOrder.otherMode(personal) }
+        return drill.preferredMode == "call" ? "learning" : "call"
+    }
     private var source: String {
         guard let callID = drill.sourceCallId else { return "Тренировка по твоим паттернам" }
         if let call = client.state?.callSignals.first(where: { $0.id == callID }) { return "Из созвона «" + call.title + "»" }
         return "Из твоего созвона"
     }
-    var body: some View {
-        TodayPrimaryCard(title: drill.title, why: drill.why, facts: [source]) {
-            Button { Task { await client.startDrill(id: drill.id, mode: drill.preferredMode) } } label: {
-                StartButtonLabel(title: "Переиграть момент", starting: starting)
-            }
-            .buttonStyle(PrimaryButton())
-            .disabled(client.busy || client.startingIntent != nil || client.recording)
+    /// The same facts as the web card: where it comes from, about how long, and what the button starts.
+    private var facts: [String] {
+        var parts = [source]
+        if let personal {
+            parts.append("~\(PracticeForYouPlan.tile(personal, daily: client.state?.profile.dailyMinutes ?? 15).minutes) мин")
         }
+        parts.append(otherMode == nil ? "Текст" : ModeCopy.title(mode))
+        return parts
+    }
+    private var goal: String { personal?.goal.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+    var body: some View {
+        TodayPrimaryCard(title: drill.title, why: drill.why, facts: facts) {
+            if !goal.isEmpty {
+                (Text("Цель: ").fontWeight(.semibold) + Text(goal))
+                    .font(.subheadline).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } actions: {
+            VStack(spacing: 4) {
+                Button { start(mode) } label: {
+                    StartButtonLabel(title: "Переиграть момент", starting: starting)
+                }
+                .buttonStyle(PrimaryButton())
+                .disabled(blocked)
+                .accessibilityHint(ModeCopy.title(mode) + ". " + ModeCopy.explanation(mode))
+                if let otherMode {
+                    Button { start(otherMode) } label: {
+                        Text("или " + ModeCopy.title(otherMode).lowercased())
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressButton())
+                    .foregroundStyle(Theme.violet)
+                    .disabled(blocked)
+                    .accessibilityLabel("Переиграть момент " + ModeCopy.title(otherMode).lowercased())
+                    .accessibilityHint(ModeCopy.explanation(otherMode))
+                }
+            }
+        }
+    }
+
+    private func start(_ mode: String) {
+        Task { await client.startDrill(id: drill.id, mode: mode) }
     }
 }
 
@@ -762,18 +788,41 @@ private struct StatusRowLabel: View {
 }
 
 /// «Быстрый старт»: everything else you can start right now, as one list (no clipped chip row).
+/// «Загрузить созвон» opens the file picker with one tap (the same flow as the upload card in «Созвоны»); the upload
+/// then runs in the progress card above.
 private struct TodayQuickActions: View {
-    let select: (ShellTab) -> Void
     let openFreeTopic: () -> Void
     @EnvironmentObject private var client: TrainingClient
+    @ObservedObject private var uploads: CallUploadCenter
+    @State private var importing = false
+    @State private var pickError: String?
     private var pitch: CatalogFamily? { client.catalogFamily("strategy-pitch-30") }
+
+    init(openFreeTopic: @escaping () -> Void) {
+        self.openFreeTopic = openFreeTopic
+        _uploads = ObservedObject(wrappedValue: CallUploadCenter.shared)
+    }
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            rows
+            if let pickError {
+                FeatureBanner(message: pickError, onDismiss: { self.pickError = nil })
+            }
+        }
+        .callFileImport(isPresented: $importing, error: $pickError, client: client)
+        .task { await client.loadCatalog() }
+    }
+
+    private var rows: some View {
         GroupedRows("Быстрый старт") {
-            Button { select(.calls) } label: {
-                ListRowLabel(icon: "square.and.arrow.up", title: "Загрузить созвон", detail: "Запись, видео или текст звонка")
+            Button { importing = true } label: {
+                ListRowLabel(icon: "square.and.arrow.up", title: "Загрузить созвон",
+                             detail: uploads.isActive ? "Сначала дождись текущей загрузки" : "Запись, видео или текст звонка")
             }
             .buttonStyle(RowButtonStyle())
-            .accessibilityHint("Открывает вкладку «Созвоны»")
+            .disabled(uploads.isActive)
+            .accessibilityHint("Открывает выбор файла")
             if let pitch {
                 let starting = client.isStarting(TrainingClient.familyKey(pitch.id))
                 RowDivider(inset: 56)
@@ -793,7 +842,6 @@ private struct TodayQuickActions: View {
             .buttonStyle(RowButtonStyle())
             .disabled(client.hasUnuploadedRecording)
         }
-        .task { await client.loadCatalog() }
     }
 }
 

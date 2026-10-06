@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppState, BrainStatus, Session, SubscriptionUsage } from '@/lib/types';
 import type { CallSummary } from '@/lib/calls/types';
 import type { PlacementView } from '@/lib/placement/types';
@@ -22,6 +22,15 @@ type Options = {
 const POLL_MS = 3000;
 const FOCUS_REFRESH_MS = 10_000;
 const CALL_BUSY: CallSummary['status'][] = ['awaiting-upload', 'queued', 'processing', 'analysing'];
+
+/**
+ * Voice on the server, from /api/status: 'unknown' until it answers. A failed status check counts as unavailable: the
+ * client never speaks without a status, so the partner's text has to stand in (MOTION-PASS-0.5.2 §6).
+ */
+export function voiceAvailability(status: ServerStatus | null, statusFailed: boolean): 'ready' | 'unavailable' | 'unknown' {
+  if (status) return status.audio.configured ? 'ready' : 'unavailable';
+  return statusFailed ? 'unavailable' : 'unknown';
+}
 
 /** State, status and limits with freshness: focus/visibility refresh and background polls (audit U-09, C-05, C-13). */
 export function useAppData(options: Options) {
@@ -166,6 +175,9 @@ export function useAppData(options: Options) {
     return () => { disposed = true; if (timer) clearTimeout(timer); };
   }, [pollKey, refresh, setState]);
 
-  return { state, setState, stateRef, status, statusFailed, usage, usageLoading, needLogin, setNeedLogin, loadError, refresh, refreshStatus, refreshUsage };
+  // Memoised: a new object (and with it a new app context) only when one of these values changes, not on every render
+  // of the shell (toasts, celebrations, launch phases). Setters, refs and the refresh callbacks are stable.
+  return useMemo(() => ({ state, setState, stateRef, status, statusFailed, usage, usageLoading, needLogin, setNeedLogin, loadError, refresh, refreshStatus, refreshUsage }),
+    [state, setState, stateRef, status, statusFailed, usage, usageLoading, needLogin, setNeedLogin, loadError, refresh, refreshStatus, refreshUsage]);
 }
 export type AppData = ReturnType<typeof useAppData>;

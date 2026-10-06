@@ -309,18 +309,6 @@ export function dueLabel(dueAt: string | null, now: Date = new Date()): { label:
   return { label: `Через ${days} ${plural(days, ['день', 'дня', 'дней'])}`, due: false };
 }
 
-/** Due/new first, then started, then scheduled later, then done; newest first inside a group. */
-export function sortDrills(drills: readonly PersonalDrill[], now: Date = new Date()): PersonalDrill[] {
-  const rank = (drill: PersonalDrill) => {
-    if (drill.status === 'done') return 4;
-    if (drill.status === 'started') return 1;
-    return dueLabel(drill.dueAt, now).due || !drill.dueAt ? 0 : 2;
-  };
-  return [...drills].sort((a, b) => rank(a) - rank(b)
-    || (a.dueAt && b.dueAt ? a.dueAt.localeCompare(b.dueAt) : 0)
-    || b.createdAt.localeCompare(a.createdAt));
-}
-
 /* ───────────── facts ───────────── */
 
 export const FACT_KIND_LABEL: Record<FactKind, string> = {

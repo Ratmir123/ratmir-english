@@ -123,8 +123,10 @@ struct PatternsView: View {
         .onChange(of: signature) { _, _ in overrides = nil }
     }
 
+    /// The pattern's drills in the shared order (§8.6), so its card shows the two that come first everywhere else too.
     private func related(_ pattern: CommunicationPattern) -> [PersonalDrill] {
-        drills.filter { $0.patternIds.contains(pattern.id) || $0.source.patternId == pattern.id }
+        DrillOrder.rows(drills.filter { $0.patternIds.contains(pattern.id) || $0.source.patternId == pattern.id },
+                        calls: client.state?.calls ?? [])
     }
 
     private func update(_ pattern: CommunicationPattern, confirm: Bool? = nil, dismiss: Bool? = nil) {

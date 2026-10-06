@@ -16,7 +16,7 @@ import { messageOf, request } from './app/api';
 import { diffProgress, progressSnapshot, type Celebration } from './app/celebrations';
 import type { TabId } from './app/labels';
 import { useAppData } from './app/use-app-data';
-import { useNavigation, withViewTransition } from './app/use-navigation';
+import { useNavigation, withViewTransition, type NavigationOptions } from './app/use-navigation';
 import { useSessionController, type Feedback, type SessionController } from './app/use-session-controller';
 import { CelebrationLayer } from './shell/celebration-layer';
 import { LoginScreen } from './shell/login-screen';
@@ -101,7 +101,7 @@ function App() {
       if (call.status === 'ready') {
         push('success', `Разбор созвона готов: ${call.title}`, { label: 'Открыть', run: open });
         if (document.hidden) void window.ratmirDesktop?.notify?.({ kind: 'call-ready', title: 'Разбор созвона готов', body: call.title }).catch(() => undefined);
-      } else if (call.status === 'needs-speaker') push('success', 'Подтверди, кто из собеседников ты — и разбор продолжится.', { label: 'Подтвердить', run: open });
+      } else if (call.status === 'needs-speaker') push('success', 'Подтверди, кто из собеседников ты — и разбор продолжится.', { label: 'Выбрать, кто я', run: open });
       else if (call.status === 'error') push('error', `Созвон «${call.title}» не обработан.`, { label: 'Открыть', run: open });
     },
   });
@@ -136,7 +136,7 @@ function App() {
   const retryLaunch = useCallback(async () => {
     setRetrying(true);
     try { await data.refresh(); void data.refreshStatus(); } finally { setRetrying(false); }
-  }, [data.refresh, data.refreshStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data.refresh, data.refreshStatus]);
 
   // Cold open (once per launch): the placement test comes first until a result exists; otherwise a short greeting
   // next to the same companion that waited for the state. A sign-in in between goes straight to the shell.
@@ -168,13 +168,14 @@ function App() {
   const hasState = !!data.state;
   useEffect(() => { if (hasState && !catalog) void loadCatalog(); }, [hasState, catalog, loadCatalog]);
 
-  const go = useCallback((tab: TabId, options?: Parameters<AppContextValue['go']>[1]) => {
+  const clearErrors = toasts.clearErrors;
+  const go = useCallback((tab: TabId, options?: NavigationOptions) => {
     lessonRef.current?.voice.stop();
     lessonRef.current?.setSessionError('');
     if (launchPhase.current === 'greeting') handOff(true);
-    toasts.clearErrors();
+    clearErrors();
     nav.go(tab, options);
-  }, [nav, toasts, handOff]);
+  }, [nav, clearErrors, handOff]);
   const openPlacement = useCallback(() => {
     lessonRef.current?.voice.stop();
     placementBefore.current = progressSnapshot(data.stateRef.current?.progression);
@@ -207,7 +208,7 @@ function App() {
       return;
     }
     if (target.destination === 'placement') { openPlacement(); return; }
-    if (target.destination === 'calls' || target.destination === 'patterns') { go('calls'); return; }
+    if (target.destination === 'calls' || target.destination === 'patterns') { go('calls', target.destination === 'patterns' ? { calls: 'patterns' } : undefined); return; }
     if (target.familyId) { openFamily(target.familyId); return; }
     go('practice');
     const section = target.track === 'ielts-foundation' ? 'ielts' : target.track;

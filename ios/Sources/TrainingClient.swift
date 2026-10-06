@@ -150,6 +150,8 @@ extension Notification.Name {
     @Published var state: TrainingState?
     @Published var conversation: Conversation?
     @Published var status: ServerStatus?
+    /// The last `/api/status` read failed and no status is known: partner lines may not be audible, so they are shown.
+    @Published private(set) var statusUnavailable = false
     @Published var subscriptionUsage: SubscriptionUsage?
     @Published var busy = false
     @Published var error: String?
@@ -595,6 +597,7 @@ extension Notification.Name {
         conversation = nil
         state = nil
         status = nil
+        statusUnavailable = false
         subscriptionUsage = nil
         catalog = []
         savedDrafts.removeAll()
@@ -619,7 +622,12 @@ extension Notification.Name {
         async let statusValue: ServerStatus? = try? request("status")
         async let usageValue: SubscriptionUsage? = try? request("usage")
         let (newStatus, newUsage) = await (statusValue, usageValue)
-        if let newStatus { status = newStatus }
+        if let newStatus {
+            status = newStatus
+            statusUnavailable = false
+        } else if status == nil {
+            statusUnavailable = true
+        }
         if let newUsage { subscriptionUsage = newUsage }
     }
 
@@ -865,7 +873,7 @@ extension Notification.Name {
             stage: "Готовлю тренировку", body: ["mode": mode, "drillId": id])
     }
 
-    /// «Свободная тема»: a context, a mode and an optional topic.
+    /// «Своя тема»: a context, a mode and an optional topic.
     func startFree(mode: String, context: String, topic: String? = nil) async {
         var body: [String: Any] = ["mode": mode, "context": context]
         let cleanTopic = topic?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1139,8 +1147,9 @@ extension Notification.Name {
     static func partnerLineKey(_ turnID: String) -> String { "turn:" + turnID }
     static func pushbackLineKey(_ retryID: String) -> String { "pushback:" + retryID }
 
-    /// No voice on the server (or not known yet): partner lines can only be read. Same rule as the web client.
-    var voiceUnavailable: Bool { status?.audio.configured != true }
+    /// Partner lines can only be read: the server says voice is not configured, or its status could not be read.
+    /// While the status is simply not loaded yet, lines stay hidden (MOTION-PASS §6). Same rule as the web client.
+    var voiceUnavailable: Bool { status.map { !$0.audio.configured } ?? statusUnavailable }
 
     func voiceFailed(_ key: String) -> Bool { unvoicedLines.contains(key) }
 
@@ -1165,7 +1174,8 @@ extension Notification.Name {
 
     /// Opens the latest partner line at once. Only the line about to be answered is marked on the server right away
     /// (`show-text`, without stopping speech or refreshing everything, C-06); while busy or recording, the next
-    /// message's `textVisible` marks it instead.
+    /// message's `textVisible` marks it instead. The request names the line (`turnId`), so a reveal that reaches the
+    /// server after the next message can never mark the newer, still hidden line.
     func revealPartnerText() {
         guard let conversation, let turn = conversation.turns.last(where: { $0.role == "assistant" }) else { return }
         revealedPartnerTurn = turn.id
@@ -1176,8 +1186,9 @@ extension Notification.Name {
         if previewMode { return }
 #endif
         let sessionID = conversation.id
+        let turnID = turn.id
         Task { [weak self] in
-            guard let self, let value: Conversation = try? await self.request("sessions/\(sessionID)/show-text", body: [:]),
+            guard let self, let value: Conversation = try? await self.request("sessions/\(sessionID)/show-text", body: ["turnId": turnID]),
                   let current = self.conversation, current.id == value.id, TrainingClient.isNotOlder(value, than: current) else { return }
             self.conversation = value
         }

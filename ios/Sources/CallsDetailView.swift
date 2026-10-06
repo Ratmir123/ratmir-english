@@ -275,7 +275,7 @@ struct CallDetailScreen: View {
             VStack(alignment: .leading, spacing: 12) {
                 FeatureSectionTitle(title: "Тренировки из этого звонка",
                                     subtitle: "Переиграй моменты, которые стоили денег. Начни с первой — она важнее.")
-                DrillsList(drills: detail?.drills ?? [], limit: nil)
+                DrillsList(drills: detail?.drills ?? [])
             }
         case .transcript:
             if let detail {
@@ -431,6 +431,9 @@ struct CallAudioBar: View {
 
 // MARK: - Sheets
 
+/// «Кто есть кто» (web: SpeakerConfirm / SpeakerSheet in components/calls/call-detail.tsx): pick yourself by the lines,
+/// name the others if you like. While the call waits for it, confirming the pre-selected voice is enough; later the
+/// action stays off until the choice really changes, because the server rebuilds the review from it.
 struct CallSpeakerSheet: View {
     let detail: CallDetail
     let onConfirm: (String, [String: String]) async -> Bool
@@ -445,38 +448,79 @@ struct CallSpeakerSheet: View {
         _me = State(initialValue: detail.meSpeakerId)
     }
 
+    private var waitsForChoice: Bool { detail.kind == .needsSpeaker }
+    /// A review exists: confirming rebuilds it.
+    private var rebuilds: Bool { detail.review != nil }
+    private var named: Bool {
+        labels.contains { $0.key != me && !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+    /// Nothing new → nothing to rebuild.
+    private var changed: Bool {
+        guard let me else { return false }
+        return waitsForChoice || me != detail.meSpeakerId || named
+    }
+    private var intro: String {
+        waitsForChoice
+            ? "Я не узнал твой голос уверенно. Посмотри на реплики и выбери себя — разбор будет про твои слова."
+            : "Выбери себя по репликам — разбор будет про твои слова. Остальным можно дать имена."
+    }
+    private var note: String {
+        if rebuilds {
+            return "После подтверждения разбор соберётся заново — это займёт пару минут. Паттерны пересчитаются, а тренировки из этого звонка, которые ты ещё не начинал, заменятся новыми. Начатые и пройденные тренировки и принятые факты останутся."
+        }
+        return waitsForChoice ? "Разбор начнётся с этим выбором — это займёт пару минут."
+            : "Разбор начнётся заново с этим выбором — это займёт пару минут."
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Выбери себя по репликам. Остальным можно дать имена — так разбор читается легче.")
+                    Text(intro)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(detail.speakers) { speaker in
                         speakerCard(speaker)
                     }
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(20)
             }
             .background { FeatureBackdrop() }
+            .safeAreaInset(edge: .bottom, spacing: 0) { confirmBar }
             .navigationTitle("Кто есть кто")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     SheetCloseButton(title: "Позже") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Подтвердить") { confirm() }
-                        .disabled(me == nil || working)
-                }
             }
         }
         .interactiveDismissDisabled(working)
     }
 
+    /// The long action label does not fit a navigation bar, so it sits pinned under the list on the system bar material.
+    private var confirmBar: some View {
+        Button { confirm() } label: {
+            HStack(spacing: 10) {
+                if working { ProgressView().tint(Theme.ctaLabel) }
+                Text(rebuilds ? "Пересобрать разбор" : "Подтвердить и разобрать")
+            }
+        }
+        .buttonStyle(PrimaryButton())
+        .disabled(!changed || working)
+        .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 8)
+        .background(.bar)
+    }
+
     private func speakerCard(_ speaker: CallSpeaker) -> some View {
         let selected = me == speaker.id
+        // The voice marked as yours so far reads «Был отмечен как ты» while another one is picked (as on the web).
+        let name = speaker.isMe && speaker.label == "Ты" ? "Был отмечен как ты" : speaker.label
         return VStack(alignment: .leading, spacing: 10) {
             Button {
                 me = speaker.id
@@ -486,7 +530,7 @@ struct CallSpeakerSheet: View {
                         .foregroundStyle(selected ? FeaturePalette.violet : Color.secondary)
                         .font(.title3)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(selected ? "Это я" : speaker.label).font(.headline)
+                        Text(selected ? "Это я" : name).font(.headline)
                         if let talk = FeatureFormat.duration(speaker.talkSeconds) {
                             Text("Говорит " + talk).font(.caption).foregroundStyle(.secondary)
                         }
@@ -515,7 +559,7 @@ struct CallSpeakerSheet: View {
     }
 
     private func confirm() {
-        guard let me, !working else { return }
+        guard let me, changed, !working else { return }
         working = true
         Task {
             let accepted = await onConfirm(me, labels.filter { $0.key != me })

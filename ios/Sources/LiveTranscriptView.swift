@@ -64,19 +64,27 @@ struct LiveTranscriptTokens {
 struct LiveCaption: Equatable, Identifiable {
     let id: Int
     var text: String
-    /// When the word joins the line (its slot in the reveal queue), seconds since the reference date.
+    /// When the word joins the line, seconds since the reference date.
     var revealAt: Double
     /// Spoken words fade in with a small rise and blur; restored text and corrections appear in place.
     var entrance: Bool
     /// The text before the latest in-place revision; it cross-fades out from `revisedAt`.
     var formerText: String?
     var revisedAt: Double
+    /// When the recognizer first delivered the word: it must be on screen by `arrivedAt + maximumLag`.
+    var arrivedAt: Double
+    /// Its place in the reveal cadence (web `anchor`). A word shown on catching up keeps its cadence slot, a little
+    /// before `revealAt`, so the next word follows the rhythm instead of waiting a full interval after the frame.
+    var slot: Double
 }
 
-/// The reveal queue: words land about 55 ms apart, faster when a backlog builds, so the line never trails
-/// the recognizer by more than ~350 ms. Steady speech appears at once. Pure, so it is unit-tested.
+/// The reveal queue, the same rule as the web (`paceReveal` in components/live-caption-words.ts): words land about
+/// 55 ms apart in steady speech, a word arriving after a pause shows at once, and every word has its own deadline —
+/// the pace tightens whenever a word would otherwise appear more than 350 ms after it arrived. Pure, so it is unit-tested.
 enum LiveCaptionSchedule {
+    /// One word per this many seconds while the queue is short (web `REVEAL_WORD_MS`).
     static let wordInterval = 0.055
+    /// No word waits longer than this after it arrived (web `REVEAL_MAX_LAG_MS`).
     static let maximumLag = 0.35
     /// A word extended this soon after it appeared simply completes (it is still fading in).
     static let silentRevision = 0.12
@@ -87,7 +95,8 @@ enum LiveCaptionSchedule {
     static func merge(_ previous: [LiveCaption], words: [LiveTranscriptTokens.Word], now: Double) -> [LiveCaption] {
         var known: [Int: LiveCaption] = [:]
         for caption in previous { known[caption.id] = caption }
-        let lastShown = previous.lazy.map(\.revealAt).filter { $0 <= now }.max()
+        // The cadence continues from the last word already on screen.
+        let anchor = previous.lazy.filter { $0.revealAt <= now }.map(\.slot).max() ?? -Double.infinity
         var result: [LiveCaption] = []
         result.reserveCapacity(words.count)
         var waiting: [Int] = []
@@ -104,21 +113,53 @@ enum LiveCaptionSchedule {
                 result.append(caption)
             } else if word.animateEntrance || !waiting.isEmpty {
                 waiting.append(result.count)
-                result.append(LiveCaption(id: word.id, text: word.text, revealAt: now, entrance: true, formerText: nil, revisedAt: now))
+                result.append(LiveCaption(id: word.id, text: word.text, revealAt: now, entrance: true, formerText: nil,
+                                          revisedAt: now, arrivedAt: now, slot: now))
             } else {
                 // A recognizer correction inside the line: it fades in where it stands.
-                result.append(LiveCaption(id: word.id, text: word.text, revealAt: now, entrance: false, formerText: "", revisedAt: now))
+                result.append(LiveCaption(id: word.id, text: word.text, revealAt: now, entrance: false, formerText: "",
+                                          revisedAt: now, arrivedAt: now, slot: now))
             }
         }
         guard !waiting.isEmpty else { return result }
-        let step = min(wordInterval, maximumLag / Double(waiting.count))
-        var slot = now
-        if let lastShown { slot = max(now, lastShown + step) }
-        for index in waiting {
-            result[index].revealAt = slot
-            slot += step
+        let slots = paceSlots(arrivals: waiting.map { result[$0].arrivedAt }, anchor: anchor, now: now)
+        for (index, slot) in zip(waiting, slots) {
+            result[index].slot = slot
+            result[index].revealAt = max(now, slot)
         }
         return result
+    }
+
+    /// Web `paceReveal`, run ahead from `now` until the queue is empty (nothing else arrives in between; the next
+    /// recognizer delta schedules again). `arrivals` are the waiting words' arrival times in reveal order, `anchor` is
+    /// the slot of the last word shown. Overdue words show at once; then one interval apart, the interval shrinking
+    /// below 55 ms only as far as the tightest deadline needs. After a pause the cadence restarts at `now`.
+    static func paceSlots(arrivals: [Double], anchor: Double, now: Double) -> [Double] {
+        var slots: [Double] = []
+        slots.reserveCapacity(arrivals.count)
+        var anchor = anchor
+        var count = 0
+        // Overdue words (a stalled frame, an enormous burst) show at once; the cadence continues from now.
+        while count < arrivals.count && now - arrivals[count] >= maximumLag {
+            slots.append(now)
+            count += 1
+        }
+        if count > 0 { anchor = now }
+        guard count < arrivals.count else { return slots }
+        // The k-th remaining word shows at most (k + 1) intervals from now: keep each one inside its deadline.
+        var interval = wordInterval
+        for index in count..<arrivals.count {
+            interval = min(interval, (arrivals[index] + maximumLag - now) / Double(index - count + 1))
+        }
+        interval = max(0, interval)
+        var next = anchor + interval
+        // After a pause the first waiting word is due now, not after a backlog of missed intervals.
+        if next < now - wordInterval { next = now }
+        for _ in count..<arrivals.count {
+            slots.append(next)
+            next += interval
+        }
+        return slots
     }
 }
 
@@ -149,7 +190,8 @@ enum LiveCaptionSchedule {
         tokens = LiveTranscriptTokens(text: value)
         let shown = LiveTranscriptModel.clock() - 1
         let fresh = tokens.words.map {
-            LiveCaption(id: $0.id, text: $0.text, revealAt: shown, entrance: false, formerText: nil, revisedAt: shown)
+            LiveCaption(id: $0.id, text: $0.text, revealAt: shown, entrance: false, formerText: nil, revisedAt: shown,
+                        arrivedAt: shown, slot: shown)
         }
         if captions != fresh { captions = fresh }
         if animating { animating = false }

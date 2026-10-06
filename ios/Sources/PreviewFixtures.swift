@@ -37,7 +37,7 @@ struct PreviewAccessibility: ViewModifier {
         let state = stateFixture(screen, now: now, conversation: conversation)
         client.previewMode = true
         client.state = decode(state, as: TrainingState.self)
-        client.status = decode(["app": ["name": "Smooth Talk", "version": "0.5.0", "channel": "alpha"],
+        client.status = decode(["app": ["name": "Smooth Talk", "version": "0.5.2", "channel": "alpha"],
                                 "brain": ["model": "gpt-6.1-sol", "verified": true], "audio": ["configured": true]], as: ServerStatus.self)
         client.subscriptionUsage = decode(usageFixture(), as: SubscriptionUsage.self)
         client.catalog = decode(["catalog": catalogFixture()], as: FamiliesResponse.self)?.catalog ?? []
@@ -224,7 +224,7 @@ struct PreviewAccessibility: ViewModifier {
             sessions.append(done)
         }
         var state: [String: Any] = [
-            "app": ["name": "Smooth Talk", "version": "0.5.0"],
+            "app": ["name": "Smooth Talk", "version": "0.5.2"],
             "profile": ["name": "Alex", "dailyMinutes": 15, "goals": "Уверенно вести созвоны с клиентами на английском.",
                         "interests": ["AI", "игры", "спорт"], "professionalContext": "CG-художник, работает с брендами.",
                         "relocation": "Переезд через месяц.", "feedback": "Прямо и по делу.", "audioRetentionDays": 30, "budgetUsd": 35],

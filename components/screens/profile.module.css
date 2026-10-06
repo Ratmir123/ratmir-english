@@ -61,6 +61,21 @@
 
 .version { text-align: center; font-size: var(--text-12); color: var(--text-tertiary); padding: 4px 0 8px; }
 
+/* Settings that save on their own (voice budget, audio retention): label, a compact control, a quiet status. */
+.setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(112px, 150px); align-items: center; gap: 4px 12px; }
+.settingLabel { display: block; font-size: var(--text-13); font-weight: 600; color: var(--text-secondary); }
+.settingInput { min-height: 40px; padding: 8px 12px; }
+.settingStatus { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 6px; min-height: 18px; font-size: var(--text-12); font-weight: 600; color: var(--text-secondary); }
+.settingStatus svg { color: var(--accent-lime-ink); }
+.settingError { grid-column: 1 / -1; }
+
+/* «Мой плейбук» lives in Созвоны; Profile keeps one row that goes there. */
+.linkCard { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; color: var(--text-primary); }
+.linkCopy { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.linkCopy strong { font-family: var(--font-display); font-size: 20px; font-weight: 750; }
+.linkCopy span { font-size: var(--text-13); color: var(--text-secondary); line-height: 1.45; }
+.linkAction { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; font-weight: 650; color: var(--accent-violet-ink); }
+
 @container profile (max-width: 560px) {
   .fields { grid-template-columns: minmax(0, 1fr); }
 }

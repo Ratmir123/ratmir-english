@@ -39,8 +39,10 @@ private struct PlacementFlowContainer: View {
     @State private var roundTick = 0
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let client: TrainingClient
 
     init(client: TrainingClient, startRetake: Bool) {
+        self.client = client
         _store = StateObject(wrappedValue: PlacementStore(client: client))
         _player = StateObject(wrappedValue: FeatureAudioPlayer(client: client))
         _wantsRetake = State(initialValue: startRetake)
@@ -153,7 +155,11 @@ private struct PlacementFlowContainer: View {
 
     @ViewBuilder private var mainContent: some View {
         if case .result = stage, let view = store.view {
-            PlacementResultView(view: view, onRetake: { wantsRetake = true }, onStartPractice: { dismiss() })
+            // «Начать практику» leads to Сегодня, where the plan built from this result waits (as on the web).
+            PlacementResultView(view: view, onRetake: { wantsRetake = true }, onStartPractice: {
+                client.requestedTab = .today
+                dismiss()
+            })
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {

@@ -35,7 +35,8 @@ export function PushbackRound({ retry, retryId }: { retry: Retry; retryId: strin
   const capturing = voice.state === 'listening' || voice.state === 'transcribing';
   const pending = !!lesson.busy || capturing || voice.state === 'thinking';
   const contextKey = `${session.id}:pushback:${retryId}`;
-  const textShown = !audioReady || voiceFailed || revealed;
+  // Hidden while the voice status is still unknown too (same rule as the conversation); shown when voice is off or failed.
+  const textShown = lesson.voiceUnavailable || voiceFailed || revealed;
 
   const play = async () => {
     if (audio === 'playing') { player.current?.pause(); player.current = null; setAudio('idle'); return; }
@@ -75,7 +76,7 @@ export function PushbackRound({ retry, retryId }: { retry: Retry; retryId: strin
         {audioReady && <button type="button" className="icon-button" onClick={() => void play()} aria-label={audio === 'playing' ? 'Остановить' : 'Послушать возражение'} disabled={audio === 'loading'}>
           {audio === 'loading' ? <CircleNotchIcon size={18} className={styles.spin} /> : audio === 'playing' ? <SquareIcon size={16} weight="fill" /> : <SpeakerHighIcon size={18} weight="fill" />}
         </button>}
-        {audioReady && !voiceFailed && (revealed
+        {!lesson.voiceUnavailable && !voiceFailed && (revealed
           ? <button type="button" className="text-button muted" onClick={() => setRevealed(false)}>Скрыть текст</button>
           : <button type="button" className="button small tinted" onClick={() => setRevealed(true)}><EyeIcon size={15} />Показать текст</button>)}
       </div>

@@ -235,7 +235,8 @@ struct RootView: View {
     /// One layer from the first frame to the hand-off: launch wait, offline, greeting (the same companion throughout).
     @ViewBuilder private var launchLayer: some View {
         if launchLayerVisible {
-            LaunchView(stage: launchStage, name: client.state?.profile.name ?? "ты", sentence: openingSentence,
+            let copy = OpeningGreeting(state: client.state)
+            LaunchView(stage: launchStage, greeting: copy.greeting, sentence: copy.motivation,
                        leaving: launchLeaving, leaveSeconds: launchLeaveSeconds,
                        skip: { finishOpening(animated: false) },
                        retry: { Task { await client.restore() } },
@@ -350,16 +351,6 @@ struct RootView: View {
     private var homeEntryVisible: Bool { !openingVisible || opening.phase == .handoff }
     /// Skipping the greeting reveals Home at once; after the hand-off (or with no greeting at all) the staircase runs.
     private var homeEntryAnimated: Bool { !opening.greeted || opening.animateHome }
-
-    private var openingSentence: String {
-        if let state = client.state, TodayPlanner.resumableSession(state) != nil {
-            return "Разговор на месте. Давай дожмём мысль."
-        }
-        let completedToday = client.state?.sessions.contains { session in
-            session.status == "completed" && session.latestDate.map { Calendar.current.isDateInToday($0) } == true
-        } == true
-        return completedToday ? "Сегодня уже потренировался. Дальше — в своём темпе." : "Сначала одна мысль. Потом разговор пойдёт."
-    }
 
     private func runOpening() async {
         guard opening.begin(readiness: openingReadiness, reduceMotion: reduceMotion || voiceOver) else { return }

@@ -5,7 +5,7 @@ import type { Context, Mode, Session, Turn } from '@/lib/types';
 import { useVoice, type RecordingDraft } from '../use-voice';
 import { messageOf, request } from './api';
 import { useDrafts, type DraftIntent } from './use-drafts';
-import type { AppData } from './use-app-data';
+import { voiceAvailability, type AppData } from './use-app-data';
 import type { Navigation } from './use-navigation';
 import type { TabId } from './labels';
 import { diffProgress, improvedCelebration, progressSnapshot, type Celebration } from './celebrations';
@@ -16,7 +16,8 @@ export type StartOptions = {
   drillId?: string;
   from?: TabId;
 };
-export type ToastAction = { label: string; run: () => void };
+/** `life` (ms) overrides how long the toast stays: an undo window («Факт убран · Вернуть») ends with its action. */
+export type ToastAction = { label: string; run: () => void; life?: number };
 export type Feedback = {
   error: (message: string, action?: ToastAction) => void;
   notice: (message: string, action?: ToastAction) => void;
@@ -62,9 +63,11 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
   const [partnerText, setPartnerText] = useState<PartnerText>(NO_PARTNER_TEXT);
   const partnerTextRef = useRef(partnerText);
   partnerTextRef.current = partnerText;
-  const audioReady = !!data.status?.audio.configured;
-  const audioReadyRef = useRef(audioReady);
-  audioReadyRef.current = audioReady;
+  // Until /api/status answers the voice is unknown and partner lines stay hidden (like the iPhone); only a status that
+  // says «no voice», or a failed status check, makes the text stand in for it.
+  const voiceUnavailable = voiceAvailability(data.status, data.statusFailed) === 'unavailable';
+  const voiceUnavailableRef = useRef(voiceUnavailable);
+  voiceUnavailableRef.current = voiceUnavailable;
   const [comfort, setComfortMap] = useState<Record<string, number>>({});
   const [glowRetryId, setGlowRetryId] = useState<string | null>(null);
   /** The session completed by this action (not opened from history): its outcome celebrates once. */
@@ -112,7 +115,7 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
   /** He cannot hear this line (no voice configured, or its speech failed): its text stands in and cannot be hidden. */
   const speechFailedTurnId = voice.speechFailedTurnId;
   const partnerTextForced = useCallback((turn: Pick<Turn, 'id'>) =>
-    !audioReady || speechFailedTurnId === turn.id || partnerText.unvoiced.has(turn.id), [audioReady, speechFailedTurnId, partnerText]);
+    voiceUnavailable || speechFailedTurnId === turn.id || partnerText.unvoiced.has(turn.id), [voiceUnavailable, speechFailedTurnId, partnerText]);
   const partnerTextShown = useCallback((turn: Pick<Turn, 'id'>) =>
     partnerTextForced(turn) || partnerText.shown.has(turn.id), [partnerTextForced, partnerText]);
   // A line whose voice failed stays readable (and counts as read) even after a later replay works.
@@ -288,7 +291,7 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
     // not partner speech (same rule as the iPhone client).
     const heard = current.turns.findLast(turn => turn.role === 'assistant');
     const textVisible = !current.baseline && !!heard && !['reading', 'writing'].includes(current.lesson.activity || '')
-      && (!audioReadyRef.current || voiceRef.current.speechFailedTurnId === heard.id || partnerTextRef.current.seen.has(heard.id));
+      && (voiceUnavailableRef.current || voiceRef.current.speechFailedTurnId === heard.id || partnerTextRef.current.seen.has(heard.id));
     const result = await action('Собеседник отвечает', async () => {
       const { sessionId: ignored, ...body } = packet;
       void ignored;
@@ -434,11 +437,11 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
   return useMemo(() => ({
     voice, session, setSession, busy, busySince, starting, sessionError, setSessionError,
     hintText, hintLevel, comfort: sessionComfort, setComfort, glowRetryId, lastCompletedId,
-    partnerTextShown, partnerTextForced, revealPartnerText, hidePartnerText,
+    voiceUnavailable, partnerTextShown, partnerTextForced, revealPartnerText, hidePartnerText,
     drafts, draftFor, changeDraft, discardDraft,
     open, start, send, resend, sessionAction, finishWithDraft, hint, pushbackSpeech, pushback, deleteSession, resetAll,
   }), [voice, session, busy, busySince, starting, sessionError, hintText, hintLevel, sessionComfort, setComfort, glowRetryId, lastCompletedId,
-    partnerTextShown, partnerTextForced, revealPartnerText, hidePartnerText, drafts, draftFor, changeDraft, discardDraft,
+    voiceUnavailable, partnerTextShown, partnerTextForced, revealPartnerText, hidePartnerText, drafts, draftFor, changeDraft, discardDraft,
     open, start, send, resend, sessionAction, finishWithDraft, hint, pushbackSpeech, pushback, deleteSession, resetAll]);
 }
 export type SessionController = ReturnType<typeof useSessionController>;

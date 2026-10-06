@@ -186,7 +186,7 @@ private struct CallsScreenContent: View {
 
 // MARK: - Insights
 
-/// «Мои паттерны» and «Факты о тебе» as two rows of one surface.
+/// «Мои паттерны» and «Мой плейбук» as two rows of one surface.
 struct CallsInsightsRow: View {
     let patterns: [CommunicationPattern]
     let facts: [ProfileFact]
@@ -197,7 +197,6 @@ struct CallsInsightsRow: View {
             .sorted { $0.costRank < $1.costRank }
     }
     private var suggestedFacts: Int { facts.filter { $0.status == "suggested" }.count }
-    private var acceptedFacts: Int { facts.filter { $0.status == "accepted" }.count }
 
     var body: some View {
         if !patterns.isEmpty || !facts.isEmpty {
@@ -244,10 +243,7 @@ struct CallsInsightsRow: View {
 
     private var factsRow: some View {
         Button { open(.facts) } label: {
-            ListRowLabel(icon: "person.text.rectangle", title: "Факты о тебе",
-                         detail: suggestedFacts > 0
-                            ? FeatureFormat.count(suggestedFacts, "новое предложение", "новых предложения", "новых предложений") + " — проверь"
-                            : FeatureFormat.count(acceptedFacts, "факт", "факта", "фактов") + " в плейбуке") {
+            ListRowLabel(icon: "person.text.rectangle", title: "Мой плейбук", detail: PlaybookCopy.detail(facts)) {
                 if suggestedFacts > 0 {
                     Circle().fill(FeaturePalette.lime).overlay { Circle().strokeBorder(FeaturePalette.success, lineWidth: 1) }
                         .frame(width: 9, height: 9).accessibilityHidden(true)

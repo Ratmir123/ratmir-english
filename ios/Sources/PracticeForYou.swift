@@ -64,13 +64,11 @@ import SwiftUI
     /// A tile footer holds the other mode and/or the line to listen to.
     static func hasFooter(_ tile: Tile) -> Bool { tile.other != nil || seedLine(tile) != nil }
 
-    /// One start rule everywhere (§8.6): pressure tier 2–3 runs «Как на созвоне», tier 1 «С опорами».
-    /// A follow-up drill is a written message, always with supports.
+    /// One start rule everywhere (§8.6, `DrillOrder.startMode`): pressure tier 2–3 runs «Как на созвоне», tier 1
+    /// «С опорами»; a follow-up drill is a written message, always with supports.
     static func tile(_ drill: PersonalDrill, daily: Int) -> Tile {
-        let text = drill.type == "followup"
-        let mode = text ? "learning" : (drill.tier >= 2 ? "call" : "learning")
-        return Tile(id: drill.id, kind: .drill(drill), minutes: min(lessonBudget(daily), drillMinutes[drill.type] ?? 6),
-                    mode: mode, other: text ? nil : otherMode(mode))
+        Tile(id: drill.id, kind: .drill(drill), minutes: min(lessonBudget(daily), drillMinutes[drill.type] ?? 6),
+             mode: DrillOrder.startMode(drill), other: DrillOrder.otherMode(drill))
     }
 
     /// Today's plan without a drill starts directly in its preferred mode, exactly like Today's card (§8.8).
@@ -80,35 +78,6 @@ import SwiftUI
         let mode = text ? "learning" : (recommendation.preferredMode == "call" ? "call" : "learning")
         return Tile(id: "plan:" + recommendation.familyId, kind: .plan(recommendation), minutes: lessonBudget(state.profile.dailyMinutes),
                     mode: mode, other: text ? nil : otherMode(mode))
-    }
-
-    /// Web `pendingDrills`: not done; due first, then the newest call, then the newest drill.
-    static func pending(_ state: TrainingState, now: Date = Date()) -> [PersonalDrill] {
-        var callTimes: [String: Date] = [:]
-        for call in state.calls ?? [] {
-            callTimes[call.id] = FeatureFormat.date(call.occurredAt) ?? FeatureFormat.date(call.createdAt) ?? .distantPast
-        }
-        func due(_ drill: PersonalDrill) -> Bool {
-            guard let date = FeatureFormat.date(drill.dueAt) else { return true }
-            return date <= now
-        }
-        func callTime(_ drill: PersonalDrill) -> Date {
-            guard drill.source.type == "call", let id = drill.source.callId else { return .distantPast }
-            return callTimes[id] ?? .distantPast
-        }
-        func created(_ drill: PersonalDrill) -> Date { FeatureFormat.date(drill.createdAt) ?? .distantPast }
-        return (state.drills ?? []).filter { !$0.isDone }.sorted { left, right in
-            let leftDue = due(left), rightDue = due(right)
-            if leftDue != rightDue { return leftDue }
-            let leftCall = callTime(left), rightCall = callTime(right)
-            if leftCall != rightCall { return leftCall > rightCall }
-            return created(left) > created(right)
-        }
-    }
-
-    static func done(_ state: TrainingState) -> [PersonalDrill] {
-        func finished(_ drill: PersonalDrill) -> Date { FeatureFormat.date(drill.completedAt ?? drill.createdAt) ?? .distantPast }
-        return (state.drills ?? []).filter { $0.isDone }.sorted { finished($0) > finished($1) }
     }
 
     /// Web `familyForPattern` over the catalog: a scenario listing the pattern and built for its category, then any scenario
@@ -147,12 +116,12 @@ import SwiftUI
         guard let state else { return Model() }
         let daily = state.profile.dailyMinutes
         let plan = planTile(state)
-        let pendingDrills = pending(state, now: now)
+        let pendingDrills = DrillOrder.pending(state, now: now)
         let pendingTiles = pendingDrills.map { tile($0, daily: daily) }
         var planFamily: String? = nil
         if let plan, case .plan(let recommendation) = plan.kind { planFamily = recommendation.familyId }
         return Model(plan: plan, tiles: Array(pendingTiles.prefix(maxTiles - (plan == nil ? 0 : 1))), pending: pendingTiles,
-                     done: done(state).map { tile($0, daily: daily) },
+                     done: DrillOrder.done(state.drills ?? []).map { tile($0, daily: daily) },
                      suggestions: suggestions(state, catalog: catalog, pending: pendingDrills, planFamily: planFamily))
     }
 }

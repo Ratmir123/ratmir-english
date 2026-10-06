@@ -82,7 +82,8 @@ export function ConversationView() {
   const baselineReplies = s.turns.filter(turn => turn.role === 'user' && turn.source === 'audio' && turn.audioFile && turn.support === 0 && !turn.transcriptEdited && !turn.disputed).length;
   const draft = lesson.draftFor(s.id, 'message');
   // MOTION-PASS-0.5.2 §6: every partner line arrives hidden, in both modes; a reveal applies to that line only.
-  // Without a working voice (none configured, or this line's speech failed) the text stands in for it.
+  // Without a working voice (none configured, or this line's speech failed) the text stands in for it; while the server
+  // status is still unknown the line stays hidden behind «Показать текст».
   const shown = (turn: Turn) => !baseline && lesson.partnerTextShown(turn);
   const forced = (turn: Turn) => lesson.partnerTextForced(turn);
   const partnerShown = !!lastPartner && shown(lastPartner);
@@ -168,7 +169,8 @@ export function ConversationView() {
       <Dock intent="message" placeholder={s.lesson.activity === 'writing' ? 'Write your text here…' : 'Your reply…'} label={s.lesson.activity === 'writing' ? 'Твой текст по-английски' : 'Твой ответ по-английски'}
         sendLabel="Отправить" onSend={() => void lesson.send()} rows={s.lesson.activity === 'writing' ? 6 : 1}
         showMic={!textActivity}
-        micBlockedReason={!audioReady ? 'Голос не подключён — пиши текстом или подключи ключ в профиле.' : awaitingPartner ? 'Сначала получи ответ собеседника.' : null}
+        micBlockedReason={!audioReady ? (lesson.voiceUnavailable ? 'Голос не подключён — пиши текстом или подключи ключ в профиле.' : 'Проверяю, подключён ли голос…')
+          : awaitingPartner ? 'Сначала получи ответ собеседника.' : null}
         inputBlockedReason={last?.role === 'user' ? 'Ждём ответ собеседника на твою реплику.' : null}
         footer={userTurns.length > 0 ? <button type="button" className="text-button" data-testid="request-finish" disabled={!!finishReason} onClick={requestFinish}
           title={finishReason ?? undefined}><CheckIcon size={16} />{CTA.finish}</button> : undefined} />

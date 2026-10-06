@@ -1,15 +1,24 @@
 /* Calls screen, upload card, list (W3). Tokens: ./kit.module.css (.scope).
-   Reading order: upload entry → calls list → patterns (or the selected call). Rows inside surfaces, no cards in cards. */
+   Reading order: header → «Звонки · Паттерны · Плейбук» → the section. Rows inside surfaces, no cards in cards. */
 
-/* ───────── screen layout: master–detail on wide content areas, stacked otherwise ───────── */
-.screen { container: calls / inline-size; width: 100%; min-width: 0; }
+/* ───────── screen layout ───────── */
+.screen { container: calls / inline-size; width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.sections { display: flex; min-width: 0; }
+.panel { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
+/* A section picked here settles in softly (the screen's arrival is the staircase). */
+.panel[data-switched] { animation: panelIn var(--k-reveal-ms) var(--k-ease) both; }
+@keyframes panelIn { from { opacity: 0; transform: translate3d(0, var(--k-rise), 0); filter: blur(var(--k-blur)); } }
+.playbook { padding: 22px; }
+@media (max-width: 560px) { .playbook { padding: 18px; } }
+/* «Звонки»: one column; with a call open, master–detail on wide content areas and the call alone otherwise. */
 .layout { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); align-items: start; }
 .listPane, .detailPane { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; align-content: start; }
 .screen[data-view='detail'] .listPane { display: none; }
 @container calls (min-width: 1000px) {
-  .layout { grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); gap: 28px; }
-  .screen[data-view='detail'] .listPane { display: grid; }
-  .listPane { position: sticky; top: 16px; max-height: calc(100dvh - 32px); overflow: auto; padding: 2px 4px 16px 2px; scrollbar-width: thin; }
+  .screen[data-view='detail'] .layout { grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); gap: 28px; }
+  .screen[data-view='detail'] .listPane {
+    display: grid; position: sticky; top: 16px; max-height: calc(100dvh - 32px); overflow: auto; padding: 2px 4px 16px 2px; scrollbar-width: thin;
+  }
   .backButton { display: none !important; }
 }
 /* Header: title and lede, the screen's companion at the right end (globals .screen-mascot: 96 px, 72 px ≤ 640 px). */
@@ -17,8 +26,6 @@
 .pageCopy { display: grid; gap: 6px; flex: 1 1 auto; min-width: 0; }
 .pageHead h1 { margin: 0; font-family: var(--k-display); font-size: clamp(28px, 3.4vw, 34px); font-weight: 800; letter-spacing: -.025em; line-height: 1.1; }
 .pageHead p { margin: 0; font-size: 15px; color: var(--k-text-2); line-height: 1.5; max-width: 52ch; }
-/* In the narrow list column of the master–detail layout the companion steps down a size. */
-@container calls (min-width: 1000px) { .pageHead .headMascot { width: 84px; height: 84px; } }
 .callsBlock { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; margin-top: 8px; }
 .sectionTitle { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 4px; min-width: 0; }
 .sectionTitle h2 { margin: 0; font-family: var(--k-display); font-size: 19px; font-weight: 800; letter-spacing: -.01em; line-height: 1.25; }
@@ -27,14 +34,14 @@
 /* ───────── upload: one surface that is the drop target ───────── */
 .upload {
   display: grid; padding: 6px; min-width: 0; container: upload / inline-size;
-  transition: background-color 180ms cubic-bezier(.23, 1, .32, 1), box-shadow 180ms cubic-bezier(.23, 1, .32, 1);
+  transition: background-color var(--k-hover-ms) var(--k-ease), box-shadow var(--k-hover-ms) var(--k-ease);
 }
 .upload[data-dragging='true'] { background: var(--k-violet-soft); box-shadow: inset 0 0 0 2px var(--k-violet), var(--k-e1); }
 .pick {
   position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 4px 14px;
   padding: 14px 14px; border-radius: 22px; cursor: pointer; text-align: left;
   color: var(--k-text); font-size: 15px; font-weight: 500; /* not the global form-label look */
-  transition: background-color 160ms cubic-bezier(.23, 1, .32, 1);
+  transition: background-color var(--k-hover-ms) var(--k-ease);
 }
 @media (hover: hover) and (pointer: fine) { .pick:hover { background: var(--surface-hover, var(--k-sunken)); } }
 .upload[data-dragging='true'] .pick:hover { background: transparent; }
@@ -55,7 +62,7 @@
   position: relative; display: grid; justify-items: center; gap: 8px; padding: 22px 16px; border-radius: 22px; text-align: center; cursor: pointer;
   color: var(--k-text); font-size: 15px; font-weight: 500; /* not the global form-label look */
   background: var(--k-sunken); box-shadow: inset 0 0 0 1.5px var(--k-hairline);
-  transition: background-color 180ms cubic-bezier(.23, 1, .32, 1), box-shadow 180ms cubic-bezier(.23, 1, .32, 1);
+  transition: background-color var(--k-hover-ms) var(--k-ease), box-shadow var(--k-hover-ms) var(--k-ease);
 }
 .drop:hover { background: var(--k-sunken-2); }
 .drop:focus-within { box-shadow: inset 0 0 0 2px var(--k-focus); }
@@ -63,7 +70,7 @@
 .dropIcon {
   display: grid; place-items: center; width: 44px; height: 44px; border-radius: 15px; flex-shrink: 0;
   background: var(--k-cta-bg); color: var(--k-cta-fg);
-  transition: transform 200ms cubic-bezier(.23, 1, .32, 1);
+  transition: transform var(--k-spring-ms) var(--k-ease);
 }
 .drop[data-dragging='true'] .dropIcon, .upload[data-dragging='true'] .dropIcon { transform: translateY(-2px); }
 .drop strong { font-size: 16px; font-weight: 800; }
@@ -104,11 +111,11 @@
 .contextChip {
   min-height: 36px; padding: 0 14px; border: 0; border-radius: 999px; font: inherit; font-size: 13.5px; font-weight: 650; cursor: pointer;
   background: var(--k-sunken); color: var(--k-text-2);
-  transition: background-color 160ms cubic-bezier(.23, 1, .32, 1), color 160ms cubic-bezier(.23, 1, .32, 1), transform 160ms cubic-bezier(.23, 1, .32, 1);
+  transition: background-color var(--k-hover-ms) var(--k-ease), color var(--k-hover-ms) var(--k-ease), transform var(--k-press-ms) var(--k-ease);
 }
 .contextChip:hover { color: var(--k-text); }
 .contextChip[aria-checked='true'] { background: var(--k-violet-soft); color: var(--k-violet-ink); box-shadow: inset 0 0 0 1.5px var(--k-violet); }
-.contextChip:active { transform: scale(.97); }
+.contextChip:active { transform: scale(.97); transition-duration: var(--k-pressed-ms); }
 .contextChip:focus-visible { outline: 3px solid var(--k-focus); outline-offset: 2px; }
 .counter { justify-self: end; font-size: 12px; color: var(--k-text-2); font-variant-numeric: tabular-nums; }
 .formActions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; align-items: center; }
@@ -125,7 +132,7 @@
 .item {
   display: grid; gap: 4px; width: 100%; min-width: 0; padding: 14px 18px; border: 0; border-radius: 0; text-align: left;
   font: inherit; color: var(--k-text); background: transparent; cursor: pointer;
-  transition: background-color 160ms cubic-bezier(.23, 1, .32, 1);
+  transition: background-color var(--k-hover-ms) var(--k-ease);
 }
 @media (hover: hover) and (pointer: fine) { .item:hover { background: var(--surface-hover, var(--k-sunken)); } }
 .item:focus-visible { outline: 3px solid var(--k-focus); outline-offset: -3px; border-radius: inherit; }
@@ -160,7 +167,6 @@
 .empty li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--k-text-2); line-height: 1.45; }
 .empty li svg { flex-shrink: 0; margin-top: 1px; color: var(--k-text); }
 
-.patternsLink { justify-self: start; }
 @container upload (max-width: 460px) {
   .uploadAltLabel { flex-basis: 100%; padding: 2px 6px 0; }
 }

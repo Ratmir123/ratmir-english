@@ -9,7 +9,17 @@
 .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .intro { font-size: var(--text-13); color: var(--text-secondary); max-width: 72ch; }
 
-/* Before the first test result: the test card and the rank, side by side when there is room. */
+/* Nothing yet: one quiet line with the sleeping companion (the screen's one companion while the overview is empty). */
+.quiet { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 20px; padding: 20px 22px; }
+.quietCopy { display: grid; gap: 4px; min-width: 0; }
+.quietCopy strong { font-family: var(--font-display); font-size: 19px; font-weight: 800; }
+.quietMascot { width: 104px; height: 104px; margin: -10px -4px -12px 0; }
+@container progress (max-width: 480px) { .quiet { grid-template-columns: minmax(0, 1fr); } .quietMascot { order: -1; justify-self: center; width: 88px; height: 88px; margin: -8px 0 -6px; } }
+/* The full test report, opened from the compact level card. */
+.report { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.back { justify-self: start; margin-left: -4px; }
+
+/* The test card and the rank, side by side when there is room. */
 .pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
 @container progress (min-width: 760px) { .pair { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); } }
 

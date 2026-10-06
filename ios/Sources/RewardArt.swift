@@ -362,8 +362,8 @@ struct AchievementPracticeView: View {
         case "first-call-review":
             return .tab(.calls, label: "Загрузить созвон")
         case "call-replay":
-            if let drill = state?.drillSignals.first(where: { $0.status != "done" }) {
-                return .drill(id: drill.id, mode: drill.preferredMode, label: "Переиграть момент")
+            if let state, let drill = DrillOrder.pending(state).first {
+                return .drill(id: drill.id, mode: DrillOrder.startMode(drill), label: "Переиграть момент")
             }
             return .tab(.calls, label: "К созвонам")
         case "pattern-improving":
