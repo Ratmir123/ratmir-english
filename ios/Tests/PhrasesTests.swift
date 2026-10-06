@@ -4,7 +4,8 @@ import UIKit
 
 /// «Мои фразы» (planning/v05/PASS-0.5.3.md §1): decoding, the shared schedule and words (the same cases as
 /// tests/phrases-labels.test.ts for lib/phrases/schedule.ts and labels.ts), the request bodies, the phrase round start, the
-/// «Вернуть» window, the capture flow and the Home Screen quick action. Fictional, generic expressions only; no network.
+/// «Вернуть» window, the capture flow and the Home Screen quick action; 0.5.4 «Послушать» (ListenClip, `heard`, the upload
+/// body, the pill). Fictional, generic expressions only; no network.
 final class PhrasesTests: XCTestCase {
     /// 2026-10-06T09:00:00Z: 12:00 in Moscow.
     private let now = ISO8601DateFormatter().date(from: "2026-10-06T09:00:00Z")!
@@ -504,6 +505,181 @@ final class PhrasesTests: XCTestCase {
         XCTAssertNil(model.saved)
         XCTAssertFalse(model.save(client: client, store: PhrasesStore.shared), "An empty field saves nothing")
         PhrasesStore.shared.reset()
+    }
+
+    // MARK: «Послушать» (PASS-0.5.4 §1, lib/phrases/types.ts ListenClip)
+
+    func testListenClipDecodesEveryField() throws {
+        let shot: [String: Any] = ["id": "p-shot", "text": "give it a shot", "enrichment": "ready", "phrase": "give it a shot",
+                                   "meaning": "попробовать", "heard": "No worries, let's give it a shot."]
+        let clip = try decode(ListenClip.self, [
+            "id": "clip-1", "createdAt": "2026-10-07T10:00:00.000Z", "updatedAt": "2026-10-07T10:00:09.000Z", "origin": "iphone",
+            "source": "microphone", "seconds": 24, "transcript": "No worries, let's give it a shot.", "status": "ready",
+            "gist": "Короткий совет из кулинарного видео.", "points": ["«Give it a shot» — попробовать.", "  ", 7] as [Any],
+            "phrases": [["phrase": shot, "duplicate": false] as [String: Any],
+                        ["phrase": ["id": "p-worries", "text": "no worries"], "duplicate": true] as [String: Any],
+                        ["duplicate": true] as [String: Any]] as [Any],
+            "note": NSNull()] as [String: Any])
+        XCTAssertEqual(clip.id, "clip-1")
+        XCTAssertEqual(clip.createdAt, "2026-10-07T10:00:00.000Z")
+        XCTAssertEqual(clip.updatedAt, "2026-10-07T10:00:09.000Z")
+        XCTAssertEqual(clip.origin, .iphone)
+        XCTAssertEqual(clip.source, .microphone)
+        XCTAssertEqual(clip.seconds, 24)
+        XCTAssertEqual(clip.transcript, "No worries, let's give it a shot.")
+        XCTAssertEqual(clip.status, .ready)
+        XCTAssertTrue(clip.isReady)
+        XCTAssertFalse(clip.isAnalyzing)
+        XCTAssertFalse(clip.isFailed)
+        XCTAssertEqual(clip.gist, "Короткий совет из кулинарного видео.")
+        XCTAssertEqual(clip.points, ["«Give it a shot» — попробовать."], "Blank and broken points are dropped")
+        XCTAssertEqual(clip.phrases.map { $0.phrase.id }, ["p-shot", "p-worries"], "A phrase without its record is skipped")
+        XCTAssertEqual(clip.phrases.map { $0.duplicate }, [false, true])
+        XCTAssertEqual(clip.phrases[0].phrase.heard, "No worries, let's give it a shot.")
+        XCTAssertEqual(clip.phrases[0].phrase.enrichment, .ready)
+        XCTAssertNil(clip.note)
+        XCTAssertEqual(ListenLabels.summary(clip), "Запомнил 1 фразу. Повторим в разговорах", "The duplicate is not counted")
+        var known = clip
+        known.phrases = [clip.phrases[1]]
+        XCTAssertEqual(ListenLabels.summary(known), "Эти фразы уже в копилке")
+        let again = try JSONDecoder().decode(ListenClip.self, from: JSONEncoder().encode(clip))
+        XCTAssertEqual(again, clip, "A clip survives a round trip")
+    }
+
+    func testListenClipDecodesMinimalAndUnknownStatusSafely() throws {
+        let minimal = try decode(ListenClip.self, ["id": "clip-min"])
+        XCTAssertEqual(minimal.transcript, "")
+        XCTAssertEqual(minimal.status, .failed, "No status: failed-safe, never polled forever")
+        XCTAssertTrue(minimal.isFailed)
+        XCTAssertTrue(minimal.points.isEmpty)
+        XCTAssertTrue(minimal.phrases.isEmpty)
+        XCTAssertNil(minimal.gist)
+        XCTAssertNil(minimal.note)
+        XCTAssertEqual(minimal.seconds, 0)
+        XCTAssertEqual(minimal.source, .microphone)
+        XCTAssertEqual(ListenLabels.failure(minimal), "Не получилось разобрать. Попробуй ещё раз.")
+        XCTAssertEqual(ListenLabels.summary(minimal), "Тут нечего запомнить — попробуй кусок с речью.")
+
+        let analyzing = try decode(ListenClip.self, ["id": "clip-a", "status": "analyzing", "transcript": "Let's give it a shot.",
+                                                     "seconds": 7.6, "points": NSNull(), "phrases": NSNull()] as [String: Any])
+        XCTAssertTrue(analyzing.isAnalyzing)
+        XCTAssertFalse(analyzing.isFailed)
+        XCTAssertEqual(analyzing.seconds, 8)
+        XCTAssertEqual(analyzing.transcript, "Let's give it a shot.", "The transcript is there from the first answer on")
+        XCTAssertTrue(analyzing.points.isEmpty)
+
+        let newer = try decode(ListenClip.self, ["id": "clip-n", "status": "queued", "source": "system",
+                                                 "note": "Тут нечего запомнить — попробуй кусок с речью."])
+        XCTAssertEqual(newer.status.rawValue, "queued")
+        XCTAssertTrue(newer.isFailed, "An unknown status stops the card waiting")
+        XCTAssertFalse(newer.isAnalyzing)
+        XCTAssertEqual(newer.source, .system)
+        XCTAssertEqual(ListenLabels.failure(newer), "Тут нечего запомнить — попробуй кусок с речью.")
+        XCTAssertEqual(ListenLabels.summary(newer), "Тут нечего запомнить — попробуй кусок с речью.", "The server's own note")
+        XCTAssertThrowsError(try decode(ListenClip.self, ["status": "ready"]), "The id is required")
+        let bare = try decode(ListenPhrase.self, ["phrase": ["id": "p", "text": "no worries"]])
+        XCTAssertFalse(bare.duplicate)
+        XCTAssertThrowsError(try decode(ListenPhrase.self, ["duplicate": true]), "The phrase is required")
+    }
+
+    func testSavedPhraseHeardIsOptionalAndSurvivesARoundTrip() throws {
+        let heard = try decode(SavedPhrase.self, ["id": "p-heard", "text": "give it a shot", "heard": "Let's give it a shot."])
+        XCTAssertEqual(heard.heard, "Let's give it a shot.")
+        XCTAssertEqual(PhraseLabels.heard(heard), "Let's give it a shot.")
+        XCTAssertNil(try decode(SavedPhrase.self, ["id": "p-typed", "text": "touch base"]).heard, "Typed phrases and older servers")
+        XCTAssertNil(try decode(SavedPhrase.self, ["id": "p-null", "text": "touch base", "heard": NSNull()] as [String: Any]).heard)
+        XCTAssertNil(try decode(SavedPhrase.self, ["id": "p-odd", "text": "touch base", "heard": 7] as [String: Any]).heard,
+                     "A wrong type never breaks the phrase")
+        XCTAssertNil(PhraseLabels.heard(phrase { $0.heard = "   " }), "A blank line shows nothing")
+        let again = try JSONDecoder().decode(SavedPhrase.self, from: JSONEncoder().encode(heard))
+        XCTAssertEqual(again, heard, "heard survives a round trip")
+        let encoded = try XCTUnwrap(try json(heard) as? [String: Any])
+        XCTAssertEqual(encoded["heard"] as? String, "Let's give it a shot.")
+        let typed = try XCTUnwrap(try json(phrase()) as? [String: Any])
+        XCTAssertNil(typed["heard"], "A typed phrase sends no heard line")
+        var plain = heard
+        plain.heard = nil
+        XCTAssertNotEqual(plain, heard, "heard is part of equality, so a newer copy replaces the old one")
+    }
+
+    func testListenUploadBodyCarriesTheContractFields() throws {
+        XCTAssertEqual(ListenRequests.upload, "phrases/listen")
+        XCTAssertEqual(ListenRequests.path("clip-1"), "phrases/listen/clip-1")
+        XCTAssertEqual(ListenRequests.seconds(23.6), 24)
+        XCTAssertEqual(ListenRequests.seconds(0.2), 1, "At least one second")
+        XCTAssertEqual(ListenRequests.seconds(181.4), 180, "At most three minutes")
+        XCTAssertEqual(ListenRequests.seconds(.nan), 1)
+        XCTAssertEqual(ListenRequests.fields(seconds: 5).map { $0.name }, ["seconds", "origin", "source"])
+        let audio = Data("RIFF-fake-wav".utf8)
+        let body = try XCTUnwrap(String(data: ListenRequests.body(audio: audio, seconds: 24, boundary: "B"), encoding: .utf8))
+        XCTAssertTrue(body.hasPrefix("--B\r\nContent-Disposition: form-data; name=\"seconds\"\r\n\r\n24\r\n"))
+        XCTAssertTrue(body.contains("--B\r\nContent-Disposition: form-data; name=\"origin\"\r\n\r\niphone\r\n"))
+        XCTAssertTrue(body.contains("--B\r\nContent-Disposition: form-data; name=\"source\"\r\n\r\nmicrophone\r\n"))
+        XCTAssertTrue(body.hasSuffix("--B\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"listen.wav\"\r\n"
+            + "Content-Type: audio/wav\r\n\r\nRIFF-fake-wav\r\n--B--\r\n"), "The WAV take comes last")
+        XCTAssertTrue(ListenRequests.canResend(URLError(.notConnectedToInternet)), "No connection: the same take is sent again")
+        XCTAssertTrue(ListenRequests.canResend(TrainingHTTPError(status: 503, message: "Сервер временно не отвечает (503).")))
+        XCTAssertFalse(ListenRequests.canResend(TrainingHTTPError(status: 422, message: "Не расслышал речи.")), "A refusal needs a new take")
+        XCTAssertFalse(ListenRequests.canResend(TrainingHTTPError(status: 429, message: "На сегодня хватит — завтра продолжим.")))
+    }
+
+    func testListenPillClockWarningAndTheTwoSecondMinimum() {
+        XCTAssertEqual(ListenLabels.clock(0), "0:00")
+        XCTAssertEqual(ListenLabels.clock(12.9), "0:12", "Whole seconds")
+        XCTAssertEqual(ListenLabels.clock(65), "1:05")
+        XCTAssertEqual(ListenLabels.clock(170), "2:50")
+        XCTAssertEqual(ListenLabels.clock(180), "3:00")
+        XCTAssertEqual(ListenLabels.clock(-3), "0:00")
+        XCTAssertEqual(ListenLabels.clock(.infinity), "0:00")
+        XCTAssertEqual(ListenLabels.spoken(1), "1 секунда")
+        XCTAssertEqual(ListenLabels.spoken(12), "12 секунд")
+        XCTAssertEqual(ListenLabels.spoken(65), "1 минута 5 секунд")
+        XCTAssertEqual(ListenLabels.spoken(122), "2 минуты 2 секунды")
+        XCTAssertEqual(ListenLabels.spoken(180), "3 минуты")
+        XCTAssertFalse(ListenLabels.warns(169.9))
+        XCTAssertTrue(ListenLabels.warns(170), "From 2:50 the pill warns")
+        XCTAssertEqual(ListenLabels.warning(170.4), "Через 10 с запись остановится сама.")
+        XCTAssertEqual(ListenLabels.warning(179.9), "Через 1 с запись остановится сама.")
+        XCTAssertEqual(ListenTiming.maxSeconds, 180, "LISTEN_MAX_SECONDS: the recorder stops by itself at 3:00")
+        XCTAssertEqual(ListenTiming.minSeconds, 2, "LISTEN_MIN_SECONDS")
+        XCTAssertEqual(ListenTiming.phraseLimit, 3, "LISTEN_PHRASE_LIMIT")
+        XCTAssertEqual(ListenTiming.pollInterval, 1.5, "LISTEN_POLL_MS")
+        XCTAssertEqual(ListenTiming.pollLimit, 90, "LISTEN_POLL_LIMIT_MS")
+        XCTAssertEqual(ListenLabels.durationProblem(1.99), "Слишком коротко — запиши хотя бы пару секунд.", "Not sent")
+        XCTAssertEqual(ListenLabels.durationProblem(.nan), ListenLabels.tooShort)
+        XCTAssertNil(ListenLabels.durationProblem(2))
+        XCTAssertNil(ListenLabels.durationProblem(180))
+    }
+
+    @MainActor func testClientUploadsAndFetchesListenClips() async throws {
+        let client = TrainingClient(reminderDefaults: freshDefaults())
+        client.previewMode = true
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("listen-test-" + UUID().uuidString + ".wav")
+        try Data("RIFF-fake-wav".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        do {
+            _ = try await client.uploadListenClip(url: file, seconds: 4)
+            XCTFail("Previews never reach a server")
+        } catch {
+            XCTAssertEqual(TrainingClient.describe(error), "Предпросмотр не отправляет запросы к серверу.")
+        }
+        let analyzing: [String: Any] = ["id": "clip-9", "status": "analyzing", "transcript": "No worries, give it a shot.",
+                                        "seconds": 4, "origin": "iphone", "source": "microphone", "points": [String](),
+                                        "phrases": [Any]()]
+        client.previewResponses[ListenRequests.upload] = try data(["clip": analyzing])
+        let uploaded = try await client.uploadListenClip(url: file, seconds: 4)
+        XCTAssertEqual(uploaded.id, "clip-9")
+        XCTAssertTrue(uploaded.isAnalyzing)
+        XCTAssertEqual(uploaded.transcript, "No worries, give it a shot.")
+        var ready = analyzing
+        ready["status"] = "ready"
+        ready["gist"] = "Короткая реплика из видео."
+        client.previewResponses["phrases/listen/clip-9"] = try data(["clip": ready])
+        let fetched = try await client.fetchListenClip(id: "clip-9")
+        XCTAssertTrue(fetched.isReady)
+        XCTAssertEqual(fetched.gist, "Короткая реплика из видео.")
+        XCTAssertTrue(client.previewRequests.contains("phrases/listen/clip-9"))
+        XCTAssertNil(client.previewRequestBodies["phrases/listen/clip-9"], "GET carries no body")
     }
 
     // MARK: Entry points

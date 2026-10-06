@@ -122,12 +122,14 @@ struct SavedPhrase: Codable, Identifiable, Equatable {
     var history: [HistoryEntry]
     /// «Уже знаю»: kept in the list, never offered.
     var archived: Bool
+    /// 0.5.4 «Послушать»: the line of the clip it was heard in (≤ 300 characters); nil for typed phrases and older servers.
+    var heard: String?
 
     init(id: String, text: String, origin: PhraseOrigin = .iphone, createdAt: String = "", updatedAt: String = "",
          enrichment: PhraseEnrichment = .pending, phrase: String? = nil, meaning: String? = nil, note: String? = nil,
          example: String? = nil, exampleRu: String? = nil, cue: String? = nil, situation: String? = nil,
          status: PhraseStatus = .new, stage: Int = 0, dueAt: String = "", lastPracticedAt: String? = nil,
-         lastOfferedAt: String? = nil, history: [HistoryEntry] = [], archived: Bool = false) {
+         lastOfferedAt: String? = nil, history: [HistoryEntry] = [], archived: Bool = false, heard: String? = nil) {
         self.id = id
         self.text = text
         self.origin = origin
@@ -148,11 +150,12 @@ struct SavedPhrase: Codable, Identifiable, Equatable {
         self.lastOfferedAt = lastOfferedAt
         self.history = history
         self.archived = archived
+        self.heard = heard
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, text, origin, createdAt, updatedAt, enrichment, phrase, meaning, note, example, exampleRu, cue, situation
-        case status, stage, dueAt, lastPracticedAt, lastOfferedAt, history, archived
+        case status, stage, dueAt, lastPracticedAt, lastOfferedAt, history, archived, heard
     }
 
     init(from decoder: Decoder) throws {
@@ -177,6 +180,7 @@ struct SavedPhrase: Codable, Identifiable, Equatable {
         lastOfferedAt = SavedPhrase.string(c, .lastOfferedAt)
         history = ((try? c.decodeIfPresent(TolerantList<HistoryEntry>.self, forKey: .history)) ?? nil)?.values ?? []
         archived = ((try? c.decodeIfPresent(Bool.self, forKey: .archived)) ?? nil) ?? false
+        heard = SavedPhrase.string(c, .heard)
     }
 
     private static func string(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> String? {
@@ -447,6 +451,12 @@ enum PhraseLabels {
         return value
     }
 
+    /// 0.5.4: the clip line a «Послушать» phrase was heard in, trimmed; nil for typed phrases.
+    static func heard(_ phrase: SavedPhrase) -> String? {
+        guard let text = phrase.heard?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        return text
+    }
+
     // Lists.
 
     /// Phrases waiting now, in the order a round takes them: practised ones by `dueAt`, then the new ones, oldest first.
@@ -578,5 +588,204 @@ enum PhraseLabels {
             if left.key != right.key { return descending ? left.key > right.key : left.key < right.key }
             return left.offset < right.offset
         }.map { $0.phrase }
+    }
+}
+
+// MARK: - «Послушать» (planning/v05/PASS-0.5.4.md §1)
+
+/// `'system' | 'microphone'`: what a clip was recorded from (the iPhone always sends `microphone`).
+struct ListenSource: RawRepresentable, Hashable, Codable {
+    let rawValue: String
+    init(rawValue: String) { self.rawValue = rawValue }
+    init(from decoder: Decoder) throws { rawValue = try decoder.singleValueContainer().decode(String.self) }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+    static let system = ListenSource(rawValue: "system")
+    static let microphone = ListenSource(rawValue: "microphone")
+}
+
+/// `'analyzing' | 'ready' | 'failed'`. A value this build does not know (a newer server) reads as failed: the card stops
+/// waiting and offers «Попробовать ещё раз» instead of polling forever.
+struct ListenStatus: RawRepresentable, Hashable, Codable {
+    let rawValue: String
+    init(rawValue: String) { self.rawValue = rawValue }
+    init(from decoder: Decoder) throws { rawValue = try decoder.singleValueContainer().decode(String.self) }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+    static let analyzing = ListenStatus(rawValue: "analyzing")
+    static let ready = ListenStatus(rawValue: "ready")
+    static let failed = ListenStatus(rawValue: "failed")
+}
+
+/// `ListenPhrase`: an expression saved from the clip (enrichment ready at once), or the one already in the bank.
+struct ListenPhrase: Codable, Equatable {
+    var phrase: SavedPhrase
+    /// It was already in «Мои фразы»: nothing new was saved.
+    var duplicate: Bool
+
+    init(phrase: SavedPhrase, duplicate: Bool = false) {
+        self.phrase = phrase
+        self.duplicate = duplicate
+    }
+
+    private enum CodingKeys: String, CodingKey { case phrase, duplicate }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        phrase = try c.decode(SavedPhrase.self, forKey: .phrase)
+        duplicate = ((try? c.decodeIfPresent(Bool.self, forKey: .duplicate)) ?? nil) ?? false
+    }
+}
+
+/// `ListenClip` (lib/phrases/types.ts): one «Послушать» clip, transcribed by the server and explained by Sol. `id` is
+/// required; every other field falls back, so a newer or partial answer still shows.
+struct ListenClip: Codable, Equatable, Identifiable {
+    var id: String
+    var createdAt: String
+    var updatedAt: String
+    var origin: PhraseOrigin
+    var source: ListenSource
+    /// Recording length, 1–180 s (whole seconds).
+    var seconds: Int
+    /// What was heard, ≤ 4000 characters (present from the first answer on).
+    var transcript: String
+    /// 'analyzing' while Sol explains it (poll GET /api/phrases/listen/:id), then 'ready' or 'failed'.
+    var status: ListenStatus
+    /// Russian: what the clip is about (≤ 300 characters).
+    var gist: String?
+    /// Russian points worth noticing: idioms, slang, grammar, pronunciation (≤ 4).
+    var points: [String]
+    /// Up to 3 expressions from the clip, in the order they were heard.
+    var phrases: [ListenPhrase]
+    /// Russian reason when it failed, or why nothing was saved.
+    var note: String?
+
+    init(id: String, createdAt: String = "", updatedAt: String = "", origin: PhraseOrigin = .iphone,
+         source: ListenSource = .microphone, seconds: Int = 0, transcript: String = "", status: ListenStatus = .analyzing,
+         gist: String? = nil, points: [String] = [], phrases: [ListenPhrase] = [], note: String? = nil) {
+        self.id = id
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.origin = origin
+        self.source = source
+        self.seconds = seconds
+        self.transcript = transcript
+        self.status = status
+        self.gist = gist
+        self.points = points
+        self.phrases = phrases
+        self.note = note
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, createdAt, updatedAt, origin, source, seconds, transcript, status, gist, points, phrases, note
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        createdAt = ListenClip.string(c, .createdAt) ?? ""
+        updatedAt = ListenClip.string(c, .updatedAt) ?? ""
+        origin = ((try? c.decodeIfPresent(PhraseOrigin.self, forKey: .origin)) ?? nil) ?? .iphone
+        source = ((try? c.decodeIfPresent(ListenSource.self, forKey: .source)) ?? nil) ?? .microphone
+        seconds = max(0, LenientNumber.int(c, .seconds) ?? 0)
+        transcript = ListenClip.string(c, .transcript) ?? ""
+        // A missing status is as unreadable as an unknown one: failed-safe, never polled forever.
+        status = ((try? c.decodeIfPresent(ListenStatus.self, forKey: .status)) ?? nil) ?? .failed
+        gist = ListenClip.string(c, .gist)
+        let notes = ((try? c.decodeIfPresent(TolerantList<String>.self, forKey: .points)) ?? nil)?.values ?? []
+        points = notes.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        phrases = ((try? c.decodeIfPresent(TolerantList<ListenPhrase>.self, forKey: .phrases)) ?? nil)?.values ?? []
+        note = ListenClip.string(c, .note)
+    }
+
+    private static func string(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> String? {
+        (try? c.decodeIfPresent(String.self, forKey: key)) ?? nil
+    }
+
+    /// Sol is still explaining it: keep polling.
+    var isAnalyzing: Bool { status == .analyzing }
+    var isReady: Bool { status == .ready }
+    /// Failed, or a status this build does not know.
+    var isFailed: Bool { !isAnalyzing && !isReady }
+}
+
+/// LISTEN_* constants of lib/phrases/types.ts plus the iPhone's own timing.
+enum ListenTiming {
+    /// LISTEN_MAX_SECONDS: the recorder stops by itself here.
+    static let maxSeconds = 180
+    /// LISTEN_MIN_SECONDS: a shorter clip is not sent.
+    static let minSeconds = 2.0
+    /// The pill warns ten seconds before the end (2:50).
+    static let warnSeconds = 170.0
+    /// LISTEN_PHRASE_LIMIT.
+    static let phraseLimit = 3
+    /// LISTEN_POLL_MS / LISTEN_POLL_LIMIT_MS, in seconds.
+    static let pollInterval = 1.5
+    static let pollLimit = 90.0
+}
+
+/// The words of the listen flow (the web capture card says the same), pure and unit-tested.
+enum ListenLabels {
+    static let hint = "Поднеси iPhone к звуку: видео, подкаст, разговор"
+    static let tooShort = "Слишком коротко — запиши хотя бы пару секунд."
+    /// TaskRecorder's own hint without the placement-only «или пропусти раздел».
+    static let microphoneDenied = "Микрофон выключен для Smooth Talk. Разреши доступ в настройках iPhone."
+    static let microphoneFailed = "Не получилось включить микрофон. Попробуй ещё раз."
+    static let slow = "Разбираю дольше обычного — фразы появятся в «Моих фразах»."
+    static let failedNote = "Не получилось разобрать. Попробуй ещё раз."
+    static let nothing = "Тут нечего запомнить — попробуй кусок с речью."
+    static let lost = "Запись не сохранилась. Попробуй ещё раз."
+
+    /// The pill's time: «0:12», «2:50», «3:00» (whole seconds, never negative).
+    static func clock(_ seconds: Double) -> String {
+        let whole = seconds.isFinite ? max(0, Int(seconds.rounded(.down))) : 0
+        let rest = whole % 60
+        return "\(whole / 60):" + (rest < 10 ? "0" : "") + "\(rest)"
+    }
+
+    /// VoiceOver: «12 секунд», «1 минута 5 секунд», «3 минуты».
+    static func spoken(_ seconds: Double) -> String {
+        let whole = seconds.isFinite ? max(0, Int(seconds.rounded(.down))) : 0
+        let minutes = whole / 60
+        let rest = whole % 60
+        let minutePart = "\(minutes) " + RuFormat.plural(minutes, "минута", "минуты", "минут")
+        let secondPart = "\(rest) " + RuFormat.plural(rest, "секунда", "секунды", "секунд")
+        if minutes == 0 { return secondPart }
+        return rest == 0 ? minutePart : minutePart + " " + secondPart
+    }
+
+    /// From 2:50 the pill says it is about to stop.
+    static func warns(_ elapsed: Double) -> Bool { elapsed >= ListenTiming.warnSeconds }
+
+    /// «Через 10 с запись остановится сама.» (the seconds left to 3:00, as on the web).
+    static func warning(_ elapsed: Double) -> String {
+        let whole = elapsed.isFinite ? max(0, Int(elapsed.rounded(.down))) : 0
+        return "Через \(max(0, ListenTiming.maxSeconds - whole)) с запись остановится сама."
+    }
+
+    /// Why a take is not sent: shorter than two seconds (nothing to transcribe).
+    static func durationProblem(_ seconds: Double) -> String? {
+        seconds.isFinite && seconds >= ListenTiming.minSeconds ? nil : tooShort
+    }
+
+    /// Why a failed clip has no result: the server's own note, or the default line.
+    static func failure(_ clip: ListenClip) -> String {
+        let note = clip.note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return note.isEmpty ? failedNote : note
+    }
+
+    /// The line under «Послушал!» (web `listenSummary`): «Запомнил 2 фразы. Повторим в разговорах», «Эти фразы уже в
+    /// копилке» when all were saved before, otherwise the server's note («Тут нечего запомнить …»).
+    static func summary(_ clip: ListenClip) -> String {
+        let fresh = clip.phrases.filter { !$0.duplicate }.count
+        if fresh > 0 { return "Запомнил \(fresh) " + RuFormat.plural(fresh, "фразу", "фразы", "фраз") + ". Повторим в разговорах" }
+        if !clip.phrases.isEmpty { return "Эти фразы уже в копилке" }
+        let note = clip.note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return note.isEmpty ? nothing : note
     }
 }

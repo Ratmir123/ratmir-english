@@ -2,8 +2,9 @@ import SwiftUI
 import CoreMotion
 
 /// Rank medal as a physical object (DESIGN-PASS-0.5.1 «Медали рангов — объём»), turning slowly and smoothly
-/// (PASS 0.5.3 §8). Every turn is an eased curve with a known end, so nothing whips round or creeps for long.
-/// Same constants and model as `MEDAL` in components/ui/medal-3d.ts — change both together.
+/// (PASS 0.5.3 §8; a drag turns it slower and heavier since PASS 0.5.4 §5). Every turn is an eased curve with a known end,
+/// so nothing whips round or creeps for long. Same constants and model as `MEDAL` in components/ui/medal-3d.ts — change
+/// both together.
 enum MedalTuning {
     /// Below this side the medal is flat art: no thickness, light, foil or gestures.
     static let solidMin: CGFloat = 48
@@ -12,7 +13,9 @@ enum MedalTuning {
     static let tiltYaw = 16.0
     static let tiltPitch = 12.0
     /// Horizontal drag across the full medal width turns it this many degrees.
-    static let dragDegrees = 200.0
+    static let dragDegrees = 110.0
+    /// While dragged, the shown angle chases the finger's with this time constant (s): heavy, never twitchy.
+    static let dragFollow = 0.07
     /// Tap: one turn over `tapSeconds` (ease-in-out cubic) that runs `tapSettle`° past face-front and springs back.
     static let tapTurn = 360.0
     static let tapSeconds = 2.4
@@ -25,14 +28,22 @@ enum MedalTuning {
     static let entranceGlint = 0.6
     /// Drag release, capped at `maxSpeed` °/s. From `throwMinSpeed` up it decays as an ease-out cubic that starts at the
     /// release speed (no jump) and stops exactly on a face ahead: of the faces whose landing time 3·distance/speed lies in
-    /// [throwMinSeconds, throwMaxSeconds], the one nearest `throwSeconds`. Slower releases, or no face in range, spring.
-    static let maxSpeed = 720.0
-    static let throwMinSpeed = 120.0
-    static let throwMinSeconds = 0.9
-    static let throwSeconds = 2.4
-    static let throwMaxSeconds = 4.5
-    /// The face spring (slow releases and the tap settle): target = the face nearest angle + speed·coast.
+    /// [throwMinSeconds, throwMaxSeconds], the one nearest `throwSeconds`; when none lands in it, the face whose landing time
+    /// is nearest the window, if that is within [throwLooseMin, throwLooseMax]. Slower releases, or no face at all, settle.
+    static let maxSpeed = 300.0
+    static let throwMinSpeed = 80.0
+    static let throwMinSeconds = 1.2
+    static let throwSeconds = 2.8
+    static let throwMaxSeconds = 5.0
+    static let throwLooseMin = 0.8
+    static let throwLooseMax = 6.0
+    /// Settle (slow releases, PASS 0.5.4 §5): an eased turn (ease-in-out cubic, starting at the release speed) onto the face
+    /// nearest angle + speed·coast, over at least `settleMinSeconds`, its own peak about `settleSpeed` °/s — never a spring
+    /// that could whip a long way round.
     static let coast = 0.4
+    static let settleSpeed = 200.0
+    static let settleMinSeconds = 0.8
+    /// The face spring that ends a tap's settle past face-front.
     static let stiffness = 20.0
     static let damping = 8.0
     static let springMaxSeconds = 3.0
@@ -203,7 +214,8 @@ enum MedalTurns {
                          elapsed: 0, face: face, glintAt: MedalTuning.showcaseGlint)
     }
 
-    /// A drag release: a decelerating turn onto a face ahead, or the face spring for a slow release — web `releaseThrow`.
+    /// A drag release: a decelerating turn onto a face ahead, or the settle turn for a slow release — web `releaseThrow`.
+    /// It is always a turn (never the face spring), so it never whips round faster than it was released.
     static func release(angle: Double, velocity: Double) -> MedalMove {
         let speed = max(-MedalTuning.maxSpeed, min(MedalTuning.maxSpeed, velocity.isFinite ? velocity : 0))
         if abs(speed) >= MedalTuning.throwMinSpeed {
@@ -211,19 +223,49 @@ enum MedalTurns {
             var first = direction > 0 ? (angle / 360).rounded(.up) * 360 : (angle / 360).rounded(.down) * 360
             if abs(first - angle) < 1e-6 { first += direction * 360 }
             var best: (face: Double, seconds: Double)?
+            var loose: (face: Double, seconds: Double, off: Double)?
             for turn in 0..<3 {
                 let face = first + direction * 360 * Double(turn)
                 let seconds = 3 * abs(face - angle) / abs(speed)
-                if seconds < MedalTuning.throwMinSeconds || seconds > MedalTuning.throwMaxSeconds { continue }
+                let off = max(0, MedalTuning.throwMinSeconds - seconds, seconds - MedalTuning.throwMaxSeconds)
+                if seconds >= MedalTuning.throwLooseMin && seconds <= MedalTuning.throwLooseMax && off < (loose?.off ?? Double.infinity) {
+                    loose = (face, seconds, off)
+                }
+                if off > 0 { continue }
                 if let chosen = best, abs(seconds - MedalTuning.throwSeconds) >= abs(chosen.seconds - MedalTuning.throwSeconds) { continue }
                 best = (face, seconds)
             }
+            if best == nil, let loose { best = (loose.face, loose.seconds) }
             if let best {
                 return .turn(MedalTurn(from: angle, delta: best.face - angle, seconds: best.seconds, ease: .outCubic, v0: 0,
                                        elapsed: 0, face: best.face, glintAt: nil))
             }
         }
-        return .spring(MedalSpring(target: nearestFace(angle + speed * MedalTuning.coast), velocity: speed, age: 0))
+        let face = nearestFace(angle + speed * MedalTuning.coast)
+        var settle = MedalTurn(from: angle, delta: face - angle,
+                               seconds: max(MedalTuning.settleMinSeconds, 1.5 * abs(face - angle) / MedalTuning.settleSpeed),
+                               ease: .inOutCubic, v0: speed, elapsed: 0, face: face, glintAt: nil)
+        // The release speed adds to the eased part early on: lengthen the settle until its peak stays slow.
+        var attempt = 0
+        while attempt < 8 && peak(settle) > max(MedalTuning.settleSpeed, abs(speed)) + 1e-6 {
+            settle.seconds *= 1.2
+            attempt += 1
+        }
+        return .turn(settle)
+    }
+
+    /// The highest speed (°/s) along a turn, sampled at 41 points — web `turnPeak`.
+    static func peak(_ turn: MedalTurn) -> Double {
+        var result = 0.0
+        for index in 0...40 {
+            result = max(result, abs(turn.at(turn.seconds * Double(index) / 40).velocity))
+        }
+        return result
+    }
+
+    /// Share of the gap to the finger the shown angle covers in `dt` seconds (time constant `MedalTuning.dragFollow`).
+    static func follow(_ dt: Double) -> Double {
+        dt > 0 ? 1 - exp(-dt / MedalTuning.dragFollow) : 0
     }
 
     /// Advances a move by `dt` seconds — web `stepMotion`.
@@ -376,6 +418,9 @@ final class MedalSpinModel {
         var y0: CGFloat
         var a0 = 0.0
         var moved = false
+        /// The angle under the finger; the shown angle follows it (`MedalTuning.dragFollow`), PASS 0.5.4 §5.
+        var target = 0.0
+        /// The shown angle over the last ~90 ms, one sample per frame: the release speed.
         var samples: [(time: TimeInterval, angle: Double)] = []
     }
 
@@ -409,6 +454,19 @@ final class MedalSpinModel {
             move = step.next
             if step.glint { flashStart = time }
             if move == nil { settle() }
+        }
+        if var current = drag, current.moved {
+            // The medal is heavy: the shown angle eases towards the finger's every frame (web `follow`).
+            angle += (current.target - angle) * MedalTurns.follow(dt)
+            if let last = current.samples.last, last.time >= time {
+                current.samples[current.samples.count - 1] = (time: last.time, angle: angle)
+            } else {
+                current.samples.append((time: time, angle: angle))
+            }
+            while current.samples.count > 2, let first = current.samples.first, time - first.time > 0.09 {
+                current.samples.removeFirst()
+            }
+            drag = current
         }
         let follow = 1 - exp(-dt * 14)
         tilt.yaw += (aim.yaw - tilt.yaw) * follow
@@ -490,6 +548,7 @@ final class MedalSpinModel {
                 move = nil
                 velocity = 0
                 current.a0 = angle
+                current.target = angle
                 current.x0 = point.x
             } else if abs(dy) > 10 {
                 // The page scrolls: let go of the medal.
@@ -502,11 +561,8 @@ final class MedalSpinModel {
                 return
             }
         }
-        angle = current.a0 + Double(point.x - current.x0) * MedalTuning.dragDegrees / Double(max(side, 1))
-        current.samples.append((time, angle))
-        while current.samples.count > 2, let first = current.samples.first, time - first.time > 0.09 {
-            current.samples.removeFirst()
-        }
+        // The shown angle catches up frame by frame in `advance(to:)`.
+        current.target = current.a0 + Double(point.x - current.x0) * MedalTuning.dragDegrees / Double(max(side, 1))
         drag = current
     }
 
@@ -517,6 +573,7 @@ final class MedalSpinModel {
         guard let current = drag else { return }
         drag = nil
         if current.moved {
+            // Measured on the shown angle, so the throw starts exactly where and as fast as the medal is seen to move.
             var release = 0.0
             if let first = current.samples.first, let last = current.samples.last, time - last.time <= 0.07, last.time > first.time {
                 release = (last.angle - first.angle) / (last.time - first.time)

@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, globalShortcut, Notification, ipcMain, clipboard, dialog, nativeImage, nativeTheme, shell, session, powerMonitor, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, Notification, ipcMain, clipboard, desktopCapturer, dialog, nativeImage, nativeTheme, shell, session, powerMonitor, screen } = require('electron');
 const { mkdirSync, writeFileSync, renameSync, readFileSync, statSync, existsSync } = require('node:fs');
 const { join } = require('node:path');
 const {
@@ -8,7 +8,7 @@ const {
   safeClipboardText, readConfiguration, prepareRuntime, configureSessionProxy,
   validReminderMinutes, safeNetworkError, safeNotification,
   readThemePreference, writeThemePreference,
-  QUICK_OVERLAY, chooseShortcut, overlayBounds, overlayWindowOptions, pointerInWindow, trayMenuItems, trayTooltip, navigationTarget,
+  QUICK_PET, chooseShortcut, petBounds, sameBounds, petWindowOptions, pointerInWindow, trayMenuItems, trayTooltip, navigationTarget,
 } = require('./runtime.cjs');
 const { prepareCallAudio } = require('./call-audio.cjs');
 
@@ -22,7 +22,9 @@ const userDataPath = join(app.getPath('appData'), 'Ratmir English');
 mkdirSync(userDataPath, { recursive: true });
 app.setPath('userData', userDataPath);
 app.setPath('sessionData', userDataPath);
-app.setAppUserModelId('com.ratmir.english');
+// Only the installed app owns the production AppUserModelID. A development run that claimed it left a Start menu shortcut
+// to electron.exe with the same ID, and Windows then showed the Electron atom on the taskbar for the real app (PASS-0.5.4 §3).
+app.setAppUserModelId(app.isPackaged ? 'com.ratmir.english' : 'com.ratmir.english.dev');
 
 let mainWindow = null;
 let quickWindow = null;
@@ -37,9 +39,7 @@ let reminderNotification = null;
 let dailyReminders = null;
 let reminderLoadWarning = null;
 let pendingQuick = false;
-// Quick overlay opened from the main window returns there when closed (not to the tray).
-let quickReturnsToMain = false;
-// A requested overlay appears only after its page answered the status handshake (never a blank layer).
+// A requested stage appears only after its page answered the status handshake (never a blank layer).
 let quickShowPending = false;
 let quickPrewarmTimer = null;
 // Click-through state of the overlay (set by its page) and the shell's own cursor forwarding while it is on.
@@ -116,7 +116,7 @@ function writeDiagnostics() {
       mode: applicationPolicy?.mode || 'local',
       shortcutRegistered,
       shortcut: shortcut ? shortcut.label : null,
-      quickStyle: 'overlay',
+      quickStyle: 'pet',
       notificationsSupported: Notification.isSupported(),
       mainLoaded,
       quickLoaded,
@@ -168,7 +168,9 @@ function secureWindow(window) {
     return allowed;
   });
   contents.session.setPermissionRequestHandler((requestingContents, permission, callback, details) => {
-    const allowed = isTrustedContents(requestingContents) && applicationPolicy.isAllowedMicrophoneRequest(permission, details);
+    // The microphone, or the first step of «Послушать» (getDisplayMedia; what it captures is decided in configureDesktopSession).
+    const allowed = isTrustedContents(requestingContents) && (applicationPolicy.isAllowedMicrophoneRequest(permission, details) ||
+      applicationPolicy.isAllowedDisplayCaptureRequest(permission, details));
     if (!allowed) recordDeniedPermission(permission);
     callback(allowed);
   });
@@ -196,6 +198,16 @@ async function configureDesktopSession() {
   networkDiagnostics.proxyBefore = await proxyMode();
   await configureSessionProxy(nativeSession, applicationPolicy);
   networkDiagnostics.proxyAfter = await proxyMode();
+  // 0.5.4 «Послушать» (PASS-0.5.4 §1.4): the computer's own sound, only for the top frame of one of this app's windows, with a
+  // user gesture. The primary screen is the video source getDisplayMedia requires; the page stops that track at once.
+  nativeSession.setDisplayMediaRequestHandler((request, callback) => {
+    if (!isOwnMainFrame(request?.frame) || !applicationPolicy.isAllowedDisplayMedia(request)) { recordDeniedPermission('display-capture'); callback({}); return; }
+    desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } }).then((sources) => {
+      const primary = String(screen.getPrimaryDisplay().id);
+      const source = sources.find((item) => item.display_id === primary) || sources[0];
+      callback(source ? { video: source, audio: 'loopback' } : {});
+    }).catch(() => callback({}));
+  });
   const filter = { urls: [applicationPolicy.origin + '/*'] };
   nativeSession.webRequest.onBeforeRequest(filter, (details, callback) => {
     if (applicationPolicy.isPublicLoadRequest(details)) { networkDiagnostics.started += 1; writeDiagnostics(); }
@@ -219,6 +231,17 @@ async function configureDesktopSession() {
   writeDiagnostics();
 }
 
+/** The frame is the top frame of the main window or the chubrik's stage (compared by process and routing id). */
+function isOwnMainFrame(frame) {
+  try {
+    return !!frame && [mainWindow, quickWindow].some((window) => {
+      if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return false;
+      const top = window.webContents.mainFrame;
+      return top.processId === frame.processId && top.routingId === frame.routingId;
+    });
+  } catch { return false; }
+}
+
 function isTrustedContents(contents) {
   return [mainWindow, quickWindow].some((window) => window && !window.isDestroyed() && window.webContents === contents) &&
     !contents.isDestroyed() && applicationPolicy.isAllowedPageUrl(contents.getURL());
@@ -228,9 +251,9 @@ function makeWindow(quick) {
   const diagnostics = windowDiagnostics[quick ? 'quick' : 'main'];
   diagnostics.event = 'creating';
   writeDiagnostics();
-  // The quick window is the 0.5.3 overlay: a transparent floating layer for the chubrik's capture card (runtime.cjs).
+  // The quick window is the chubrik's stage (0.5.4): a transparent tool window over the work area under the cursor.
   const window = new BrowserWindow(quick
-    ? overlayWindowOptions({ title: APP_TITLE + ' · Запомнить фразу', icon: iconPath, preload: preloadPath, partition: applicationPolicy.partition })
+    ? petWindowOptions({ title: APP_TITLE + ' · Запомнить фразу', icon: iconPath, preload: preloadPath, partition: applicationPolicy.partition, bounds: stageArea() })
     : {
       title: APP_TITLE,
       width: 1280,
@@ -251,8 +274,9 @@ function makeWindow(quick) {
         partition: applicationPolicy.partition,
       },
     });
-  // Above other always-on-top windows and fullscreen video players.
-  if (quick) window.setAlwaysOnTop(true, 'screen-saver');
+  // Above other always-on-top windows and fullscreen video players; clicks pass through until the page takes them over the
+  // chubrik (a full-screen layer must never block the desktop, even before its page runs).
+  if (quick) { window.setAlwaysOnTop(true, 'screen-saver'); setQuickClickThrough(window, true); }
   diagnostics.created = true;
   diagnostics.event = 'created';
   writeDiagnostics();
@@ -266,10 +290,10 @@ function makeWindow(quick) {
     diagnostics.bridgeConnected = false;
     writeDiagnostics();
   });
-  // A new main-frame document committed (first load, reload, recovery): its handshake and readiness start over, and a
-  // new overlay document starts out catching clicks (its page decides where they pass through).
+  // A new main-frame document committed (first load, reload, recovery): its handshake and readiness start over, and a new
+  // stage document starts out letting clicks through (its page takes them over the chubrik).
   window.webContents.on('did-navigate', () => {
-    if (quick) { quickDocumentReady = false; setQuickClickThrough(window, false); }
+    if (quick) { quickDocumentReady = false; setQuickClickThrough(window, true); }
     else mainDocumentReady = false;
   });
   window.webContents.on('dom-ready', () => {
@@ -298,9 +322,15 @@ function makeWindow(quick) {
     diagnostics.rendererReason = known.includes(details?.reason) ? details.reason : 'other';
     diagnostics.event = 'renderer-gone';
     if (quick) { quickLoaded = false; quickDocumentReady = false; } else { mainLoaded = false; mainDocumentReady = false; }
+    // A dead stage must not hold the screen: let clicks through and hide it (the next summon reloads it).
+    if (quick) { setQuickClickThrough(window, true); hideWindow(window, diagnostics); }
     writeDiagnostics();
   });
-  window.on('unresponsive', () => { diagnostics.event = 'unresponsive'; writeDiagnostics(); });
+  window.on('unresponsive', () => {
+    diagnostics.event = 'unresponsive';
+    if (quick) setQuickClickThrough(window, true);
+    writeDiagnostics();
+  });
   window.on('close', (event) => {
     if (!quitting) { event.preventDefault(); diagnostics.presentedOnce = true; window.hide(); }
   });
@@ -368,11 +398,9 @@ function hideWindow(window, diagnostics) {
   window.hide();
 }
 
+/** The main window to the front. The chubrik stays where it is: it lives on the screen until closed from its menu. */
 function showTraining() {
   if (!ready) return;
-  quickReturnsToMain = false;
-  quickShowPending = false;
-  hideWindow(quickWindow, windowDiagnostics.quick);
   if (!mainWindow || mainWindow.isDestroyed()) mainWindow = makeWindow(false);
   else {
     windowDiagnostics.main.presentedOnce = true;
@@ -383,13 +411,13 @@ function showTraining() {
 }
 
 /**
- * Summons the overlay (hotkey, tray, or the page's openQuick). It floats above everything, so the main window stays
- * where it is. A first request creates it at once and shows it after the page's status handshake; a prewarmed one
- * (scheduleQuickPrewarm) appears instantly.
+ * Summons the chubrik (hotkey, tray, the page's openQuick). A hidden stage appears over the work area under the cursor; one
+ * already on screen stays where it is. Either way it gets focus and a summon message (its card opens with the field
+ * focused). A first request creates the stage at once and shows it after the page's status handshake; a prewarmed one
+ * (scheduleQuickPrewarm) appears instantly. The hotkey never hides it: only «Закрыть» in its menu does (hideQuick).
  */
-function showQuick(fromMain = false) {
+function showQuick() {
   if (!ready) { pendingQuick = true; return; }
-  quickReturnsToMain = fromMain === true;
   if (!quickWindow || quickWindow.isDestroyed()) {
     quickShowPending = true;
     quickWindow = makeWindow(true);
@@ -401,34 +429,43 @@ function showQuick(fromMain = false) {
   if (['load-failed', 'load-rejected', 'renderer-gone', 'unexpected-page'].includes(windowDiagnostics.quick.event)) loadWindow(quickWindow, true);
 }
 
-/** Shows the overlay with keyboard focus: the page plays its entrance on visibilitychange/focus and types at once. */
 function presentQuick() {
   if (quitting || !quickWindow || quickWindow.isDestroyed()) return;
   quickShowPending = false;
-  placeQuick(quickWindow);
+  const visible = quickWindow.isVisible();
+  if (!visible) placeQuick(quickWindow, stageArea());
   quickWindow.setAlwaysOnTop(true, 'screen-saver');
   windowDiagnostics.quick.presentedOnce = true;
-  quickWindow.show();
+  if (!visible) quickWindow.show();
   quickWindow.moveTop();
   quickWindow.focus();
+  if (!quickWindow.webContents.isDestroyed()) quickWindow.webContents.send(IPC.summon);
 }
 
-/** Bottom-right of the work area of the display under the cursor (12 px margin), recomputed on every show. */
-function placeQuick(window) {
+/** The work area of the display under the cursor (null when Electron cannot tell). */
+function stageArea() {
+  try { return petBounds(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea); } catch { return null; }
+}
+
+/** Covers `bounds` (a work area); moving between displays with different scale factors can resize it: applied once more. */
+function placeQuick(window, bounds) {
   try {
-    const bounds = overlayBounds(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea);
-    if (!bounds) return;
+    if (!bounds || sameBounds(window.getBounds(), bounds)) return;
     window.setBounds(bounds);
-    // Moving between displays with different scale factors can resize a window on Windows: apply once more.
-    const [width, height] = window.getSize();
-    if (width !== bounds.width || height !== bounds.height) window.setBounds(bounds);
+    if (!sameBounds(window.getBounds(), bounds)) window.setBounds(bounds);
   } catch { }
 }
 
+/** A display changed (resolution, scale, taskbar, unplugged): the visible stage covers its display's work area again. */
+function refitQuick() {
+  if (!quickWindow || quickWindow.isDestroyed() || !quickWindow.isVisible()) return;
+  try { placeQuick(quickWindow, petBounds(screen.getDisplayMatching(quickWindow.getBounds()).workArea)); } catch { }
+}
+
 /**
- * Click-through for the overlay's transparent parts. Windows forwards mouse moves to an ignoring window only through a
+ * Click-through for the stage's transparent parts. Windows forwards mouse moves to an ignoring window only through a
  * low-level hook that some setups never feed (injected or remote input, hook-filtering tools), and a page that stops
- * hearing the cursor can never take clicks back. So while the overlay is visible and ignoring, the shell also sends the
+ * hearing the cursor can never take clicks back. So while the stage is visible and ignoring, the shell also sends the
  * cursor position to the page itself (pointerInWindow, ~20 Hz, only when it moved inside the window).
  */
 function setQuickClickThrough(window, ignore) {
@@ -441,7 +478,7 @@ function setQuickClickThrough(window, ignore) {
 
 function syncQuickPointer() {
   const active = quickIgnoringMouse && !quitting && !!quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible();
-  if (active && !quickPointerTimer) quickPointerTimer = setInterval(forwardQuickPointer, QUICK_OVERLAY.pointerMs);
+  if (active && !quickPointerTimer) quickPointerTimer = setInterval(forwardQuickPointer, QUICK_PET.pointerMs);
   if (!active && quickPointerTimer) { clearInterval(quickPointerTimer); quickPointerTimer = null; }
   if (!active) quickPointerLast = null;
 }
@@ -457,31 +494,24 @@ function forwardQuickPointer() {
   } catch { }
 }
 
-/** Hides the overlay; when it was opened from the main window, that window comes back to the front instead. */
+/** «Закрыть» in the chubrik's menu (after its exit animation): the stage hides; the hotkey or the tray bring it back. */
 function dismissQuick() {
   quickShowPending = false;
-  if (quickReturnsToMain) { showTraining(); return { hidden: true, returned: true }; }
   hideWindow(quickWindow, windowDiagnostics.quick);
-  return { hidden: true, returned: false };
+  return { hidden: true };
 }
 
-/** The hotkey toggles the overlay (Esc, a save timeout and focus loss are the page's own way out, via hideQuick). */
-function toggleQuick() {
-  if (quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible()) dismissQuick();
-  else showQuick(false);
-}
-
-/** Creates the overlay hidden ~6 s after the main window first appears, so it never competes with the launch. */
+/** Creates the stage hidden ~6 s after the main window first appears, so it never competes with the launch. */
 function scheduleQuickPrewarm() {
   if (quickPrewarmTimer || quitting) return;
   quickPrewarmTimer = setTimeout(() => {
     if (!quitting && ready && (!quickWindow || quickWindow.isDestroyed())) quickWindow = makeWindow(true);
-  }, QUICK_OVERLAY.prewarmMs);
+  }, QUICK_PET.prewarmMs);
 }
 
 /**
- * Tray «Мои фразы» and openTraining('phrases') from a page (e.g. the overlay's capture card): the main window opens
- * on the Practice phrases sheet (the page decides how, via onNavigate). The overlay hides on the way (showTraining).
+ * Tray «Мои фразы» and openTraining('phrases') from a page (e.g. the chubrik's card): the main window opens on the Practice
+ * phrases sheet (the page decides how, via onNavigate). The chubrik stays on screen.
  */
 function openPhrases() {
   showTraining();
@@ -505,8 +535,10 @@ function status(sender) {
     shortcut: shortcut ? shortcut.label : '',
     shortcutRegistered,
     notificationsSupported: Notification.isSupported(),
+    // 0.5.4: «Послушать» can record the computer's own sound (getDisplayMedia → loopback, configureDesktopSession).
+    systemAudio: true,
   };
-  if (quickWindow && !quickWindow.isDestroyed() && sender === quickWindow.webContents) value.quickStyle = 'overlay';
+  if (quickWindow && !quickWindow.isDestroyed() && sender === quickWindow.webContents) value.quickStyle = 'pet';
   return value;
 }
 
@@ -546,7 +578,7 @@ function registerIpc() {
     if (quickWindow && event.sender === quickWindow.webContents) {
       windowDiagnostics.quick.bridgeConnected = true;
       quickDocumentReady = true;
-      // The page is up: a requested overlay appears a moment after this answer, so the page has applied quickStyle.
+      // The page is up: a requested stage appears a moment after this answer, so the page has applied quickStyle.
       if (quickShowPending) setTimeout(() => { if (quickShowPending) presentQuick(); }, 80);
     }
     writeDiagnostics();
@@ -561,11 +593,10 @@ function registerIpc() {
     else showTraining();
     return { opened: true };
   });
-  // Opened from the main window: closing the overlay brings the main window back to the front.
-  handle(IPC.openQuick, (event) => { showQuick(!!mainWindow && event.sender === mainWindow.webContents); return { opened: true }; });
+  handle(IPC.openQuick, () => { showQuick(); return { opened: true }; });
   handle(IPC.hideQuick, () => dismissQuick());
-  // 0.5.3 overlay: clicks pass through its transparent parts (true) or land on its content (false). Mouse moves keep
-  // reaching the page (forwarded, see setQuickClickThrough), so it can switch back over its content. Never applies to
+  // The stage: clicks pass through its transparent parts (true) or land on the chubrik, its card and menu (false). Mouse
+  // moves keep reaching the page (forwarded, see setQuickClickThrough), so it can switch back over them. Never applies to
   // the main window.
   handle(IPC.setClickThrough, (event, ignore) => {
     if (typeof ignore !== 'boolean') throw new Error('Expected a boolean.');
@@ -649,23 +680,24 @@ async function boot() {
   registerIpc();
   // No default menu in the installed app: its Ctrl+R / F5 reload would drop an unsent recording.
   if (app.isPackaged) Menu.setApplicationMenu(null);
-  // The first free hotkey of SHORTCUT_CANDIDATES toggles the overlay; the tray and the page show the one that registered.
-  shortcut = chooseShortcut((accelerator) => globalShortcut.register(accelerator, toggleQuick));
+  // The first free hotkey of SHORTCUT_CANDIDATES summons the chubrik; the tray and the page show the one that registered.
+  shortcut = chooseShortcut((accelerator) => globalShortcut.register(accelerator, () => showQuick()));
   shortcutRegistered = shortcut !== null;
   const shortcutText = shortcut ? shortcut.label : null;
   tray = new Tray(nativeImage.createFromPath(iconPath));
   tray.setToolTip(trayTooltip(shortcutText, APP_TITLE));
-  const trayActions = { open: showTraining, capture: () => showQuick(false), phrases: openPhrases, remind: () => scheduleReminder(30), quit: () => app.quit() };
+  const trayActions = { open: showTraining, capture: () => showQuick(), phrases: openPhrases, remind: () => scheduleReminder(30), quit: () => app.quit() };
   tray.setContextMenu(Menu.buildFromTemplate(trayMenuItems({ shortcut: shortcutText, notificationsSupported: Notification.isSupported(), title: APP_TITLE })
     .map((item) => item.type === 'separator' ? { type: 'separator' } : { label: item.label, enabled: item.enabled !== false, click: trayActions[item.id] })));
   tray.on('click', showTraining);
+  for (const event of ['display-metrics-changed', 'display-added', 'display-removed']) screen.on(event, refitQuick);
   ready = true;
   writeDiagnostics();
   startupStage = 'main-window';
   showTraining();
   startupStage = 'ready';
   writeDiagnostics();
-  if (pendingQuick) { pendingQuick = false; showQuick(false); }
+  if (pendingQuick) { pendingQuick = false; showQuick(); }
 }
 
 function stopCallAudioJobs(contents) {

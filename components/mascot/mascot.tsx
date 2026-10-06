@@ -32,6 +32,8 @@ export interface MascotHandle {
   /** Joy (or the given emotion) + boing + confetti burst. */
   celebrate(emotion?: MascotEmotion): void;
   greet(): void;
+  /** PASS-0.5.4 §2: the mascot's stage moves across the screen (velocity px/s, acceleration px/s²); zeros when it rests. */
+  carry(vx: number, vy: number, ax: number, ay: number): void;
   readonly emotion: MascotEmotion;
 }
 export interface MascotProps {
@@ -166,6 +168,11 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
     tap: (keyboard = false) => { control.current?.claim(); physics.tap(keyboard); control.current?.sync(); },
     celebrate: value => control.current?.celebrate(value),
     greet: () => control.current?.greet(),
+    carry: (vx, vy, ax, ay) => {
+      // The first frame of a move claims the animated slot; the loop then follows the physics by itself.
+      if (!physics.frame.active && (vx || vy || ax || ay)) control.current?.claim();
+      physics.carry(vx, vy, ax, ay);
+    },
     get emotion() { return physics.emotion; },
   }), [physics]);
 
@@ -298,9 +305,9 @@ export const Mascot = memo(function Mascot(props: MascotProps) {
         dark = Math.abs(darkTarget - dark) <= step ? darkTarget : dark + Math.sign(darkTarget - dark) * step;
       }
       const frame = physics.step(dt);
-      // Calm breathing paints at ~30 Hz; touch, voice, reactions and hover at the display rate (and every frame until
-      // the first WebGL frame has landed).
-      if (frame.active || now < hoverUntil || dark !== darkTarget || now - lastPaint >= 32 || lens === 'pending') { paint(frame, false); lastPaint = now; }
+      // Calm breathing paints at ~30 Hz, sleep at ~15 Hz (the PC chubrik can doze on the screen all day); touch, voice,
+      // reactions and hover at the display rate (and every frame until the first WebGL frame has landed).
+      if (frame.active || now < hoverUntil || dark !== darkTarget || now - lastPaint >= (frame.sleeping ? 66 : 32) || lens === 'pending') { paint(frame, false); lastPaint = now; }
       raf = requestAnimationFrame(tick);
     }
     /** Runs the loop when this mascot animates, otherwise stops it and shows the static pose (when visible). */

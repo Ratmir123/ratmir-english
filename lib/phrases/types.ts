@@ -40,6 +40,8 @@ export interface SavedPhrase {
   history: { at: string; sessionId: string; result: PhraseHistoryResult }[];
   /** «Уже знаю»: kept in the list, never offered. */
   archived: boolean;
+  /** 0.5.4 «Послушать»: the line of the clip it was heard in (≤ 300 characters); absent or null for typed phrases. */
+  heard?: string | null;
 }
 
 /** Stored on a session when its conversation finishes (a phrase round or a session the phrases were woven into). */
@@ -57,6 +59,51 @@ export interface PhraseResult {
 export interface CreatePhraseRequest { text: string; origin: PhraseOrigin }
 export interface CreatePhraseResponse { phrase: SavedPhrase; duplicate: boolean }
 export interface UpdatePhraseRequest { archived?: boolean; relearn?: true; retryEnrichment?: true }
+
+// ── 0.5.4 «Послушать» (planning/v05/PASS-0.5.4.md §1): a short clip of what he was listening to — the PC's own sound (a video,
+// a podcast) or the iPhone microphone — transcribed, explained in Russian, its best expressions saved to «Мои фразы». ──
+
+export type ListenSource = 'system' | 'microphone';
+export type ListenStatus = 'analyzing' | 'ready' | 'failed';
+
+export interface ListenPhrase {
+  /** The phrase saved from the clip (enrichment 'ready' at once), or the one that was already in the bank. */
+  phrase: SavedPhrase;
+  /** It was already in «Мои фразы»: nothing new was saved. */
+  duplicate: boolean;
+}
+
+export interface ListenClip {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  origin: PhraseOrigin;
+  source: ListenSource;
+  /** Recording length, 1–180 s (whole seconds). */
+  seconds: number;
+  /** What was heard, ≤ 4000 characters (present from the first answer on). */
+  transcript: string;
+  /** 'analyzing' while Sol explains it (poll GET /api/phrases/listen/:id), then 'ready' or 'failed'. */
+  status: ListenStatus;
+  /** Russian: what the clip is about, one or two sentences (≤ 300 characters). */
+  gist: string | null;
+  /** Russian explanation points: idioms, slang, grammar or pronunciation worth noticing (≤ 4, each ≤ 240 characters). */
+  points: string[];
+  /** Up to 3 expressions from the clip, in the order they were heard. */
+  phrases: ListenPhrase[];
+  /** Russian reason when status is 'failed', or why nothing was saved. */
+  note: string | null;
+}
+
+export interface ListenResponse { clip: ListenClip }
+
+/** A clip is at most this long; the clients stop recording by themselves there. */
+export const LISTEN_MAX_SECONDS = 180;
+/** A clip shorter than this is not sent. */
+export const LISTEN_MIN_SECONDS = 2;
+export const LISTEN_PHRASE_LIMIT = 3;
+export const LISTEN_POLL_MS = 1500;
+export const LISTEN_POLL_LIMIT_MS = 90_000;
 
 export const PHRASE_TEXT_LIMIT = 600;
 /** Phrases in one round. */

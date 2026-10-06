@@ -38,12 +38,8 @@ Choose wording about one step above the supplied level: natural, current spoken 
 Connect the example and the partner's line to learner.profile (work, interests, goals) when that fits naturally. Never invent the
 learner's clients, numbers, achievements or private facts. No points, ratings, streaks or promises of improvement.`;
 
-const TASK = `The learner saved DATA.saved.text with «Запомнить» (from a video, a chat, a call or his own «как сказать …»). Prepare ONE
-target expression for spoken practice and return the strict JSON schema.
-English input: phrase is the canonical reusable expression from it, in its base form, with someone/something where the slot changes
-(for example "get someone up to speed"). For a long passage choose the single most useful expression for his conversations.
-Russian input or a mix: phrase is the natural English expression a native speaker would use for that meaning, at his level.
-phrase: at most 120 characters, no quotation marks, no final full stop.
+/** The per-field rules of one prepared expression; the «Послушать» analysis (listen-prompt.ts) uses the same ones. */
+export const PHRASE_FIELD_RULES = `phrase: at most 120 characters, no quotation marks, no final full stop.
 meaning: the Russian meaning in a few words, at most 200 characters.
 note: one or two short Russian sentences on when to use it, its register or a typical mistake, at most 300 characters.
 example: one natural English sentence that uses the expression in a situation from his own life or work, at most 220 characters.
@@ -51,12 +47,19 @@ exampleRu: the Russian translation of the example, at most 260 characters.
 cue: a short Russian recall cue, at most 160 characters, that describes the situation or the meaning so he can recall the
 expression himself. It must not contain the expression, any of its English words or a word-for-word translation.
 situation: one natural English line, at most 240 characters, that a conversation partner says and that invites him to answer with
-the expression. It must not contain the expression or its key words. A question or a remark about everyday life or his work.
+the expression. It must not contain the expression or its key words. A question or a remark about everyday life or his work.`;
+
+const TASK = `The learner saved DATA.saved.text with «Запомнить» (from a video, a chat, a call or his own «как сказать …»). Prepare ONE
+target expression for spoken practice and return the strict JSON schema.
+English input: phrase is the canonical reusable expression from it, in its base form, with someone/something where the slot changes
+(for example "get someone up to speed"). For a long passage choose the single most useful expression for his conversations.
+Russian input or a mix: phrase is the natural English expression a native speaker would use for that meaning, at his level.
+${PHRASE_FIELD_RULES}
 usable: false only when there is nothing to learn (random characters, a lone name or number, an unclear fragment); then set every
 other field to null.`;
 
-/** Only what this task needs: the placement estimate and the profile, bounded. */
-function learnerSummary(state: AppState) {
+/** Only what this task needs: the placement estimate and the profile, bounded (also the «Послушать» analysis). */
+export function learnerSummary(state: AppState) {
   const placement = placementContext(state.placement?.result);
   return {
     // The placement test is the only source of a level; without a result the level stays unknown.
@@ -81,7 +84,7 @@ export function buildEnrichmentPrompt(state: AppState, phrase: Pick<SavedPhrase,
 }
 
 /** Whitespace collapsed; over the limit it is cut at a word boundary with an ellipsis; empty → null. */
-function clip(value: string | null | undefined, limit: number): string | null {
+export function clipText(value: string | null | undefined, limit: number): string | null {
   const text = (value ?? '').replace(/\s+/gu, ' ').trim();
   if (!text) return null;
   if (text.length <= limit) return text;
@@ -113,12 +116,12 @@ export function sanitiseEnrichment(output: EnrichmentOutput): EnrichedFields | n
   if (!phrase || !mostlyLatin(phrase)) throw new Error('Sol не вернула английское выражение.');
   const fields: EnrichedFields = {
     phrase,
-    meaning: clip(output.meaning, PHRASE_FIELD_LIMITS.meaning),
-    note: clip(output.note, PHRASE_FIELD_LIMITS.note),
-    example: clip(output.example, PHRASE_FIELD_LIMITS.example),
-    exampleRu: clip(output.exampleRu, PHRASE_FIELD_LIMITS.exampleRu),
-    cue: clip(output.cue, PHRASE_FIELD_LIMITS.cue),
-    situation: clip(output.situation, PHRASE_FIELD_LIMITS.situation),
+    meaning: clipText(output.meaning, PHRASE_FIELD_LIMITS.meaning),
+    note: clipText(output.note, PHRASE_FIELD_LIMITS.note),
+    example: clipText(output.example, PHRASE_FIELD_LIMITS.example),
+    exampleRu: clipText(output.exampleRu, PHRASE_FIELD_LIMITS.exampleRu),
+    cue: clipText(output.cue, PHRASE_FIELD_LIMITS.cue),
+    situation: clipText(output.situation, PHRASE_FIELD_LIMITS.situation),
   };
   if (fields.cue && (phraseLeaks(phrase, fields.cue) || !/[А-Яа-яЁё]/u.test(fields.cue))) fields.cue = null;
   if (fields.situation && (phraseLeaks(phrase, fields.situation) || !mostlyLatin(fields.situation))) fields.situation = null;

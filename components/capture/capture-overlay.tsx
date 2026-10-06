@@ -1,7 +1,8 @@
 'use client';
 
 /*
- * The `?entry=quick` page (planning/v05/PASS-0.5.3.md §7). The 0.5.3 shell reports `quickStyle: 'overlay'`: a frameless
+ * The `?entry=quick` page (planning/v05/PASS-0.5.3.md §7). The 0.5.4 shell reports `quickStyle: 'pet'`: the window covers the
+ * work area and the chubrik lives on it (pet-stage.tsx, PASS-0.5.4 §2). The 0.5.3 shell reports `quickStyle: 'overlay'`: a frameless
  * transparent window at the bottom-right of the screen, where the chubrik rises from below the edge and the bubble grows
  * out of it; exit is the reverse (≤ 300 ms), then `hideQuick()`. Clicks pass through everything but the bubble and the
  * companion (`setClickThrough`). It hides on Esc, on losing focus and 2.5 s after a save (not while the pointer is over
@@ -13,10 +14,11 @@ import { shortcutHint } from '@/lib/phrases/labels';
 import type { DesktopStatus } from '../desktop-bridge';
 import { EASE_EXIT, EASE_OUT, MOTION_MS, prefersReducedMotion } from '../ui/motion';
 import { CaptureCard } from './capture-card';
+import { PetStage } from './pet-stage';
 import { loadDesktopStatus, useCapture, type Capture } from './use-capture';
 import styles from './capture-overlay.module.css';
 
-type QuickStyle = 'overlay' | 'panel';
+type QuickStyle = 'pet' | 'overlay' | 'panel';
 /** An older shell that never answers still gets its card. */
 const STATUS_WAIT_MS = 1500;
 /** After a confirmed save, unless the pointer rests on it (PASS-0.5.3 §7). */
@@ -51,7 +53,7 @@ export function CaptureOverlay({ onDismiss }: { onDismiss: (target?: 'phrases') 
       if (!alive) return;
       setStatus(value);
       // Decided once: a late answer never swaps the page under his cursor.
-      setStyle(current => current ?? (value?.quickStyle === 'overlay' ? 'overlay' : 'panel'));
+      setStyle(current => current ?? (value?.quickStyle === 'pet' ? 'pet' : value?.quickStyle === 'overlay' ? 'overlay' : 'panel'));
     });
     return () => { alive = false; clearTimeout(timer); };
   }, [desktop]);
@@ -67,6 +69,7 @@ export function CaptureOverlay({ onDismiss }: { onDismiss: (target?: 'phrases') 
   }, [onDismiss]);
   const capture = useCapture({ origin: desktop ? 'desktop' : 'web' });
   if (!style) return null;
+  if (style === 'pet') return <div className={`${styles.root} ${styles.pet}`}><PetStage capture={capture} status={status} /></div>;
   return style === 'overlay'
     ? <OverlayStage capture={capture} status={status} />
     : <PanelStage capture={capture} status={status} desktop={desktop} onDismiss={dismiss} />;

@@ -61,6 +61,47 @@ struct PhraseCreateResult: Decodable {
 
 private struct PhraseEnvelope: Decodable { let phrase: SavedPhrase }
 private struct PhraseDeletion: Decodable { let deleted: Bool? }
+/// `ListenResponse { clip }`.
+private struct ListenEnvelope: Decodable { let clip: ListenClip }
+
+/// «Послушать» requests (PASS-0.5.4 §1.2), pure and unit-tested: the multipart body the iPhone uploads.
+enum ListenRequests {
+    /// POST /api/phrases/listen.
+    static let upload = "phrases/listen"
+
+    /// GET /api/phrases/listen/:id.
+    static func path(_ id: String) -> String { upload + "/" + id }
+
+    /// Whole seconds 1–180, as the server rounds them.
+    static func seconds(_ duration: Double) -> Int {
+        guard duration.isFinite else { return 1 }
+        return min(ListenTiming.maxSeconds, max(1, Int(duration.rounded())))
+    }
+
+    /// The text fields next to the audio: `seconds`, `origin: 'iphone'`, `source: 'microphone'`.
+    static func fields(seconds: Int) -> [(name: String, value: String)] {
+        [(name: "seconds", value: String(seconds)), (name: "origin", value: "iphone"), (name: "source", value: "microphone")]
+    }
+
+    /// multipart/form-data: the fields, then `audio` (the WAV take from TaskRecorder).
+    static func body(audio: Data, seconds: Int, boundary: String) -> Data {
+        var data = Data()
+        func append(_ value: String) { data.append(Data(value.utf8)) }
+        for field in fields(seconds: seconds) {
+            append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(field.name)\"\r\n\r\n\(field.value)\r\n")
+        }
+        append("--\(boundary)\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"listen.wav\"\r\nContent-Type: audio/wav\r\n\r\n")
+        data.append(audio)
+        append("\r\n--\(boundary)--\r\n")
+        return data
+    }
+
+    /// A lost connection or a failing server: the same take can be sent again. A refusal (4xx) needs a new recording.
+    static func canResend(_ error: Error) -> Bool {
+        if let failure = error as? TrainingHTTPError { return failure.status >= 500 }
+        return error is URLError
+    }
+}
 
 // MARK: - API
 
@@ -89,6 +130,42 @@ extension TrainingClient {
     /// POST /api/phrases/:id/delete {} → { deleted: true }.
     func deletePhrase(id: String) async throws {
         let _: PhraseDeletion = try await request(PhraseRequests.path(id) + "/delete", body: [:])
+    }
+
+    /// «Послушать»: POST /api/phrases/listen (multipart: audio, seconds, origin 'iphone', source 'microphone') → { clip }.
+    /// The server transcribes inside the request (a few seconds) and answers with the transcript while Sol explains it;
+    /// refusals carry its Russian `{ error }` (400/402/412/413/422/429). An expired access cookie signs in again once.
+    func uploadListenClip(url: URL, seconds: Double) async throws -> ListenClip {
+        let audio = try Data(contentsOf: url)
+#if DEBUG
+        if previewMode {
+            guard let fixture = previewResponses[ListenRequests.upload] else {
+                throw ClientError.message("Предпросмотр не отправляет запросы к серверу.")
+            }
+            return try JSONDecoder().decode(ListenEnvelope.self, from: fixture).clip
+        }
+#endif
+        let boundary = "SmoothTalk-" + UUID().uuidString
+        let payload = ListenRequests.body(audio: audio, seconds: ListenRequests.seconds(seconds), boundary: boundary)
+        let target = try endpoint(ListenRequests.upload)
+        var upload = URLRequest(url: target)
+        upload.httpMethod = "POST"
+        upload.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        upload.httpBody = payload
+        let data: Data
+        do {
+            data = try await checked(upload)
+        } catch let failure as TrainingHTTPError where failure.status == 401 {
+            guard await reauthenticate() else { throw failure }
+            data = try await checked(upload)
+        }
+        return try JSONDecoder().decode(ListenEnvelope.self, from: data).clip
+    }
+
+    /// GET /api/phrases/listen/:id → { clip } (404 «Запись не найдена.»).
+    func fetchListenClip(id: String) async throws -> ListenClip {
+        let envelope: ListenEnvelope = try await request(ListenRequests.path(id))
+        return envelope.clip
     }
 
     /// «Повторить»: a «Мои фразы» round, started like a drill (POST /api/sessions with the usual start body plus
@@ -209,6 +286,8 @@ enum PhraseSheetRoute: Identifiable, Equatable {
     /// Previews: the row «Мои фразы» opens expanded, and the capture card that starts saved.
     var previewExpanded: String?
     var previewSavedID: String?
+    /// Previews: the capture card that starts in a «Послушать» state (`listen-recording`, `listen-analysing`, `listen-ready`).
+    var previewListen: String?
 #endif
     private var pendingRound: String?
     private var roundRequest: (mode: String, id: String)?

@@ -22,6 +22,7 @@ import { getDrill, linkDrillSession } from '@/lib/server/calls/state';
 import { handlePhrasesRoute } from '@/lib/server/phrases/routes';
 import { phraseRoundSelection, phraseWeaveSelection, recordPhraseResults } from '@/lib/server/phrases/service';
 import { ensurePhraseQueue, requeueStalePhrases } from '@/lib/server/phrases/queue';
+import { ensureListenQueue, requeueStaleClips } from '@/lib/server/phrases/listen-queue';
 import { locked } from '@/lib/server/http';
 import { APP_CHANNEL, APP_NAME, APP_VERSION } from '@/lib/app-info';
 import type { AppState, Session, Profile } from '@/lib/types';
@@ -110,11 +111,12 @@ async function handle(req: NextRequest, route: Route) {
     }
     throw new ApiError('Действие не найдено.', 404);
   }
-  ensureWorker(); ensurePhraseQueue();
+  ensureWorker(); ensurePhraseQueue(); ensureListenQueue();
   if (req.method === 'GET') {
     if (path[0] === 'state') {
-      // Saved phrases still waiting for Sol after a restart or a failed attempt go back into the queue (PASS-0.5.3 §1.3).
-      cleanAudio(getAppState().profile.audioRetentionDays); requeueStalePhrases(); return json(safeState(getAppState()));
+      // Saved phrases and «Послушать» clips still waiting for Sol after a restart or a failed attempt go back into their queues
+      // (PASS-0.5.3 §1.3, PASS-0.5.4 §1.3).
+      cleanAudio(getAppState().profile.audioRetentionDays); requeueStalePhrases(); requeueStaleClips(); return json(safeState(getAppState()));
     }
     if (path[0] === 'status') return json({ app: { name: APP_NAME, version: APP_VERSION, channel: APP_CHANNEL }, brain: await getBrainStatus(), hosting: process.env.TRAINING_DEPLOYMENT === 'server' ? 'server' : 'local', audio: { configured: audioConfigured(), model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts' } });
     if (path[0] === 'families') return json({ families: FAMILIES, calibration: CALIBRATION_OPTIONS, catalog: familyCatalog() });

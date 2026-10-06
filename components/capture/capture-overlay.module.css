@@ -8,10 +8,13 @@
 :global(html[data-entry='quick']:not([data-quick-style='panel'])) :global(body) { background: transparent; }
 /* Nothing of the main app (the launch backdrop, its aurora) paints in the quick window: only this page's root. */
 :global(html[data-entry='quick']) :global(body) > div:not(.root) { display: none; }
-:global(html[data-entry='quick'][data-quick-style='overlay']) { overflow: hidden; scrollbar-gutter: auto; }
-:global(html[data-entry='quick'][data-quick-style='overlay']) :global(body) { overflow: hidden; }
+:global(html[data-entry='quick']:is([data-quick-style='overlay'], [data-quick-style='pet'])) { overflow: hidden; scrollbar-gutter: auto; }
+:global(html[data-entry='quick']:is([data-quick-style='overlay'], [data-quick-style='pet'])) :global(body) { overflow: hidden; }
 
 .root { position: relative; z-index: 1; }
+
+/* Pet (0.5.4): the stage covers the window; pet-stage.module.css places the chubrik, its card and menu. */
+.pet { position: fixed; inset: 0; pointer-events: none; }
 
 /* Overlay: the card is anchored bottom-right; everything else lets clicks through to the desktop (the shell ignores mouse
    events over the transparent parts; the page switches that off while the pointer is on the bubble or the companion). */

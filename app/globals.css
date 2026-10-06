@@ -479,9 +479,8 @@ legend { padding: 0; font-weight: 700; }
   display: flex; flex-direction: column; gap: var(--space-2); padding: 18px 12px 14px;
   border-radius: var(--radius-sheet);
 }
-/* Brand: the live companion is the logo (calm, pointer play); the name beside it goes home. */
-.brand { display: flex; align-items: center; gap: 4px; min-height: 52px; padding: 0 4px 12px 2px; }
-.brand-mark { width: 44px; height: 44px; flex-shrink: 0; margin: -4px 0 -6px; }
+/* Brand: the name alone goes home (PASS-0.5.4 §4); the live companions sit in the tab headers. */
+.brand { display: flex; align-items: center; min-height: 52px; padding: 0 4px 12px 0; }
 .brand-copy {
   min-width: 0; padding: 6px 8px; border-radius: 12px; text-align: left;
   font-family: var(--font-display); font-size: 21px; font-weight: 850; letter-spacing: -.4px; line-height: 1; color: var(--text-primary);
@@ -705,8 +704,8 @@ dialog.sheet:not([open])::backdrop { opacity: 0; }
 /* ---------- Responsive ---------- */
 @media (max-width: 1099px) and (min-width: 720px) {
   .sidebar { width: var(--rail-width); padding: 14px 8px 12px; gap: 6px; }
-  .brand { justify-content: center; padding: 0 0 10px; }
-  .brand-copy, .sidebar-rank-copy, .engine-status span { display: none; }
+  .brand { display: none; }
+  .sidebar-rank-copy, .engine-status span { display: none; }
   .nav-item { flex-direction: column; justify-content: center; gap: 3px; min-height: 60px; padding: 6px 2px; font-size: 11.5px; text-align: center; }
   .nav-item > span:not(.badge) { white-space: normal; line-height: 1.15; overflow-wrap: anywhere; }
   .nav-item .badge { position: absolute; top: 6px; right: 12px; margin: 0; }
