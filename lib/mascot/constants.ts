@@ -149,6 +149,15 @@ export const ROLL = { pivotY: 0.86, shift: 0.35 } as const;
  */
 export const COMPOSITOR_IDLE = { degrees: 4, breath: 0.015, seconds: 4.2, handoffMs: 320 } as const;
 
+/**
+ * PASS-0.5.4 §2 — carried across the screen (the PC chubrik dragged or thrown about its stage). Inputs are the stage's velocity
+ * v and acceleration a in S per second (²), clamped to maxSpeed / maxAccel. Inertia pushes the jelly against a: the body offset
+ * (velocity kick −offset·a·S per second), the roll (−roll·aₓ °/s per second), the squash (−squash·a_y) and the rim's first mode
+ * (−rim·(a·n̂), the trailing side bulges). Motion stretches the rim along v (second mode, stretch·|v|). Web only: the iPhone
+ * has no movable companion.
+ */
+export const CARRY = { offset: 0.1, roll: 7, squash: 0.25, rim: 0.16, stretch: 1, maxSpeed: 30, maxAccel: 160 } as const;
+
 /** Mood tint colours, linear 0–1 sRGB triplets (§1). */
 export const TINT_RGB = {
   lime: [0xda / 255, 0xf1 / 255, 0x63 / 255],

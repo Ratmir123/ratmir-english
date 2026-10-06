@@ -1,4 +1,6 @@
 /* «Запомнить» capture card (PASS-0.5.3 §1.6). The chubrik and a speech bubble «Что запомним?»:
+   - pet (0.5.4): the bubble of the PC chubrik that lives on the screen; pet-stage.tsx places it above or below the chubrik
+     (data-pet-side on its wrapper) and points the tail at it (--tail-x); no companion of its own;
    - overlay: the bubble floats above the companion at the bottom-right of a transparent window. It is a floating layer, but a
      transparent window has nothing behind it to blur, so the bubble is an opaque surface with the glass highlight and a
      deep shadow; its tail points down at the companion;
@@ -9,6 +11,7 @@
 
 .card { --mascot-box: 112px; position: relative; display: flex; flex-direction: column; align-items: center; min-width: 0; width: 100%; }
 .card[data-variant='overlay'] { width: auto; align-items: flex-end; }
+.card[data-variant='pet'] { width: auto; }
 .card[data-variant='sheet'] { --mascot-box: 92px; }
 .card[data-variant='inline'] { display: grid; align-items: stretch; }
 
@@ -22,9 +25,10 @@
 .bubbleWrap { position: relative; width: 100%; min-width: 0; }
 .card[data-variant='overlay'] .bubbleWrap { order: 1; width: min(364px, calc(100vw - 16px)); transform-origin: calc(100% - 64px) calc(100% + 56px); }
 .card[data-variant='panel'] .bubbleWrap { width: min(440px, 100%); transform-origin: 50% -48px; }
+.card[data-variant='pet'] .bubbleWrap { width: min(376px, calc(100vw - 16px)); }
 
 .bubble { position: relative; display: grid; gap: 14px; min-width: 0; }
-.card:is([data-variant='overlay'], [data-variant='panel']) .bubble {
+.card:is([data-variant='overlay'], [data-variant='panel'], [data-variant='pet']) .bubble {
   padding: 18px 18px 16px; border-radius: 26px; background: var(--surface-solid); color: var(--text-primary);
   box-shadow: inset 0 1px 0 var(--surface-glass-highlight), inset 0 0 0 1px var(--surface-glass-hairline), var(--e3);
 }
@@ -33,6 +37,10 @@
   max-height: calc(100vh - var(--mascot-box) - 10px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
 }
 .card[data-variant='panel'] .bubble { padding: 22px 22px 20px; }
+/* The stage gives the room on the chosen side (--card-max); a long explanation scrolls inside the bubble. */
+.card[data-variant='pet'] .bubble {
+  max-height: var(--card-max, 70vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+}
 .card[data-variant='inline'] .bubble { gap: 10px; }
 
 /* Tail: a turned square of the bubble's own colour that covers its edge; hairlines only on the two outer sides. */
@@ -40,6 +48,13 @@
 .card[data-variant='overlay'] .tail {
   right: 56px; bottom: -8px; border-bottom-right-radius: 5px; transform: rotate(45deg);
   box-shadow: inset -1px -1px 0 var(--surface-glass-hairline);
+}
+.card[data-variant='pet'] .tail { left: calc(var(--tail-x, 50%) - 9px); }
+:global([data-pet-side='above']) .card[data-variant='pet'] .tail {
+  bottom: -8px; border-bottom-right-radius: 5px; transform: rotate(45deg); box-shadow: inset -1px -1px 0 var(--surface-glass-hairline);
+}
+:global([data-pet-side='below']) .card[data-variant='pet'] .tail {
+  top: -8px; border-top-left-radius: 5px; transform: rotate(45deg); box-shadow: inset 1px 1px 0 var(--surface-glass-hairline);
 }
 .card[data-variant='panel'] .tail {
   left: calc(50% - 9px); top: -8px; border-top-left-radius: 5px; transform: rotate(45deg);
@@ -52,7 +67,7 @@
 /* ── Editing ── */
 .form, .result { display: grid; gap: 12px; min-width: 0; }
 .title { font-family: var(--font-display); font-size: 21px; line-height: 1.2; letter-spacing: -.3px; font-weight: 800; text-wrap: balance; }
-.card:is([data-variant='overlay'], [data-variant='panel']) .title { padding-right: 34px; }
+.card:is([data-variant='overlay'], [data-variant='panel'], [data-variant='pet']) .title { padding-right: 34px; }
 .card[data-variant='sheet'] .title { font-size: var(--text-22); text-align: center; }
 .field {
   min-height: 92px; max-height: 200px; resize: none; field-sizing: content;

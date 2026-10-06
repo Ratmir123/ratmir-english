@@ -4,8 +4,11 @@ export interface DesktopStatus {
   shortcut: string;
   shortcutRegistered: boolean;
   notificationsSupported: boolean;
-  /** 0.5.3: 'overlay' = the quick window is the transparent floating chubrik (PASS-0.5.3 §7); absent in older shells. */
-  quickStyle?: 'overlay';
+  /** 0.5.3: 'overlay' = the quick window is the transparent floating chubrik (PASS-0.5.3 §7); 0.5.4: 'pet' = the quick window
+   * covers the work area and the chubrik lives on it (PASS-0.5.4 §2); absent in older shells. */
+  quickStyle?: 'overlay' | 'pet';
+  /** 0.5.4: getDisplayMedia records the computer's own sound («Послушать», PASS-0.5.4 §1.4). */
+  systemAudio?: boolean;
 }
 
 /** Electron-only: compact mono audio extracted locally (system ffmpeg) from a large call recording before upload. */
@@ -33,6 +36,8 @@ export interface DesktopBridge {
   setClickThrough?(ignore: boolean): Promise<void>;
   /** 0.5.3: the shell asks the main window to open a place (tray «Мои фразы»). Returns an unsubscribe function. */
   onNavigate?(callback: (target: DesktopNavigationTarget) => void): () => void;
+  /** 0.5.4: the hotkey or the tray summoned the chubrik (open its card). Returns an unsubscribe function. */
+  onSummon?(callback: () => void): () => void;
 }
 
 export type DesktopNavigationTarget = 'phrases';

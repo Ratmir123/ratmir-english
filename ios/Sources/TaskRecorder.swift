@@ -19,6 +19,8 @@ struct TaskRecording: Equatable {
     @Published private(set) var take: TaskRecording?
     /// Increments every time a recording stops by itself (time limit, audio failure).
     @Published private(set) var autoStops = 0
+    /// Called right after a recording stops by itself (the take is already kept): «Послушать» sends it at once.
+    var onAutoStop: (@MainActor () -> Void)?
     @Published var message: String?
     /// Microphone level for the mascot (`MeasuredVoiceOrb(meter:mode: .listening)`); read per frame, never observed.
     let meter = VoiceMeter()
@@ -116,7 +118,10 @@ struct TaskRecording: Equatable {
         take = recording
         elapsed = recording.duration
         phase = .recorded
-        if automatic { autoStops += 1 }
+        if automatic {
+            autoStops += 1
+            onAutoStop?()
+        }
         return recording
     }
 

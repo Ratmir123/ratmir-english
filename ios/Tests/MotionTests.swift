@@ -296,7 +296,9 @@ final class MotionTests: XCTestCase {
         XCTAssertEqual(MedalTuning.perspective, 4)
         XCTAssertEqual(MedalTuning.tiltYaw, 16)
         XCTAssertEqual(MedalTuning.tiltPitch, 12)
-        XCTAssertEqual(MedalTuning.dragDegrees, 200)
+        // PASS 0.5.4 §5: a drag turns it slower and heavier.
+        XCTAssertEqual(MedalTuning.dragDegrees, 110)
+        XCTAssertEqual(MedalTuning.dragFollow, 0.07)
         XCTAssertEqual(MedalTuning.tapTurn, 360)
         XCTAssertEqual(MedalTuning.tapSeconds, 2.4)
         XCTAssertTrue(MedalTuning.tapSettle > 0 && MedalTuning.tapSettle <= 1.5)
@@ -304,12 +306,13 @@ final class MotionTests: XCTestCase {
         XCTAssertEqual(MedalTuning.entranceTurn, 720)
         XCTAssertEqual(MedalTuning.entranceSeconds, 3.6)
         XCTAssertEqual(MedalTuning.entranceGlint, 0.6)
-        XCTAssertEqual(MedalTuning.maxSpeed, 720)
-        XCTAssertEqual(MedalTuning.throwMinSpeed, 120)
-        XCTAssertEqual(MedalTuning.throwMinSeconds, 0.9)
-        XCTAssertEqual(MedalTuning.throwSeconds, 2.4)
-        XCTAssertEqual(MedalTuning.throwMaxSeconds, 4.5)
+        XCTAssertEqual(MedalTuning.maxSpeed, 300)
+        XCTAssertEqual(MedalTuning.throwMinSpeed, 80)
+        XCTAssertEqual([MedalTuning.throwMinSeconds, MedalTuning.throwSeconds, MedalTuning.throwMaxSeconds], [1.2, 2.8, 5])
+        XCTAssertEqual([MedalTuning.throwLooseMin, MedalTuning.throwLooseMax], [0.8, 6])
         XCTAssertEqual(MedalTuning.coast, 0.4)
+        XCTAssertEqual(MedalTuning.settleSpeed, 200)
+        XCTAssertEqual(MedalTuning.settleMinSeconds, 0.8)
         XCTAssertEqual(MedalTuning.stiffness, 20)
         XCTAssertEqual(MedalTuning.damping, 8)
         XCTAssertEqual(MedalTuning.springMaxSeconds, 3)
@@ -454,40 +457,103 @@ final class MotionTests: XCTestCase {
         XCTAssertEqual(third.face, 360, "a skipped (sleeping) attempt does not flip the direction")
     }
 
-    func testDragReleaseIsCappedAndLandsExactlyFaceFrontWithinFourAndAHalfSeconds() {
-        var turns = 0
+    /// tests/medal-turns.test.ts «a drag release is capped at 300°/s and lands exactly face-front within 6 s».
+    func testDragReleaseIsCappedAndLandsExactlyFaceFrontWithinSixSeconds() {
+        var throwsCount = 0
+        var settles = 0
         var springs = 0
-        for velocity in stride(from: -1_200.0, through: 1_200.0, by: 45) {
-            for angle in stride(from: -540.0, to: 540.0, by: 21) {
+        for velocity in stride(from: -1_200.0, through: 1_200.0, by: 15) {
+            for angle in stride(from: -540.0, to: 540.0, by: 7) {
                 let move = MedalTurns.release(angle: angle, velocity: velocity)
-                let speed = max(-720, min(720, velocity))
+                let speed = max(-MedalTuning.maxSpeed, min(MedalTuning.maxSpeed, velocity))
                 let run = play(move, from: angle)
                 XCTAssertEqual(run.angle.truncatingRemainder(dividingBy: 360), 0, "rests on a face (v \(velocity), angle \(angle))")
-                XCTAssertLessThanOrEqual(run.peak, 720 + 1e-6, "never faster than the cap")
-                switch move {
-                case .turn(let turn):
-                    turns += 1
-                    XCTAssertTrue(turn.seconds >= MedalTuning.throwMinSeconds - 1e-9 && turn.seconds <= MedalTuning.throwMaxSeconds + 1e-9)
-                    XCTAssertEqual(turn.at(0).velocity, speed, accuracy: 1e-6, "the turn starts at the release speed")
+                XCTAssertLessThanOrEqual(run.peak, MedalTuning.maxSpeed + 1e-6, "never faster than the cap (v \(velocity), angle \(angle))")
+                guard case .turn(let turn) = move else {
+                    springs += 1
+                    continue
+                }
+                XCTAssertEqual(turn.at(0).velocity, speed, accuracy: 1e-6, "it starts at the release speed")
+                if turn.ease == .outCubic {
+                    throwsCount += 1
+                    XCTAssertTrue(turn.seconds >= MedalTuning.throwLooseMin - 1e-9 && turn.seconds <= MedalTuning.throwLooseMax + 1e-9,
+                                  "\(turn.seconds) s")
                     XCTAssertEqual(turn.face - angle > 0, speed > 0, "it keeps going the way it was thrown")
                     XCTAssertEqual(run.past, 0, "a throw never passes its face")
                     XCTAssertTrue(monotonic(run.frames, speed > 0 ? 1 : -1))
-                    XCTAssertLessThanOrEqual(run.rest, MedalTuning.throwMaxSeconds + frame + 1e-9)
-                case .spring:
-                    springs += 1
-                    XCTAssertLessThan(abs(speed), 300, "from 300°/s up a face always fits")
-                    XCTAssertLessThanOrEqual(run.rest, 3, "the face spring rests within 3 s")
-                    XCTAssertLessThan(run.past, 25, "a slow release overshoots its face only a little")
+                    XCTAssertLessThanOrEqual(run.rest, MedalTuning.throwLooseMax + frame + 1e-9)
+                } else {
+                    settles += 1
+                    XCTAssertEqual(turn.ease, .inOutCubic)
+                    XCTAssertLessThan(abs(speed), 300, "at the 300°/s cap a face always fits")
+                    XCTAssertTrue(abs(speed) < MedalTuning.throwMinSpeed || turn.face != angle,
+                                  "a fast release settles only when no face ahead is reachable")
+                    XCTAssertLessThanOrEqual(run.rest, 4, "the settle rests within 4 s (v \(velocity), angle \(angle))")
+                    XCTAssertLessThan(run.past, 30, "a release that cannot reach a face ahead swings gently past and back")
                 }
             }
         }
-        XCTAssertGreaterThan(turns, springs, "most releases are decelerating turns")
+        XCTAssertEqual(springs, 0, "a release never springs")
+        XCTAssertGreaterThan(throwsCount, settles, "most releases are decelerating throws")
         let slow = MedalTurns.release(angle: 100, velocity: 40)
-        guard case .spring = slow else { return XCTFail("a slow release springs") }
+        guard case .turn(let settle) = slow else { return XCTFail("a slow release settles on an eased turn") }
+        XCTAssertEqual(settle.ease, .inOutCubic)
         XCTAssertEqual(MedalTurns.restFace(slow, angle: 100), 0, "a slow release returns to the nearest face")
         XCTAssertEqual(MedalTurns.restFace(MedalTurns.release(angle: 250, velocity: 40), angle: 250), 360)
+        // The case that used to whip round on the face spring at ~420°/s: now no faster than it was released.
+        let long = play(MedalTurns.release(angle: -127, velocity: -135), from: -127)
+        XCTAssertLessThanOrEqual(long.peak, 135 + 1e-6, "the long settle stays slow")
+        XCTAssertEqual(long.angle, -360)
         XCTAssertEqual(MedalTurns.nearestFace(-180), 0, "JS Math.round: a half rounds up")
         XCTAssertEqual(MedalTurns.nearestFace(180), 360)
+    }
+
+    /// PASS 0.5.4 §5: the shown angle chases the finger (τ 70 ms) and the release speed is read from it.
+    func testMedalDragFollowsTheFingerWithAShortEaseAndThrowsFromTheShownAngle() throws {
+        XCTAssertEqual(MedalTurns.follow(MedalTuning.dragFollow), 1 - exp(-1), accuracy: 1e-12)
+        XCTAssertEqual(MedalTurns.follow(0), 0)
+
+        // A full-width drag held still: 110°, then an eased settle back to the nearest face.
+        let held = MedalSpinModel(seed: 5)
+        var time = 2_000.0
+        _ = held.advance(to: time)
+        held.touchBegan(CGPoint(x: 10, y: 50), side: 100, time: time)
+        held.touchMoved(CGPoint(x: 20, y: 50), side: 100, time: time)
+        held.touchMoved(CGPoint(x: 120, y: 50), side: 100, time: time)
+        XCTAssertEqual(held.angle, 0, "the shown angle moves on the next frame")
+        time += frame
+        _ = held.advance(to: time)
+        XCTAssertEqual(held.angle, 110 * MedalTurns.follow(frame), accuracy: 1e-6, "one frame covers a fifth of the way")
+        for _ in 0..<60 {
+            time += frame
+            _ = held.advance(to: time)
+        }
+        XCTAssertEqual(held.angle, 110, accuracy: 0.01, "a drag across the whole medal turns it 110°")
+        held.touchEnded(CGPoint(x: 120, y: 50), side: 100, time: time, quick: false)
+        guard case .turn(let settle)? = held.move else { return XCTFail("a still release settles on an eased turn") }
+        XCTAssertEqual(settle.face, 0)
+        XCTAssertEqual(settle.v0, 0, accuracy: 0.01, "held still: no release speed")
+
+        // A quick flick: the shown angle trails the finger, and the throw starts there at the capped speed.
+        let thrown = MedalSpinModel(seed: 9)
+        var clock = 3_000.0
+        _ = thrown.advance(to: clock)
+        thrown.touchBegan(CGPoint(x: 0, y: 50), side: 100, time: clock)
+        thrown.touchMoved(CGPoint(x: 10, y: 50), side: 100, time: clock)
+        for step in 1...15 {
+            clock += frame
+            thrown.touchMoved(CGPoint(x: 10 + CGFloat(step) * 100 / 15, y: 50), side: 100, time: clock)
+            _ = thrown.advance(to: clock)
+        }
+        let shown = thrown.angle
+        XCTAssertTrue(shown > 60 && shown < 100, "the shown angle trails the finger's 110°: \(shown)")
+        thrown.touchEnded(CGPoint(x: 110, y: 50), side: 100, time: clock, quick: false)
+        guard case .turn(let flick)? = thrown.move else { return XCTFail("a quick release throws") }
+        XCTAssertEqual(flick.ease, .outCubic)
+        XCTAssertEqual(flick.from, shown, accuracy: 1e-9, "the throw starts where the medal is seen")
+        XCTAssertEqual(flick.at(0).velocity, MedalTuning.maxSpeed, accuracy: 1e-6, "capped at 300°/s")
+        XCTAssertTrue(flick.seconds >= MedalTuning.throwMinSeconds - 1e-9 && flick.seconds <= MedalTuning.throwMaxSeconds + 1e-9)
+        XCTAssertEqual(flick.face, 360)
     }
 
     // MARK: Launch motivation (§6, lib/startup-welcome.ts)

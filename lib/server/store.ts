@@ -10,6 +10,7 @@ import { connection, maybeTransaction, transaction } from './db';
 import { clearPlacement, placementProgressionInputs, presentPlacement } from './placement/state';
 import { callProgressionInputs, clearCalls, listCallSummaries, listDrills, listPatterns, listProfileFacts } from './calls/state';
 import { clearPhraseHistory, forgetPhraseSession, listPhrasesForState } from './phrases/repository';
+import { clearListenClips } from './phrases/listen-repository';
 import { APP_NAME, APP_VERSION } from '../app-info';
 
 const MAX_JOB_ATTEMPTS = 3;
@@ -202,6 +203,7 @@ export function deleteAllTraining(): void {
     clearPlacement(db);
     clearCalls(db);
     clearPhraseHistory(db);
+    clearListenClips(db);
     db.prepare('INSERT INTO settings(key,data) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data')
       .run('learning-generation', JSON.stringify(nextGeneration));
   });

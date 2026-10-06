@@ -52,7 +52,8 @@ function PhraseRow({ phrase, open, busy, onToggle, onArchive, onRestore, onRetry
       <CaretRightIcon size={15} className={styles.caret} aria-hidden="true" />
     </button>
     {open && <div id={`${id}-details`} className={styles.details}>
-      {original && <p className="caption">Сохранено: «{original}»</p>}
+      {original && !phrase.heard && <p className="caption">Сохранено: «{original}»</p>}
+      {phrase.heard && <p className="caption">Услышал: «<span lang="en">{phrase.heard}</span>»</p>}
       {phrase.enrichment === 'ready' && phrase.note && <p className={styles.note}>{phrase.note}</p>}
       {phrase.example && <div className={styles.example}>
         <p lang="en">{phrase.example}</p>

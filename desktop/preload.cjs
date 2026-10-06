@@ -21,6 +21,21 @@ ipcRenderer.on('ratmir-desktop:navigate', (_event, target) => {
   deliverNavigation();
 });
 
+// 0.5.4: the hotkey or the tray summoned the chubrik. Kept like a navigation request until the stage page subscribes.
+const summonListeners = new Set();
+let pendingSummon = false;
+function deliverSummon() {
+  if (!pendingSummon || summonListeners.size === 0) return;
+  pendingSummon = false;
+  for (const listener of [...summonListeners]) {
+    try { listener(); } catch { }
+  }
+}
+ipcRenderer.on('ratmir-desktop:summon', () => {
+  pendingSummon = true;
+  deliverSummon();
+});
+
 // Sandbox preloads cannot require local modules. Keep this closed, literal
 // channel list here; do not expose ipcRenderer or generic invoke/send methods.
 contextBridge.exposeInMainWorld('ratmirDesktop', Object.freeze({
@@ -53,5 +68,12 @@ contextBridge.exposeInMainWorld('ratmirDesktop', Object.freeze({
     navigationListeners.add(callback);
     if (pendingNavigation) Promise.resolve().then(deliverNavigation);
     return () => { navigationListeners.delete(callback); };
+  },
+  // 0.5.4: subscribe to summons of the chubrik (no arguments cross the bridge). Returns the unsubscribe function.
+  onSummon: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    summonListeners.add(callback);
+    if (pendingSummon) Promise.resolve().then(deliverSummon);
+    return () => { summonListeners.delete(callback); };
   },
 }));

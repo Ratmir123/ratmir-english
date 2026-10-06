@@ -1,0 +1,74 @@
+/* «Послушать» (PASS-0.5.4 §1.4) inside the capture card and the recording pill by the PC chubrik. Content settles with the
+   0.5.2 ease-out; only the recording dot pulses. One sunken well (the transcript while it is being explained). */
+
+.view { display: grid; gap: 12px; min-width: 0; animation: settle 360ms var(--ease-out) both; }
+.head { display: grid; gap: 2px; min-width: 0; padding-right: 34px; }
+.title { font-family: var(--font-display); font-size: 21px; line-height: 1.2; letter-spacing: -.3px; font-weight: 800; text-wrap: balance; padding-right: 34px; }
+.head .title { padding-right: 0; }
+.sub, .hint { color: var(--text-secondary); font-size: var(--text-15); line-height: 1.45; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.error { font-size: var(--text-13); line-height: 1.45; color: var(--status-error-ink); }
+.warn { font-size: var(--text-13); line-height: 1.45; color: var(--status-warning-ink, var(--accent-violet-ink)); font-weight: 650; }
+
+/* Recording */
+.meter { display: flex; align-items: baseline; gap: 10px; }
+.bigTime { font-family: var(--font-display); font-size: 34px; font-weight: 800; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.limit { color: var(--text-tertiary); font-size: var(--text-13); font-weight: 600; }
+.dot { position: relative; width: 12px; height: 12px; flex-shrink: 0; border-radius: 50%; background: var(--status-error-ink, #e5484d); align-self: center; }
+.dot[data-live]::after {
+  content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 2px solid currentColor; color: var(--status-error-ink, #e5484d);
+  opacity: 0; animation: ping 1.4s var(--ease-out) infinite;
+}
+
+/* Working */
+.working { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-13); font-weight: 650; color: var(--accent-violet-ink); }
+.dots { display: inline-flex; gap: 3px; }
+.dots i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .3; animation: dot 1.2s var(--ease-out) infinite; }
+.dots i:nth-child(2) { animation-delay: .16s; }
+.dots i:nth-child(3) { animation-delay: .32s; }
+
+/* Result */
+.gist { font-size: var(--text-15); line-height: 1.5; }
+.gist strong { font-weight: 750; }
+.phrases { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--surface-glass-hairline); }
+.phraseRow { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 10px 0; border-bottom: 1px solid var(--surface-glass-hairline); }
+.phraseCopy { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.phrase { font-family: var(--font-display); font-size: 18px; line-height: 1.3; letter-spacing: -.2px; font-weight: 800; overflow-wrap: anywhere; }
+.meaning { font-size: var(--text-15); line-height: 1.45; }
+.heard { font-size: var(--text-13); line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; }
+.duplicate { font-size: var(--text-12); font-weight: 700; color: var(--accent-violet-ink); }
+.remove { width: 32px; height: 32px; margin: -2px -6px 0 0; flex-shrink: 0; color: var(--text-tertiary); }
+.remove:hover { color: var(--text-primary); }
+.points { display: grid; gap: 6px; }
+.pointsTitle { font-size: var(--text-13); font-weight: 750; color: var(--text-secondary); }
+.points ul { display: grid; gap: 6px; margin: 0; padding-left: 18px; }
+.points li { font-size: var(--text-15); line-height: 1.45; }
+.points li::marker { color: var(--accent-violet-ink); }
+.transcript {
+  padding: 12px 14px; border-radius: 16px; background: var(--surface-sunken); font-size: var(--text-13); line-height: 1.55;
+  color: var(--text-secondary); overflow-wrap: anywhere; white-space: pre-wrap; max-height: 9.5em; overflow-y: auto; overscroll-behavior: contain;
+}
+.details summary { cursor: pointer; font-size: var(--text-13); font-weight: 650; color: var(--text-secondary); list-style-position: inside; }
+.details[open] summary { margin-bottom: 8px; }
+
+/* The pill by the PC chubrik while it listens: an opaque floating surface like the card. */
+.pill {
+  display: inline-flex; align-items: center; gap: 10px; padding: 7px 7px 7px 14px; border-radius: var(--radius-pill);
+  background: var(--surface-solid); color: var(--text-primary); white-space: nowrap;
+  box-shadow: inset 0 1px 0 var(--surface-glass-highlight), inset 0 0 0 1px var(--surface-glass-hairline), var(--e3);
+}
+.time { font-weight: 800; font-variant-numeric: tabular-nums; font-size: 15px; min-width: 2.6em; }
+.pillWarn { font-size: var(--text-12); font-weight: 700; color: var(--status-error-ink, #e5484d); }
+.stop { min-height: 34px; padding-inline: 12px; }
+.pillClose { width: 32px; height: 32px; color: var(--text-secondary); }
+
+@keyframes settle { from { opacity: 0; transform: translate3d(0, 6px, 0); } }
+@keyframes dot { 0%, 70%, 100% { opacity: .3; transform: none; } 35% { opacity: 1; transform: translate3d(0, -2px, 0); } }
+@keyframes ping { 0% { opacity: .55; transform: scale(.6); } 100% { opacity: 0; transform: scale(1.6); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .view { animation: fade 200ms ease-out both; }
+  .dots i, .dot[data-live]::after { animation: none; }
+  .dots i { opacity: .7; }
+}
+@keyframes fade { from { opacity: 0; } }

@@ -78,6 +78,8 @@ export function presentPhrase(stored: StoredPhrase): SavedPhrase {
     example: stored.example ?? null, exampleRu: stored.exampleRu ?? null, cue: stored.cue ?? null, situation: stored.situation ?? null,
     status: stored.status, stage: stored.stage ?? 0, dueAt: stored.dueAt, lastPracticedAt: stored.lastPracticedAt ?? null,
     lastOfferedAt: stored.lastOfferedAt ?? null, history: Array.isArray(stored.history) ? stored.history : [], archived: !!stored.archived,
+    // 0.5.4: the clip line a «Послушать» phrase was heard in; typed phrases and old rows have none.
+    heard: stored.heard ?? null,
   };
 }
 

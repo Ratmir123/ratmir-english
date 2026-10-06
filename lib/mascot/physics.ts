@@ -4,7 +4,7 @@
 // PASS-0.5.3 §4: the body never holds a lean — emotion tilts are rolls centred on 0 (random sign per entry, alternating for
 // tap reactions), calm idles with an occasional roll episode, static poses are upright, and the pointer gaze relaxes.
 import {
-  AUDIO, BODY_RADIUS, C_DAMP, D_MAX, D_MIN, FACE, HOP_SPRING, IDLE, K_NEIGH, K_SPRING, MAX_SUBSTEPS, NODE_COUNT,
+  AUDIO, BODY_RADIUS, CARRY, C_DAMP, D_MAX, D_MIN, FACE, HOP_SPRING, IDLE, K_NEIGH, K_SPRING, MAX_SUBSTEPS, NODE_COUNT,
   POS_SPRING, SCALE_SPRING, SQUASH_SPRING, STEP_DT, TILT_SPRING, TINT_RGB, TOUCH, VOLUME_KEEP,
 } from './constants';
 import { EMOTIONS, REACTIONS, TAP_CYCLE, emotionForState, type EyeShape, type MascotEmotion, type MascotState } from './emotions';
@@ -170,6 +170,9 @@ export class MascotPhysics {
   private flickerUntil = 0;
   private squintUntil = 0;
 
+  // Carried across the screen (PASS-0.5.4 §2): the stage's velocity (S/s) and acceleration (S/s²), clamped.
+  private carryVX = 0; private carryVY = 0; private carryAX = 0; private carryAY = 0;
+
   // Audio.
   private micLevel = 0; private micEnv = 0;
   private speechLevel = 0; private speechEnv = 0;
@@ -258,6 +261,20 @@ export class MascotPhysics {
     if (moved > 0.04) this.activity();
     if (moved >= HOVER_MOVED) this.hoverAt = this.time;
     this.hoverX = x; this.hoverY = y;
+  }
+  /**
+   * The whole mascot moves across the screen (PASS-0.5.4 §2, the PC chubrik dragged or thrown): its stage's velocity (px/s) and
+   * acceleration (px/s²). Inertia pushes the jelly against the acceleration (it lags, swings and bulges behind) and fast motion
+   * stretches it along the way it goes; the springs ring out once it rests. Call every frame while it moves, then once with
+   * zeros. Holds until the next call.
+   */
+  carry(vx: number, vy: number, ax: number, ay: number) {
+    const S = this.size;
+    const speed = Math.hypot(finite(vx), finite(vy)) / S, accel = Math.hypot(finite(ax), finite(ay)) / S;
+    const v = speed > CARRY.maxSpeed ? CARRY.maxSpeed / speed : 1, a = accel > CARRY.maxAccel ? CARRY.maxAccel / accel : 1;
+    this.carryVX = finite(vx) / S * v; this.carryVY = finite(vy) / S * v;
+    this.carryAX = finite(ax) / S * a; this.carryAY = finite(ay) / S * a;
+    if (speed > 0.5 || accel > 5) this.activity();
   }
   /** Convenience: pointer offset from the body centre in px → hover gaze. */
   hoverOffset(dx: number, dy: number) { this.hover({ x: dx / TOUCH.hoverRadius, y: dy / TOUCH.hoverRadius }); }
@@ -669,9 +686,19 @@ export class MascotPhysics {
   }
   private integrateRing() {
     const d = this.d, v = this.v, a = this.a, f = this.force;
+    // Carried: the rim's first mode against the acceleration, its second mode along the velocity (|v|·cos 2(θ − θv)).
+    const ax = this.carryAX, ay = this.carryAY, vx = this.carryVX, vy = this.carryVY;
+    const speed = Math.hypot(vx, vy);
+    const along = speed > 1e-6 ? (vx * vx - vy * vy) / speed : 0, across = speed > 1e-6 ? 2 * vx * vy / speed : 0;
+    const carried = ax !== 0 || ay !== 0 || speed > 1e-6;
     for (let i = 0; i < N; i++) {
       const left = d[i === 0 ? N - 1 : i - 1], right = d[i === N - 1 ? 0 : i + 1];
-      a[i] = -K_SPRING * d[i] - C_DAMP * v[i] + K_NEIGH * (left + right - 2 * d[i]) + f[i];
+      let carry = 0;
+      if (carried) {
+        const c = this.nodeCos[i], s = this.nodeSin[i];
+        carry = -CARRY.rim * (ax * c + ay * s) + CARRY.stretch * ((c * c - s * s) * along + 2 * c * s * across);
+      }
+      a[i] = -K_SPRING * d[i] - C_DAMP * v[i] + K_NEIGH * (left + right - 2 * d[i]) + f[i] + carry;
     }
     let mean = 0;
     for (let i = 0; i < N; i++) { v[i] += a[i] * DT; d[i] += v[i] * DT; mean += d[i]; }
@@ -684,6 +711,12 @@ export class MascotPhysics {
     }
   }
   private integrateBody() {
+    // Carried: inertia kicks the body offset, the roll and the squash against the stage's acceleration.
+    if (this.carryAX !== 0 || this.carryAY !== 0) {
+      this.vpx -= CARRY.offset * this.carryAX * this.size * DT; this.vpy -= CARRY.offset * this.carryAY * this.size * DT;
+      this.vphi -= CARRY.roll * this.carryAX * DT;
+      this.vq -= CARRY.squash * this.carryAY * DT;
+    }
     this.vpx += (POS_SPRING.k * (this.tpx - this.px) - POS_SPRING.c * this.vpx) * DT; this.px += this.vpx * DT;
     this.vpy += (POS_SPRING.k * (this.tpy - this.py) - POS_SPRING.c * this.vpy) * DT; this.py += this.vpy * DT;
     this.vq += (SQUASH_SPRING.k * (this.tq - this.q) - SQUASH_SPRING.c * this.vq) * DT; this.q += this.vq * DT;

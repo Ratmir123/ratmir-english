@@ -16,7 +16,12 @@ struct PhrasesSheet: View {
 
     init(route: PhraseSheetRoute) {
         self.route = route
-        _detent = State(initialValue: route.isList ? .large : .medium)
+        var start: PresentationDetent = route.isList ? .large : .medium
+#if DEBUG
+        // `listen-analysing` / `listen-ready` capture the sheet at full height, as the result grows it.
+        if let listen = PhrasesStore.shared.previewListen, listen != "listen-recording" { start = .large }
+#endif
+        _detent = State(initialValue: start)
     }
 
     var body: some View {
@@ -37,6 +42,8 @@ struct PhrasesSheet: View {
             CaptureScreen(prefill: prefill, close: { dismiss() }, openList: {
                 detent = .large
                 showList = true
+            }, expand: {
+                detent = .large
             })
         case .list:
             PhrasesListScreen(close: { dismiss() })
@@ -247,8 +254,11 @@ private struct PhraseRow: View {
         return dueLabel == "сегодня" ? Theme.violet : Theme.inkSecondary
     }
 
+    /// 0.5.4: the clip line a «Послушать» phrase was heard in.
+    private var heard: String? { PhraseLabels.heard(phrase) }
+
     private var spoken: String {
-        [headline, sub, dueLabel].compactMap { $0 }.joined(separator: ", ")
+        [headline, sub, heard.map { "услышал: " + $0 }, dueLabel].compactMap { $0 }.joined(separator: ", ")
     }
 
     var body: some View {
@@ -284,6 +294,9 @@ private struct PhraseRow: View {
                     }
                     .font(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
+                }
+                if let heard {
+                    HeardLine(text: heard, lineLimit: expanded ? nil : 2)
                 }
             }
             Spacer(minLength: 8)
@@ -630,10 +643,12 @@ private struct PhraseResultRow: View {
 
 #if DEBUG
 /// Synthetic «Мои фразы» for CI screenshots: `--preview=phrases` (the sheet over Practice, one row open), `capture` (the
-/// capture sheet over Today with a shared text), `capture-saved` (the same card after a save) and `phrase-review` (a finished
-/// phrase round). Generic, fictional expressions only.
+/// capture sheet over Today with a shared text), `capture-saved` (the same card after a save), `phrase-review` (a finished
+/// phrase round) and the «Послушать» states of the capture sheet (PASS-0.5.4 §1.5): `listen-recording` (the pill),
+/// `listen-analysing` (the transcript with «Разбираю…») and `listen-ready` (the result). Generic, fictional English only.
 @MainActor enum PhrasesPreview {
-    static let screens: Set<String> = ["phrases", "capture", "capture-saved", "phrase-review"]
+    static let screens: Set<String> = ["phrases", "capture", "capture-saved", "phrase-review",
+                                       "listen-recording", "listen-analysing", "listen-ready"]
 
     /// Opens the sheet a preview screen shows, through the same gate as a quick action (after the launch layer).
     static func install(_ client: TrainingClient, screen: String) {
@@ -643,6 +658,9 @@ private struct PhraseResultRow: View {
             AppEntryInbox.shared.requestCapture(text: "be on the same page")
         case "capture-saved":
             store.previewSavedID = "preview-phrase-circle"
+            AppEntryInbox.shared.requestCapture(text: nil)
+        case "listen-recording", "listen-analysing", "listen-ready":
+            store.previewListen = screen
             AppEntryInbox.shared.requestCapture(text: nil)
         case "phrases":
             store.previewExpanded = "preview-phrase-ballpark"
@@ -662,11 +680,12 @@ private struct PhraseResultRow: View {
         }
         func item(_ id: String, _ text: String, enrichment: String = "ready", phrase: String?, meaning: String?, note: String? = nil,
                   example: String? = nil, exampleRu: String? = nil, status: String = "learning", stage: Int = 1, due: Double = -2,
-                  created: Double = -48, history: [[String: Any]] = [], archived: Bool = false) -> [String: Any] {
+                  created: Double = -48, history: [[String: Any]] = [], archived: Bool = false, heard: String? = nil) -> [String: Any] {
             ["id": id, "text": text, "origin": "iphone", "createdAt": at(created), "updatedAt": at(created), "enrichment": enrichment,
              "phrase": value(phrase), "meaning": value(meaning), "note": value(note), "example": value(example),
              "exampleRu": value(exampleRu), "cue": NSNull(), "situation": NSNull(), "status": status, "stage": stage,
-             "dueAt": at(due), "lastPracticedAt": NSNull(), "lastOfferedAt": NSNull(), "history": history, "archived": archived]
+             "dueAt": at(due), "lastPracticedAt": NSNull(), "lastOfferedAt": NSNull(), "history": history, "archived": archived,
+             "heard": value(heard)]
         }
         func entry(_ hours: Double, _ result: String) -> [String: Any] {
             ["at": at(hours), "sessionId": "preview-session-" + result, "result": result]
@@ -682,7 +701,8 @@ private struct PhraseResultRow: View {
                  note: "Просят или дают оценку без точного расчёта.",
                  example: "Could you give me a ballpark figure for the whole project?",
                  exampleRu: "Можешь назвать примерную цифру за весь проект?", due: -5, created: -72,
-                 history: [entry(-26, "hinted"), entry(-70, "missed")]),
+                 history: [entry(-26, "hinted"), entry(-70, "missed")],
+                 heard: "Just give me a ballpark figure and we'll take it from there."),
             item("preview-phrase-page", "be on the same page", phrase: "be on the same page", meaning: "одинаково понимать задачу",
                  example: "Let's do a quick call so we're on the same page.",
                  exampleRu: "Давай быстро созвонимся, чтобы одинаково понимать задачу.", stage: 2, due: 72, created: -120,
@@ -729,6 +749,50 @@ private struct PhraseResultRow: View {
         value["analysis"] = analysis
         value["completion"] = ["canComplete": true, "needsRetry": false] as [String: Any]
         value["phraseResults"] = results
+    }
+
+    /// `listen-analysing` / `listen-ready`: a short clip of a fictional cooking video, transcribed; ready, it carries the gist,
+    /// two new expressions, one that was already saved and three points.
+    static func listenClip(ready: Bool) -> ListenClip {
+        let iso = ISO8601DateFormatter()
+        let now = iso.string(from: Date().addingTimeInterval(-20))
+        let transcript = "Okay, so the sauce is a bit too thick. No worries, we'll just thin it out with some pasta water. "
+            + "I've never tried it with lemon before, but let's give it a shot. See? It comes together in no time. "
+            + "And if it tastes a little flat, don't be shy with the salt."
+        guard ready else {
+            return ListenClip(id: "preview-listen", createdAt: now, updatedAt: now, seconds: 24, transcript: transcript,
+                              status: .analyzing)
+        }
+        func saved(_ id: String, _ phrase: String, _ meaning: String, note: String, example: String, exampleRu: String,
+                   heard: String) -> SavedPhrase {
+            SavedPhrase(id: id, text: phrase, origin: .iphone, createdAt: now, updatedAt: now, enrichment: .ready, phrase: phrase,
+                        meaning: meaning, note: note, example: example, exampleRu: exampleRu, status: .new, stage: 0, dueAt: now,
+                        heard: heard)
+        }
+        let phrases = [
+            ListenPhrase(phrase: saved("preview-listen-shot", "give it a shot", "попробовать, рискнуть",
+                                       note: "Легко и по-дружески: так соглашаются попробовать что-то новое.",
+                                       example: "I've never edited a vertical video before, but I'll give it a shot.",
+                                       exampleRu: "Я ещё не монтировал вертикальное видео, но попробую.",
+                                       heard: "I've never tried it with lemon before, but let's give it a shot.")),
+            ListenPhrase(phrase: saved("preview-listen-time", "in no time", "очень быстро, моментально",
+                                       note: "Разговорное: обещают, что займёт совсем немного времени.",
+                                       example: "Send me the notes and I'll fix it in no time.",
+                                       exampleRu: "Пришли заметки — исправлю моментально.",
+                                       heard: "See? It comes together in no time.")),
+            ListenPhrase(phrase: saved("preview-listen-worries", "no worries", "ничего страшного",
+                                       note: "Спокойный ответ на мелкую проблему или извинение.",
+                                       example: "No worries, we can move the call to Friday.",
+                                       exampleRu: "Ничего страшного, перенесём созвон на пятницу.",
+                                       heard: "No worries, we'll just thin it out with some pasta water."), duplicate: true),
+        ]
+        return ListenClip(id: "preview-listen", createdAt: now, updatedAt: now, seconds: 24, transcript: transcript,
+                          status: .ready,
+                          gist: "Повар показывает соус к пасте: разбавляет его водой от пасты, добавляет лимон и советует не жалеть соли.",
+                          points: ["«Thin it out» — фразовый глагол «разбавить, сделать жиже»; обратное — «thicken».",
+                                   "«Don't be shy with the salt» — разговорное «не жалей соли»: так советуют не скупиться.",
+                                   "В быстрой речи «give it a» сливается почти в одно слово: «гивитэ»."],
+                          phrases: phrases)
     }
 }
 #endif

@@ -1,0 +1,40 @@
+/* The PC chubrik's stage (PASS-0.5.4 §2): a transparent layer over the work area. Only the chubrik, its card, its recording pill
+   and its menu take the pointer (the page switches the shell's click-through over them); everything else lets clicks reach
+   the desktop. Positions are transforms written by script; nothing here animates layout. */
+
+.stage { position: fixed; inset: 0; overflow: hidden; pointer-events: none; }
+.stage[data-phase='hidden'] .pet, .stage[data-phase='hidden'] .card, .stage[data-phase='hidden'] .pillBox { visibility: hidden; }
+
+.pet {
+  position: absolute; left: 0; top: 0; z-index: 2; width: 112px; height: 112px; pointer-events: auto;
+  border-radius: 40%; cursor: grab; touch-action: none; outline: none; will-change: transform;
+  -webkit-tap-highlight-color: transparent;
+}
+.pet[data-carried] { cursor: grabbing; }
+.pet:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-violet-ink) 55%, transparent); }
+.body { width: 100%; height: 100%; }
+
+.card, .pillBox { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: auto; will-change: transform; }
+.card[data-pet-side='above'] > *, .pillBox[data-pet-side='above'] > * { transform-origin: var(--tail-x, 50%) calc(100% + 16px); }
+.card[data-pet-side='below'] > *, .pillBox[data-pet-side='below'] > * { transform-origin: var(--tail-x, 50%) -16px; }
+
+/* The menu in the app's style: an opaque floating surface at the pointer. */
+.menu {
+  position: absolute; left: 0; top: 0; z-index: 3; display: grid; min-width: 228px; padding: 6px; pointer-events: auto;
+  border-radius: 18px; background: var(--surface-solid); color: var(--text-primary);
+  box-shadow: inset 0 1px 0 var(--surface-glass-highlight), inset 0 0 0 1px var(--surface-glass-hairline), var(--e3);
+  transform-origin: 0 0; animation: pop 160ms var(--ease-out) both;
+}
+.menu button {
+  display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 12px; border-radius: 12px; text-align: left;
+  font-size: var(--text-15); font-weight: 600; color: inherit; outline: none;
+}
+.menu button svg { color: var(--text-secondary); flex-shrink: 0; }
+.menu button:hover:not(:disabled), .menu button:focus-visible { background: var(--surface-sunken); }
+.menu button:disabled { opacity: .45; }
+.menu hr { height: 1px; margin: 5px 8px; border: 0; background: var(--surface-glass-hairline); }
+.menu .danger, .menu .danger svg { color: var(--status-error-ink); }
+.menuHint { padding: 6px 12px 4px; font-size: var(--text-12); color: var(--text-tertiary); }
+
+@keyframes pop { from { opacity: 0; transform: scale(.96); } }
+@media (prefers-reduced-motion: reduce) { .menu { animation: none; } }

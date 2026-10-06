@@ -4,8 +4,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore, 
 
 /**
  * Rank medal as a physical object (DESIGN-PASS-0.5.1 «Медали рангов — объём»), turning slowly and smoothly
- * (PASS-0.5.3 §8). Every turn is an eased curve with a known end, so nothing whips round or creeps for long.
- * Mirrored in ios/Sources/RankMedalSolid.swift MedalTuning — change both together.
+ * (PASS-0.5.3 §8; a drag turns it slower and heavier since PASS-0.5.4 §5). Every turn is an eased curve with a known end, so
+ * nothing whips round or creeps for long. Mirrored in ios/Sources/RankMedalSolid.swift MedalTuning — change both together.
  */
 export const MEDAL = {
   /** Below this side the medal is flat art with a float and a glint: no thickness, light, holo or gestures. */
@@ -15,7 +15,9 @@ export const MEDAL = {
   tiltYaw: 16,
   tiltPitch: 12,
   /** Horizontal drag across the full medal width turns it this many degrees. */
-  dragDegrees: 200,
+  dragDegrees: 110,
+  /** While dragged, the shown angle chases the pointer's with this time constant (s): the medal feels heavy, never twitchy. */
+  dragFollow: 0.07,
   /** Tap: one turn over `tapSeconds` (ease-in-out cubic) that runs `tapSettle`° past face-front and springs back. */
   tapTurn: 360,
   tapSeconds: 2.4,
@@ -29,15 +31,25 @@ export const MEDAL = {
   /**
    * Drag release, capped at `maxSpeed` °/s. From `throwMinSpeed` up it decays as an ease-out cubic that starts at the
    * release speed (no jump) and stops exactly on a face ahead: of the faces whose landing time 3·distance/speed lies in
-   * [throwMinSeconds, throwMaxSeconds], the one nearest `throwSeconds`. Slower releases, or no face in range, spring.
+   * [throwMinSeconds, throwMaxSeconds], the one nearest `throwSeconds`; when none lands in it, the face whose landing time is
+   * nearest the window, if that is within [throwLooseMin, throwLooseMax]. Slower releases, or no face at all, settle.
    */
-  maxSpeed: 720,
-  throwMinSpeed: 120,
-  throwMinSeconds: 0.9,
-  throwSeconds: 2.4,
-  throwMaxSeconds: 4.5,
-  /** The face spring (slow releases and the tap settle): target = the face nearest angle + speed·coast. */
+  maxSpeed: 300,
+  throwMinSpeed: 80,
+  throwMinSeconds: 1.2,
+  throwSeconds: 2.8,
+  throwMaxSeconds: 5,
+  throwLooseMin: 0.8,
+  throwLooseMax: 6,
+  /**
+   * Settle (slow releases, PASS-0.5.4 §5): an eased turn (ease-in-out cubic, starting at the release speed) onto the face
+   * nearest angle + speed·coast, over at least `settleMinSeconds`, its own peak about `settleSpeed` °/s — never a spring that
+   * could whip a long way round.
+   */
   coast: 0.4,
+  settleSpeed: 200,
+  settleMinSeconds: 0.8,
+  /** The face spring that ends a tap's settle past face-front. */
   stiffness: 20,
   damping: 8,
   springMaxSeconds: 3,
@@ -118,7 +130,7 @@ export function showcaseTurn(angle: number, direction: 1 | -1): MedalTurn {
   return { kind: 'turn', from: angle, delta: face - angle, seconds: MEDAL.showcaseSeconds, ease: 'inOutSine', v0: 0, elapsed: 0, face, glintAt: MEDAL.showcaseGlint };
 }
 
-/** What a drag release does: a decelerating turn onto a face ahead, or the face spring for a slow release. */
+/** What a drag release does: a decelerating turn onto a face ahead, or the settle turn for a slow release. */
 export function releaseThrow(angle: number, velocity: number): MedalMotion {
   const speed = Math.max(-MEDAL.maxSpeed, Math.min(MEDAL.maxSpeed, velocity));
   if (Math.abs(speed) >= MEDAL.throwMinSpeed) {
@@ -126,15 +138,31 @@ export function releaseThrow(angle: number, velocity: number): MedalMotion {
     let first = direction > 0 ? Math.ceil(angle / 360) * 360 : Math.floor(angle / 360) * 360;
     if (Math.abs(first - angle) < 1e-6) first += direction * 360;
     let best: { face: number; seconds: number } | null = null;
+    let loose: { face: number; seconds: number; off: number } | null = null;
     for (let turn = 0; turn < 3; turn++) {
       const face = first + direction * 360 * turn;
       const seconds = 3 * Math.abs(face - angle) / Math.abs(speed);
-      if (seconds < MEDAL.throwMinSeconds || seconds > MEDAL.throwMaxSeconds) continue;
+      const off = Math.max(0, MEDAL.throwMinSeconds - seconds, seconds - MEDAL.throwMaxSeconds);
+      if (seconds >= MEDAL.throwLooseMin && seconds <= MEDAL.throwLooseMax && (!loose || off < loose.off)) loose = { face, seconds, off };
+      if (off > 0) continue;
       if (!best || Math.abs(seconds - MEDAL.throwSeconds) < Math.abs(best.seconds - MEDAL.throwSeconds)) best = { face, seconds };
     }
+    best ??= loose;
     if (best) return { kind: 'turn', from: angle, delta: best.face - angle, seconds: best.seconds, ease: 'outCubic', v0: 0, elapsed: 0, face: best.face, glintAt: null };
   }
-  return { kind: 'spring', target: nearestFace(angle + speed * MEDAL.coast), velocity: speed, age: 0 };
+  const face = nearestFace(angle + speed * MEDAL.coast);
+  const settle: MedalTurn = { kind: 'turn', from: angle, delta: face - angle, seconds: Math.max(MEDAL.settleMinSeconds, 1.5 * Math.abs(face - angle) / MEDAL.settleSpeed),
+    ease: 'inOutCubic', v0: speed, elapsed: 0, face, glintAt: null };
+  // The release speed adds to the eased part early on: lengthen the settle until its peak stays slow.
+  for (let attempt = 0; attempt < 8 && turnPeak(settle) > Math.max(MEDAL.settleSpeed, Math.abs(speed)) + 1e-6; attempt++) settle.seconds *= 1.2;
+  return settle;
+}
+
+/** The highest speed (°/s) along a turn, sampled. */
+export function turnPeak(turn: MedalTurn): number {
+  let peak = 0;
+  for (let index = 0; index <= 40; index++) peak = Math.max(peak, Math.abs(turnAt(turn, turn.seconds * index / 40).velocity));
+  return peak;
 }
 
 /**
@@ -201,7 +229,8 @@ export function useReducedMotion() {
   return useSyncExternalStore(subscribeReduced, () => window.matchMedia(reducedQuery).matches, () => false);
 }
 
-type Drag = { id: number; x0: number; y0: number; a0: number; moved: boolean; samples: Array<[number, number]> };
+/** `target`: the angle under the pointer; the shown angle follows it (MEDAL.dragFollow), sampled for the release speed. */
+type Drag = { id: number; x0: number; y0: number; a0: number; moved: boolean; target: number; frame: number; last: number; samples: Array<[number, number]> };
 const between = (min: number, max: number) => min + Math.random() * (max - min);
 
 /**
@@ -286,7 +315,21 @@ export function useMedal3D(ref: RefObject<HTMLElement | null>, { size, solid, re
     if (!state.frame) state.frame = requestAnimationFrame(tick);
   }, [ref, tick]);
 
-  useEffect(() => stopFrame, [stopFrame]);
+  /** The drag follow: the shown angle eases towards the pointer's every frame until it catches up. */
+  const follow = useCallback((now: number) => {
+    const state = live.current; const drag = state.drag;
+    if (!drag?.moved) return;
+    const dt = Math.min(0.05, drag.last ? (now - drag.last) / 1000 : 1 / 60);
+    drag.last = now;
+    state.angle += (drag.target - state.angle) * (1 - Math.exp(-dt / MEDAL.dragFollow));
+    drag.samples.push([now, state.angle]);
+    while (drag.samples.length > 2 && now - drag.samples[0][0] > 90) drag.samples.shift();
+    paint();
+    drag.frame = Math.abs(drag.target - state.angle) > 0.02 ? requestAnimationFrame(follow) : 0;
+  }, [paint]);
+  const stopFollow = useCallback(() => { const drag = live.current.drag; if (drag?.frame) cancelAnimationFrame(drag.frame); if (drag) drag.frame = 0; }, []);
+
+  useEffect(() => () => { stopFrame(); stopFollow(); }, [stopFrame, stopFollow]);
   // Reduced motion switched on mid-turn: drop it and rest face-front.
   useEffect(() => { if (!solid && live.current.motion) finish(); }, [solid, finish]);
 
@@ -348,7 +391,7 @@ export function useMedal3D(ref: RefObject<HTMLElement | null>, { size, solid, re
     if (!responsive || event.button !== 0) return;
     touch();
     if (event.pointerType !== 'mouse') aim(event);
-    if (!nested && options.current.solid) live.current.drag = { id: event.pointerId, x0: event.clientX, y0: event.clientY, a0: 0, moved: false, samples: [] };
+    if (!nested && options.current.solid) live.current.drag = { id: event.pointerId, x0: event.clientX, y0: event.clientY, a0: 0, moved: false, target: 0, frame: 0, last: 0, samples: [] };
   };
   const onPointerMove = (event: PointerEvent<HTMLElement>) => {
     if (!responsive) return;
@@ -363,21 +406,20 @@ export function useMedal3D(ref: RefObject<HTMLElement | null>, { size, solid, re
         // A caught turn keeps its angle; the hover yaw folds into the spin so nothing jumps.
         stopFrame();
         state.angle += state.tiltY; state.tiltY = 0; state.motion = null; state.velocity = 0;
-        drag.a0 = state.angle; drag.x0 = event.clientX;
+        drag.a0 = state.angle; drag.target = state.angle; drag.x0 = event.clientX;
         element.dataset.spinning = 'true'; element.dataset.active = 'true'; element.dataset.dragging = 'true';
         try { element.setPointerCapture(event.pointerId); } catch { /* the pointer is already gone */ }
         onPress(false);
       } else if (Math.abs(dy) > 10) { state.drag = null; if (event.pointerType !== 'mouse') rest(); }
       return;
     }
-    state.angle = drag.a0 + (event.clientX - drag.x0) * MEDAL.dragDegrees / options.current.size;
-    drag.samples.push([event.timeStamp, state.angle]);
-    while (drag.samples.length > 2 && event.timeStamp - drag.samples[0][0] > 90) drag.samples.shift();
-    paint();
+    drag.target = drag.a0 + (event.clientX - drag.x0) * MEDAL.dragDegrees / options.current.size;
+    if (!drag.frame) { drag.last = 0; drag.frame = requestAnimationFrame(follow); }
   };
   const onPointerEnd = (event: PointerEvent<HTMLElement>) => {
     const state = live.current; const drag = state.drag; const element = ref.current;
     if (!drag || drag.id !== event.pointerId) return;
+    stopFollow();
     state.drag = null;
     touch();
     if (event.pointerType !== 'mouse') state.pitch = 0;

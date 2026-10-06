@@ -11,7 +11,6 @@ import { ElapsedTime } from '../ui/elapsed';
 import { RollingNumber } from '../ui/rolling-number';
 import { Companion } from './companion';
 import { TAB_ICONS } from './navigation-icons';
-import { ScreenMascot } from './screen-mascot';
 
 function useBadges() {
   const { data, seenReviews } = useApp();
@@ -44,10 +43,8 @@ export function Sidebar() {
   const engineOk = !!data.status?.brain.authenticated;
   // Every item carries data-enter="side": at the launch hand-off the rail fills from the top in its own wave.
   return <aside className="sidebar glass" aria-label="Навигация">
-    {/* The live companion is the logo (MOTION-PASS-0.5.2 §3, calm, pointer play); the name beside it goes home.
-        In the 720–1099 px icon rail only the companion shows. */}
+    {/* The name goes home (PASS-0.5.4 §4: no companion here, every tab header has its own); hidden in the 720–1099 px icon rail. */}
     <div className="brand" data-enter="side">
-      <ScreenMascot emotion="calm" fluid className="brand-mark" />
       <button type="button" className="brand-copy" onClick={() => app.go('today')} aria-label={`${APP_NAME} — на главную`}>{APP_NAME}<small>Тренинг общения</small></button>
     </div>
     {minimized && <button type="button" className="nav-session" data-enter="side" onClick={() => nav.openSession()} aria-label={`Текущее занятие: ${sessionStatusLabel(minimized)}`} title="Вернуться к занятию">

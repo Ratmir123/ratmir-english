@@ -1,11 +1,13 @@
 import SwiftUI
 import UIKit
+import AVFoundation
 
 // «Запомнить» capture card (planning/v05/PASS-0.5.3.md §1.6), one component for every place on the iPhone, mirroring the web
 // components/capture/capture-card.tsx and use-capture.ts:
 // - sheet: the capture sheet (Practice «Запомнить», the Home Screen quick action, the App Intent): the chubrik above his bubble
 //   «Что запомним?»; saving is instant (optimistic): the text chip flies into him, a happy hop, «Запомнил!» + «Повторим в
-//   разговорах», then Sol's take-apart («Разбираю…» while he thinks); «Ещё одну» and «Мои фразы»;
+//   разговорах», then Sol's take-apart («Разбираю…» while he thinks); «Ещё одну» and «Мои фразы». «Послушать» next to
+//   «Вставить» (PASS-0.5.4 §1.5): the chubrik listens through the microphone and explains the clip (ListenViews.swift);
 // - inline: the field on top of «Мои фразы», without a companion (the saved phrase shows up in the list underneath).
 
 // MARK: - Model
@@ -153,12 +155,16 @@ struct CaptureCard: View {
     var onSaved: (() -> Void)? = nil
     /// The text was already saved: the list opens that phrase.
     var onDuplicate: ((String) -> Void)? = nil
+    /// «Послушать» shows a transcript or a result: the sheet grows to full height.
+    var expand: (() -> Void)? = nil
 
     @EnvironmentObject private var client: TrainingClient
     @ObservedObject private var store: PhrasesStore
     @StateObject private var model: CaptureModel
+    @StateObject private var listen: ListenModel
     @FocusState private var focused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @State private var flight: ChipFlight?
     @State private var mascotFrame: CGRect = .zero
     @State private var fieldFrame: CGRect = .zero
@@ -166,19 +172,23 @@ struct CaptureCard: View {
     @State private var cheering = false
 
     init(style: Style, prefill: String? = nil, autofocus: Bool = false, openList: (() -> Void)? = nil,
-         onSaved: (() -> Void)? = nil, onDuplicate: ((String) -> Void)? = nil) {
+         onSaved: (() -> Void)? = nil, onDuplicate: ((String) -> Void)? = nil, expand: (() -> Void)? = nil) {
         self.style = style
         self.autofocus = autofocus
         self.openList = openList
         self.onSaved = onSaved
         self.onDuplicate = onDuplicate
+        self.expand = expand
         _store = ObservedObject(wrappedValue: PhrasesStore.shared)
 #if DEBUG
         let startsSaved = style == .sheet ? PhrasesStore.shared.previewSavedID : nil
+        let startsListening = style == .sheet ? PhrasesStore.shared.previewListen : nil
 #else
         let startsSaved: String? = nil
+        let startsListening: String? = nil
 #endif
         _model = StateObject(wrappedValue: CaptureModel(prefill: prefill, startsSaved: startsSaved))
+        _listen = StateObject(wrappedValue: ListenModel(preview: startsListening))
     }
 
     /// The server's phrase of the last save, followed while Sol works on it.
@@ -193,6 +203,7 @@ struct CaptureCard: View {
     /// works, happy when done, wink when it was already saved; the hop of the landing chip is happy.
     private var mood: VoiceOrbMood {
         if cheering { return .happy }
+        if let listening = listenMood { return listening }
         guard let saved = model.saved else {
             if model.error != nil { return .sad }
             return model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .curious : .listening
@@ -201,6 +212,21 @@ struct CaptureCard: View {
         if saved.duplicate { return .wink }
         if phrase.enrichment == .pending { return slow ? .happy : .thinking }
         return phrase.enrichment == .failed ? .curious : .happy
+    }
+
+    /// «Послушать»: listening while it records, thinking while the server and Sol work, happy with new phrases, curious
+    /// when nothing was worth saving, sad when it failed; nil when the card is not listening.
+    private var listenMood: VoiceOrbMood? {
+        switch listen.phase {
+        case .idle: return nil
+        case .starting, .recording: return .listening
+        case .uploading, .analyzing: return .thinking
+        case .slow: return .curious
+        case .done(let clip):
+            if !clip.isReady { return .sad }
+            return clip.phrases.isEmpty ? .curious : .happy
+        case .failed: return .sad
+        }
     }
 
     /// «Готово: be on the same page — одинаково понимать задачу» for VoiceOver once Sol is done.
@@ -226,28 +252,37 @@ struct CaptureCard: View {
             model.onScreen = true
             focusOnOpen()
         }
-        .onDisappear { model.onScreen = false }
+        .onDisappear {
+            model.onScreen = false
+            // Leaving while it listens throws the take away; an upload or the analysis carries on.
+            listen.leave()
+        }
         .onChange(of: model.text) { _, _ in model.textChanged() }
         .onChange(of: model.serial) { _, _ in onSaved?() }
         .onChange(of: duplicateID) { _, id in if let id { onDuplicate?(id) } }
         .onChange(of: readyLine) { _, line in if let line { model.announce(line) } }
+        .onChange(of: listen.showsResult, initial: true) { _, shows in if shows { expand?() } }
+        .onChange(of: scenePhase) { _, phase in
+            // In the background the microphone stops anyway: what was heard so far is sent.
+            if phase == .background { listen.interrupt() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in
+            if PlacementVoiceActions.interruptionBegan(note) { listen.interrupt() }
+        }
         .sensoryFeedback(.success, trigger: hapticKey)
         .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard, value: model.saved == nil)
+        .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard, value: listen.stage)
     }
 
     // MARK: Layouts
 
     private var sheetLayout: some View {
         VStack(spacing: 16) {
-            VoiceOrb(mode: .ready, level: 0, mood: mood, celebrate: model.celebrate, interactive: true)
-                .frame(width: 84, height: 84 * 1.045)
-                .accessibilityHidden(true)
-                .onGeometryChange(for: CGRect.self) { proxy in
-                    proxy.frame(in: .named("capture-card"))
-                } action: { frame in
-                    mascotFrame = frame
-                }
-            if let saved = model.saved {
+            companion
+            if listen.phase != .idle {
+                ListenPanel(model: listen, openList: openList, again: startListening)
+                    .transition(reduceMotion ? AnyTransition.opacity : NativeMotion.insertion)
+            } else if let saved = model.saved {
                 SpeechBubble(title: saved.duplicate ? CaptureModel.duplicateTitle : CaptureModel.savedTitle,
                              detail: saved.duplicate ? nil : CaptureModel.savedDetail)
                 VStack(spacing: 12) {
@@ -259,13 +294,36 @@ struct CaptureCard: View {
                 SpeechBubble(title: "Что запомним?")
                 VStack(spacing: 10) {
                     field(lines: 3...6)
-                    editingActions(compact: false)
+                    sheetActions
                     statusLines
                 }
                 .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// The chubrik above his bubble. While «Послушать» records he is in his listening state, his body pulses with the
+    /// microphone level (read per frame from the recorder's meter), and a tap on him stops the recording.
+    private var companion: some View {
+        let listening = listen.isListening
+        return MeasuredVoiceOrb(meter: listen.recorder.meter, mode: listening ? .listening : .ready, mood: mood,
+                                celebrate: model.celebrate + listen.celebrate, interactive: !listening)
+            .frame(width: 84, height: 84 * 1.045)
+            .accessibilityHidden(true)
+            .overlay {
+                if listening {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { listen.stop() }
+                        .accessibilityHidden(true)
+                }
+            }
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .named("capture-card"))
+            } action: { frame in
+                mascotFrame = frame
+            }
     }
 
     private var inlineLayout: some View {
@@ -313,6 +371,33 @@ struct CaptureCard: View {
             if compact { Spacer(minLength: 0) }
             Button(action: save) { Text("Запомнить") }
                 .buttonStyle(PrimaryButton(compact: compact))
+                .disabled(!model.canSave)
+                .accessibilityHint("Сохраняет в «Мои фразы». Фраза вернётся в разговорах.")
+        }
+    }
+
+    /// The sheet: «Вставить» and «Послушать» side by side (wrapping at large text sizes), «Запомнить» under them.
+    private var sheetActions: some View {
+        VStack(spacing: 10) {
+            ChipFlow(spacing: 10) {
+                PasteButton(payloadType: String.self) { strings in
+                    Task { @MainActor in model.paste(strings) }
+                }
+                .labelStyle(.titleAndIcon)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+                .tint(Theme.violet)
+                Button(action: startListening) {
+                    Label("Послушать", systemImage: "ear")
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+                .tint(Theme.violet)
+                .accessibilityHint(ListenLabels.hint + ". Самое полезное сохраню в «Мои фразы».")
+            }
+            Button(action: save) { Text("Запомнить") }
+                .buttonStyle(PrimaryButton())
                 .disabled(!model.canSave)
                 .accessibilityHint("Сохраняет в «Мои фразы». Фраза вернётся в разговорах.")
         }
@@ -469,8 +554,14 @@ struct CaptureCard: View {
         }
     }
 
+    /// «Послушать» / «Послушать ещё»: the keyboard goes away and the chubrik starts listening.
+    private func startListening() {
+        focused = false
+        listen.start(client: client)
+    }
+
     private func focusOnOpen() {
-        guard autofocus, model.saved == nil else { return }
+        guard autofocus, model.saved == nil, listen.phase == .idle else { return }
 #if DEBUG
         if PreviewFixtures.screen != nil { return }
 #endif
@@ -547,15 +638,17 @@ private struct BubbleShape: Shape {
 
 // MARK: - Capture sheet root
 
-/// The capture sheet (.medium / .large): the card, «Закрыть», and «Мои фразы» pushes the list in the same sheet.
+/// The capture sheet (.medium / .large): the card, «Закрыть», and «Мои фразы» pushes the list in the same sheet. A «Послушать»
+/// transcript or result grows it to .large (`expand`).
 struct CaptureScreen: View {
     let prefill: String?
     let close: () -> Void
     let openList: () -> Void
+    var expand: (() -> Void)? = nil
 
     var body: some View {
         ScrollView {
-            CaptureCard(style: .sheet, prefill: prefill, autofocus: true, openList: openList)
+            CaptureCard(style: .sheet, prefill: prefill, autofocus: true, openList: openList, expand: expand)
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
                 .padding(.bottom, 24)

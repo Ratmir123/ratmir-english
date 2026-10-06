@@ -2,14 +2,17 @@
 
 /*
  * The capture card «Запомнить» (planning/v05/PASS-0.5.3.md §1.6), one component for every place it lives:
- * - overlay: the floating bubble above the chubrik in the transparent PC window (capture-overlay.tsx);
+ * - pet: the bubble of the PC chubrik that lives on the screen (0.5.4, pet-stage.tsx) — the chubrik is the stage's own, so the
+ *   card has none and flies saved text into the one it is given (`companion`);
+ * - overlay: the floating bubble above the chubrik in the 0.5.3 shell's transparent window (capture-overlay.tsx);
  * - panel: the same card on an opaque page (older desktop shells' framed quick window, a plain browser);
  * - sheet: inside the in-app sheet (`CaptureSheet` below) — the sheet is the surface, so no bubble of its own;
  * - inline: the field on top of «Мои фразы» — no companion; saved phrases show up in the list underneath.
- * Enter saves, Shift+Enter starts a new line; Esc belongs to the owner (overlay window, dialog).
+ * Enter saves, Shift+Enter starts a new line; Esc belongs to the owner (overlay window, dialog). With `listen` the card also
+ * offers «Послушать» (PASS-0.5.4 §1.4) and shows its recording, transcript and explanation (listen-view.tsx).
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
-import { ArrowRightIcon, ClipboardTextIcon, PlusIcon, XIcon } from '@phosphor-icons/react';
+import { ArrowRightIcon, ClipboardTextIcon, EarIcon, PlusIcon, XIcon } from '@phosphor-icons/react';
 import { PHRASE_TEXT_LIMIT, type SavedPhrase } from '@/lib/phrases/types';
 import { enrichmentProblem, headlineIsEnglish, phraseHeadline, shortcutHint, upsertPhrase } from '@/lib/phrases/labels';
 import { useApp } from '../app/app-context';
@@ -17,11 +20,13 @@ import { Companion, type MascotEmotion, type MascotHandle } from '../shell/compa
 import { prefersReducedMotion } from '../ui/motion';
 import { useSheetPresence } from '../ui/sheet';
 import { useCapture, useDesktopStatus, type Capture, type CaptureSaved } from './use-capture';
+import { LISTEN_COPY, useListen, type Listen } from './use-listen';
+import { ListenView } from './listen-view';
 import styles from './capture-card.module.css';
 
-export type CaptureVariant = 'overlay' | 'panel' | 'sheet' | 'inline';
+export type CaptureVariant = 'pet' | 'overlay' | 'panel' | 'sheet' | 'inline';
 
-const MASCOT_SIZE: Record<Exclude<CaptureVariant, 'inline'>, number> = { overlay: 112, panel: 112, sheet: 92 };
+const MASCOT_SIZE: Record<Exclude<CaptureVariant, 'inline' | 'pet'>, number> = { overlay: 112, panel: 112, sheet: 92 };
 const PLACEHOLDER = 'Фраза из видео или «как сказать …»';
 
 type Point = { x: number; y: number };
@@ -29,7 +34,7 @@ type Point = { x: number; y: number };
 type Flight = { key: number; text: string; from: Point };
 
 /** curious idle, listening while he types, thinking while it saves and Sol works, happy when done (wink: already saved). */
-function captureEmotion(capture: Capture): MascotEmotion {
+export function captureEmotion(capture: Capture): MascotEmotion {
   const saved = capture.saved;
   if (!saved) return capture.error ? 'sad' : capture.text.trim() ? 'listening' : 'curious';
   const phrase = saved.phrase;
@@ -83,9 +88,13 @@ function Found({ saved }: { saved: CaptureSaved }) {
   </div>;
 }
 
-export function CaptureCard({ capture, variant, hint, onOpenPhrases, onClose, onDuplicate, fieldRef, headingId: givenHeadingId, className }: {
+export function CaptureCard({ capture, variant, hint, listen, companion: external, onOpenPhrases, onClose, onDuplicate, fieldRef, headingId: givenHeadingId, className }: {
   capture: Capture;
   variant: CaptureVariant;
+  /** «Послушать» (PASS-0.5.4 §1.4): offered on the form; its states replace the card's content while it is busy or done. */
+  listen?: Listen | null;
+  /** 'pet': the stage's own chubrik (the saved text flies into it, it hops). */
+  companion?: { box: RefObject<HTMLElement | null>; handle: RefObject<MascotHandle | null> };
   /** The PC shortcut line (`shortcutHint`). */
   hint?: string | null;
   /** «Мои фразы» after a save. */
@@ -109,8 +118,9 @@ export function CaptureCard({ capture, variant, hint, onOpenPhrases, onClose, on
   const chip = useRef<HTMLSpanElement>(null);
   const [flight, setFlight] = useState<Flight | null>(null);
   const inline = variant === 'inline';
-  const companion = !inline;
-  const bubble = variant === 'overlay' || variant === 'panel';
+  const companion = !inline && variant !== 'pet';
+  const bubble = variant === 'overlay' || variant === 'panel' || variant === 'pet';
+  const greet = () => (mascot.current ?? external?.handle.current)?.greet();
   const saved = capture.saved;
   const showSaved = !inline && !!saved;
   const setField = useCallback((node: HTMLTextAreaElement | null) => {
@@ -122,20 +132,20 @@ export function CaptureCard({ capture, variant, hint, onOpenPhrases, onClose, on
     if (!capture.canSave) return;
     const from = field.current?.getBoundingClientRect();
     const text = firstLine(capture.text);
-    if (!capture.save() || !companion) return;
+    if (!capture.save() || (!companion && !external)) return;
     // The text chip flies from where the text was into the companion, which hops when it lands; reduced motion: just the
     // happy face. Viewport coordinates: the card itself moves when its content switches (bottom-anchored overlay, a
     // re-centred sheet), so the target is measured after the switch.
     if (from && from.width > 0 && !prefersReducedMotion()) {
       setFlight({ key: Date.now(), text, from: { x: from.left + Math.min(from.width / 2, 150), y: from.top + Math.min(from.height / 2, 34) } });
-    } else mascot.current?.greet();
+    } else greet();
   };
 
   useLayoutEffect(() => {
     const element = chip.current;
-    const target = mascotBox.current?.getBoundingClientRect();
+    const target = (mascotBox.current ?? external?.box.current)?.getBoundingClientRect();
     if (!flight || !element) return;
-    if (!target || !target.width) { setFlight(null); mascot.current?.greet(); return; }
+    if (!target || !target.width) { setFlight(null); greet(); return; }
     const { from } = flight;
     const to = { x: target.left + target.width / 2, y: target.top + target.height * 0.46 };
     const mid = { x: from.x + (to.x - from.x) * 0.55, y: Math.min(from.y, to.y) - 26 };
@@ -146,10 +156,10 @@ export function CaptureCard({ capture, variant, hint, onOpenPhrases, onClose, on
       { transform: at(mid, 0.78), opacity: 1, offset: 0.58 },
       { transform: at(to, 0.22), opacity: 0 },
     ], { duration: 640, easing: 'cubic-bezier(.45, 0, .25, 1)', fill: 'both' });
-    const hop = window.setTimeout(() => mascot.current?.greet(), 430);
+    const hop = window.setTimeout(greet, 430);
     animation.onfinish = () => setFlight(current => current === flight ? null : current);
     return () => { window.clearTimeout(hop); animation.cancel(); };
-  }, [flight]);
+  }, [flight]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard flow: after a save the focus lands on «Ещё одну» (Enter again = the next phrase); a failed save returns it to
   // the field, where the text is back.
@@ -187,7 +197,10 @@ export function CaptureCard({ capture, variant, hint, onOpenPhrases, onClose, on
   };
 
   const inlineStatus = inline && saved && !capture.text ? (saved.duplicate ? 'Эта фраза уже в копилке' : 'Запомнил! Повторим в разговорах') : '';
-  const content = showSaved && saved
+  const listening = !!listen && listen.phase !== 'idle';
+  const content = listening && listen
+    ? <ListenView listen={listen} headingId={headingId} onOpenPhrases={onOpenPhrases} />
+    : showSaved && saved
     ? <div className={styles.result} data-testid="capture-saved">
       <div className={styles.resultHead}>
         <h2 id={headingId} className={styles.title}>{saved.duplicate ? 'Эта фраза уже в копилке' : 'Запомнил!'}</h2>
@@ -210,6 +223,8 @@ export function CaptureCard({ capture, variant, hint, onOpenPhrases, onClose, on
       <div className={styles.actions}>
         <button type="button" className="button small secondary" onClick={() => void paste()} data-testid="capture-paste">
           <ClipboardTextIcon size={16} aria-hidden="true" />Вставить</button>
+        {listen && <button type="button" className="button small secondary" onClick={() => void listen.start()} title={LISTEN_COPY[listen.source].hint}
+          data-testid="listen-start"><EarIcon size={16} aria-hidden="true" />{LISTEN_COPY[listen.source].action}</button>}
         <button type="button" className={`button primary ${inline ? 'small' : ''} ${styles.save}`} onClick={submit} disabled={!capture.canSave}
           data-testid="capture-save">Запомнить</button>
       </div>
@@ -219,10 +234,11 @@ export function CaptureCard({ capture, variant, hint, onOpenPhrases, onClose, on
       {hint && !inline && <p className="footnote" id={hintId}>{hint}</p>}
     </div>;
 
-  return <div ref={root} className={`${styles.card} ${className ?? ''}`} data-variant={variant} data-view={showSaved ? 'saved' : 'editing'}>
+  return <div ref={root} className={`${styles.card} ${className ?? ''}`} data-variant={variant} data-view={listening ? 'listen' : showSaved ? 'saved' : 'editing'}>
     {companion && <div ref={mascotBox} className={styles.mascot} data-part="mascot">
-      <Companion emotion={captureEmotion(capture)} size={MASCOT_SIZE[variant as Exclude<CaptureVariant, 'inline'>]} handleRef={mascot}
-        decorative exclusive={false} />
+      <Companion state={listen?.phase === 'recording' ? 'listening' : 'idle'} micLevelStore={listen?.phase === 'recording' ? listen.levelStore : undefined}
+        emotion={listening && listen?.phase !== 'recording' ? listenEmotion(listen!) : captureEmotion(capture)}
+        size={MASCOT_SIZE[variant as Exclude<CaptureVariant, 'inline' | 'pet'>]} handleRef={mascot} decorative exclusive={false} />
     </div>}
     <div className={styles.bubbleWrap} data-part="bubble">
       <div className={styles.bubble}>
@@ -232,9 +248,17 @@ export function CaptureCard({ capture, variant, hint, onOpenPhrases, onClose, on
       </div>
       {bubble && <span className={styles.tail} aria-hidden="true" />}
     </div>
-    <p className="visually-hidden" role="status" aria-live="polite">{announcement(capture, inline)}</p>
+    <p className="visually-hidden" role="status" aria-live="polite">{listening ? '' : announcement(capture, inline)}</p>
     {flight && <span key={flight.key} ref={chip} className={styles.flight} aria-hidden="true">{flight.text}</span>}
   </div>;
+}
+
+/** The companion while «Послушать» works: listening (by its state), thinking, happy with a result, sad on a failure. */
+export function listenEmotion(listen: Listen): MascotEmotion | undefined {
+  if (listen.phase === 'uploading' || listen.phase === 'analyzing' || listen.phase === 'starting') return 'thinking';
+  if (listen.phase === 'ready') return listen.clip?.phrases.some(item => !item.duplicate) ? 'happy' : 'curious';
+  if (listen.phase === 'failed') return 'sad';
+  return undefined;
 }
 
 /**
@@ -250,8 +274,18 @@ export function CaptureSheet({ open, onClose, onOpenPhrases }: { open: boolean; 
   const headingId = useId();
   const rendered = useSheetPresence(dialog, open);
   const capture = useCapture({ onPhrase: phrase => setState(previous => previous ? { ...previous, phrases: upsertPhrase(previous.phrases, phrase) } : previous) });
+  // «Послушать»: the computer's sound inside a 0.5.4 shell, the microphone in a plain browser; older shells offer none.
+  const listenSource = status?.systemAudio ? 'system' : 'microphone';
+  const listen = useListen({ source: listenSource, origin: status ? 'desktop' : 'web',
+    onPhrase: phrase => setState(previous => previous ? { ...previous, phrases: upsertPhrase(previous.phrases, phrase) } : previous),
+    onRemoved: id => setState(previous => previous ? { ...previous, phrases: (previous.phrases ?? []).filter(phrase => phrase.id !== id) } : previous) });
+  const listenAvailable = status === null || !!status?.systemAudio;
   const reset = useRef(capture);
   reset.current = capture;
+  const listenRef = useRef(listen);
+  listenRef.current = listen;
+  // Closing the sheet never keeps recording; a clip already sent still lands in «Мои фразы».
+  useEffect(() => { if (!open && (listenRef.current.phase === 'recording' || listenRef.current.phase === 'starting')) listenRef.current.cancel(); }, [open]);
   // Every opening starts with an empty field, unless an unsaved text (or one whose save failed) is waiting.
   useEffect(() => {
     if (!open) return;
@@ -264,7 +298,8 @@ export function CaptureSheet({ open, onClose, onOpenPhrases }: { open: boolean; 
     onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
     {rendered && <div className="sheet-body">
       <button type="button" className="icon-button plain sheet-close" onClick={onClose} aria-label="Закрыть"><XIcon size={20} /></button>
-      <CaptureCard variant="sheet" capture={capture} headingId={headingId} fieldRef={field} hint={shortcutHint(status)} onOpenPhrases={onOpenPhrases} />
+      <CaptureCard variant="sheet" capture={capture} headingId={headingId} fieldRef={field} hint={shortcutHint(status)} onOpenPhrases={onOpenPhrases}
+        listen={listenAvailable ? listen : null} />
     </div>}
   </dialog>;
 }
