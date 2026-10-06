@@ -8,20 +8,30 @@ type ViewTransition = { finished: Promise<void>; ready: Promise<void>; updateCal
 type ViewTransitionDocument = Document & { startViewTransition?: (update: () => void) => ViewTransition };
 let running: ViewTransition | null = null;
 
-/** Cross-fade + slight slide via View Transitions when available; instant with reduced motion. */
-export function withViewTransition(update: () => void) {
+/**
+ * 'screen' = the content column cross-fades (a lesson opening or closing; the sidebar swaps at once).
+ * 'layer' = the whole page cross-fades under a full-screen layer (the level test opening or closing).
+ */
+export type TransitionKind = 'screen' | 'layer';
+
+/**
+ * A soft view transition where continuity matters (MOTION-PASS-0.5.2 §2: 220 ms out, 520 ms in). Tab switches never
+ * use it — they swap at once and the new screen runs its staircase (components/ui/entrance.ts). Instant with reduced
+ * motion, a hidden page or no View Transitions support. `after` runs once the new view is in the DOM (focus moves).
+ */
+export function withViewTransition(update: () => void, kind: TransitionKind = 'screen', after?: () => void) {
   if (typeof document === 'undefined') { update(); return; }
   const doc = document as ViewTransitionDocument;
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduced || document.hidden || typeof doc.startViewTransition !== 'function') { update(); return; }
+  if (reduced || document.hidden || typeof doc.startViewTransition !== 'function') { update(); if (after) requestAnimationFrame(after); return; }
   // A quick second tap must not leave a half-finished transition (or an unhandled abort) behind.
   running?.skipTransition();
   const root = document.documentElement;
-  root.dataset.transition = 'screen';
+  root.dataset.transition = kind;
   // The update waits for a rendering frame to capture the old view. If frames stall (occluded or throttled
   // window), a tap must still switch the screen: skip the animation, then apply directly as a last resort.
   let applied = false;
-  const apply = () => { if (applied) return; applied = true; flushSync(update); };
+  const apply = () => { if (applied) return; applied = true; flushSync(update); after?.(); };
   try {
     const transition = doc.startViewTransition(apply);
     running = transition;
@@ -36,15 +46,16 @@ export function withViewTransition(update: () => void) {
   } catch { delete root.dataset.transition; apply(); }
 }
 
-/** Focus the new screen's heading so keyboard and screen-reader users land in the content (audit C-21). */
+/** Focus the new screen's heading so keyboard and screen-reader users land in the content (audit C-21). Call it once
+ * the new screen is in the DOM: after a view transition applied it, or a frame after a plain state change. */
 function focusHeading() {
-  requestAnimationFrame(() => {
-    const heading = document.querySelector<HTMLElement>('[data-screen-heading]') ?? document.querySelector<HTMLElement>('.screen h1');
-    if (!heading) return;
-    if (!heading.hasAttribute('tabindex')) { heading.tabIndex = -1; heading.style.outline = 'none'; }
-    heading.focus({ preventScroll: true });
-  });
+  const heading = document.querySelector<HTMLElement>('[data-screen-heading]') ?? document.querySelector<HTMLElement>('.screen h1');
+  if (!heading) return;
+  if (!heading.hasAttribute('tabindex')) { heading.tabIndex = -1; heading.style.outline = 'none'; }
+  heading.focus({ preventScroll: true });
 }
+
+const toTop = () => window.scrollTo({ top: 0, behavior: 'auto' });
 
 /**
  * In-memory navigation only: the Electron bridge trusts just `/` and `/?entry=` URLs (audit C-19),
@@ -62,28 +73,27 @@ export function useNavigation() {
   sessionOpenRef.current = sessionOpen;
 
   const go = useCallback((next: TabId, options: { callId?: string | null; progress?: 'overview' | 'skills' | 'history' | 'rewards' } = {}) => {
-    withViewTransition(() => {
+    const update = () => {
       setSessionOpen(false); setTab(next);
       if (next === 'calls') setCallTarget(previous => ({ id: options.callId ?? null, nonce: previous.nonce + 1 }));
       if (next === 'progress' && options.progress) setProgressSection(previous => ({ id: options.progress!, nonce: previous.nonce + 1 }));
-    });
-    window.scrollTo({ top: 0, behavior: 'auto' });
-    focusHeading();
+      toTop();
+    };
+    // Leaving an open lesson keeps the soft cross-fade; a plain tab switch swaps at once and the staircase takes over.
+    if (sessionOpenRef.current) withViewTransition(update, 'screen', focusHeading);
+    else { update(); requestAnimationFrame(focusHeading); }
   }, []);
 
   const openSession = useCallback((from?: TabId) => {
     withViewTransition(() => {
       if (!sessionOpenRef.current) setReturnTab(from ?? tabRef.current);
       setSessionOpen(true);
-    });
-    window.scrollTo({ top: 0, behavior: 'auto' });
-    focusHeading();
+      toTop();
+    }, 'screen', focusHeading);
   }, []);
 
   const closeSession = useCallback(() => {
-    withViewTransition(() => { setSessionOpen(false); setTab(previous => previous); });
-    window.scrollTo({ top: 0, behavior: 'auto' });
-    focusHeading();
+    withViewTransition(() => { setSessionOpen(false); setTab(previous => previous); toTop(); }, 'screen', focusHeading);
   }, []);
 
   return { tab, tabRef, sessionOpen, sessionOpenRef, returnTab, callTarget, progressSection, go, openSession, closeSession };

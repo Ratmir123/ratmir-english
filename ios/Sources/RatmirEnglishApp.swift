@@ -20,11 +20,27 @@ import UIKit
 #endif
                 .task {
 #if DEBUG
-                    if PreviewFixtures.install(client) { return }
+                    if PreviewFixtures.install(client) {
+                        client.finishPreviewLaunch()
+                        return
+                    }
 #endif
                     await client.restore()
                 }
         }
+    }
+}
+
+/// Why a saved access key did not open the server at launch (MOTION-PASS 0.5.2 §4). Never an alert.
+enum RestoreFailure: Equatable {
+    /// 401/403: the code changed on the server. The login card says «Код больше не подходит — введи его заново».
+    case codeRefused
+    /// No answer from a working server (offline, timeout, 5xx, unexpected data): the launch layer offers «Повторить».
+    case unreachable(String)
+
+    var isUnreachable: Bool {
+        if case .unreachable = self { return true }
+        return false
     }
 }
 
@@ -71,6 +87,10 @@ enum ShellSymbol {
     static let calls = first(["phone.bubble", "phone.bubble.left", "phone"])
 }
 
+/// Launch state machine (MOTION-PASS 0.5.2 §4):
+/// signed in → shell (the launch layer may still cover it while it greets or fades);
+/// a saved key being checked, or the server unreachable → the launch layer over the bare background;
+/// otherwise → the login card (with «Код больше не подходит» after a refused code).
 struct RootView: View {
     @EnvironmentObject private var client: TrainingClient
     @Environment(\.scenePhase) private var scenePhase
@@ -79,27 +99,41 @@ struct RootView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedTab: ShellTab = .today
     @State private var opening = NativeOpeningState()
+    @State private var launchHold = LaunchHold.idle
     @State private var placementPrompted = false
     @State private var rankUpClaimed: Set<String> = []
     @State private var confettiTrigger = 0
+    /// Calls whose review became ready while the learner was on another tab: the «Созвоны» badge until he looks.
+    @State private var unseenReadyCalls: Set<String> = []
+    @State private var callReady: CallReadyNotice? = nil
+
+    /// The launch layer keeps covering once the saved key is answered, until the greeting takes it over (`idle`)
+    /// or it has faded out (`fading`): it never disappears in a single frame.
+    private enum LaunchHold { case idle, covering, fading }
 
     var body: some View {
         rootContent
             .simultaneousGesture(TapGesture().onEnded {
                 if opening.animateHome { finishOpening(animated: false) }
             }, including: opening.animateHome ? .all : .subviews)
-            .overlay { openingOverlay }
+            .overlay { launchLayer }
             .task(id: openingReadiness) { await runOpening() }
             .task(id: pollingKey) { await client.pollStateWhileProcessing() }
             .task(id: placementPromptKey) { promptPlacementIfNeeded() }
+            .task(id: callReady?.id) { await expireCallReady() }
             .sheet(isPresented: $client.conversationPresented, onDismiss: { client.conversationDidClose() }) {
                 conversationSheet
             }
             .fullScreenCover(isPresented: $client.placementPresented, onDismiss: { client.refreshInBackground() }) {
                 placementCover
             }
+            .onChange(of: launchWaiting, initial: true) { _, waiting in launchWaitingChanged(waiting) }
             .onChange(of: client.conversationPresented) { _, presented in
                 if presented { finishOpening(animated: false) }
+            }
+            .onChange(of: callStatuses) { old, new in noticeFinishedCalls(old: old, new: new) }
+            .onChange(of: selectedTab) { _, tab in
+                if tab == .calls { unseenReadyCalls.removeAll() }
             }
             .onChange(of: client.homeRequest) { _, _ in selectedTab = .today }
             .onChange(of: client.requestedTab) { _, tab in
@@ -125,24 +159,38 @@ struct RootView: View {
     }
 
     @ViewBuilder private var rootContent: some View {
-        if client.signedIn { shell } else { LoginView() }
+        if client.signedIn {
+            shell
+        } else if launchWaiting {
+            // The launch layer covers this: the login card never shows while a saved key is being checked.
+            Theme.base.ignoresSafeArea()
+        } else {
+            LoginView()
+        }
     }
 
     private var shell: some View {
         TabView(selection: $selectedTab) {
-            TodayScreen(select: { selectedTab = $0 }, entryVisible: homeEntryVisible, animateEntry: opening.animateHome)
+            TodayScreen(select: { selectedTab = $0 }, entryVisible: homeEntryVisible, animateEntry: homeEntryAnimated)
+                .modifier(CurrentLessonInset(session: lessonCapsule(on: .today), open: { client.resume($0) }))
                 .tabItem { Label("Сегодня", systemImage: "sun.max") }
+                .badge(todayBadge)
                 .tag(ShellTab.today)
             PracticeScreen()
+                .modifier(CurrentLessonInset(session: lessonCapsule(on: .practice), open: { client.resume($0) }))
                 .tabItem { Label("Практика", systemImage: "waveform") }
                 .tag(ShellTab.practice)
             CallsScreen()
+                .modifier(CurrentLessonInset(session: lessonCapsule(on: .calls), open: { client.resume($0) }))
                 .tabItem { Label("Созвоны", systemImage: ShellSymbol.calls) }
+                .badge(callsBadge)
                 .tag(ShellTab.calls)
             ProgressScreen()
+                .modifier(CurrentLessonInset(session: lessonCapsule(on: .progress), open: { client.resume($0) }))
                 .tabItem { Label("Прогресс", systemImage: "chart.line.uptrend.xyaxis") }
                 .tag(ShellTab.progress)
             ProfileScreen()
+                .modifier(CurrentLessonInset(session: lessonCapsule(on: .profile), open: { client.resume($0) }))
                 .tabItem { Label("Профиль", systemImage: "person.crop.circle") }
                 .tag(ShellTab.profile)
         }
@@ -151,19 +199,24 @@ struct RootView: View {
         .sensoryFeedback(.success, trigger: confettiTrigger)
         .overlay(alignment: .top) { topOverlay }
         .overlay { rankUpOverlay }
-        .animation(reduceMotion ? nil : NativeMotion.standard, value: client.completionMoment?.id)
-        .animation(reduceMotion ? nil : NativeMotion.standard, value: client.startingIntent)
+        .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard, value: client.completionMoment?.id)
+        .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard, value: client.startingIntent)
+        .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard, value: callReady?.id)
     }
 
     @ViewBuilder private var topOverlay: some View {
         VStack(spacing: 8) {
             if let moment = client.completionMoment, !client.conversationPresented {
                 CompletionCelebration(moment: moment) { confettiTrigger += 1 }
-                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                    .transition(reduceMotion ? AnyTransition.opacity : AnyTransition.move(edge: .top).combined(with: .opacity))
             }
             if client.startingIntent != nil && !client.conversationPresented {
                 StartingCapsule(stage: client.operationStage ?? "Готовлю занятие")
-                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                    .transition(reduceMotion ? AnyTransition.opacity : AnyTransition.move(edge: .top).combined(with: .opacity))
+            }
+            if let notice = callReady, !client.conversationPresented, !client.placementPresented {
+                CallReadyCapsule(notice: notice) { openReadyCall(notice) }
+                    .transition(reduceMotion ? AnyTransition.opacity : AnyTransition.move(edge: .top).combined(with: .opacity))
             }
         }
         .padding(.top, 6)
@@ -179,10 +232,16 @@ struct RootView: View {
         }
     }
 
-    @ViewBuilder private var openingOverlay: some View {
-        if openingVisible {
-            NativeOpeningGreeting(name: client.state?.profile.name ?? "ты", sentence: openingSentence,
-                active: opening.phase == .greeting, leaving: opening.phase == .handoff) { finishOpening(animated: false) }
+    /// One layer from the first frame to the hand-off: launch wait, offline, greeting (the same companion throughout).
+    @ViewBuilder private var launchLayer: some View {
+        if launchLayerVisible {
+            LaunchView(stage: launchStage, name: client.state?.profile.name ?? "ты", sentence: openingSentence,
+                       leaving: launchLeaving, leaveSeconds: launchLeaveSeconds,
+                       skip: { finishOpening(animated: false) },
+                       retry: { Task { await client.restore() } },
+                       enterCode: { client.dismissRestoreFailure() })
+                // A fading cover never blocks the screen underneath (input is never blocked by motion).
+                .allowsHitTesting(launchHold != .fading)
                 .transition(.identity)
                 .zIndex(10)
         }
@@ -214,10 +273,51 @@ struct RootView: View {
 #endif
     }
 
+    // MARK: Launch
+
+    /// The saved key is being checked, or the server could not be reached: the launch layer owns the screen.
+    private var launchWaiting: Bool {
+        !client.signedIn && (client.restoring || client.restoreFailure?.isUnreachable == true)
+    }
+
+    private var launchLayerVisible: Bool { launchWaiting || launchHold != .idle || openingVisible }
+
+    private var launchStage: LaunchStage {
+        if !client.signedIn, case .unreachable(let detail)? = client.restoreFailure {
+            return .offline(detail: detail, retrying: client.restoring)
+        }
+        if opening.phase == .greeting || opening.phase == .handoff { return .greeting }
+        return .waiting
+    }
+
+    private var launchLeaving: Bool { launchHold == .fading || opening.phase == .handoff }
+    private var launchLeaveSeconds: Double {
+        launchHold == .fading ? NativeLaunch.coverFadeSeconds : NativeOpeningState.handoffSeconds
+    }
+
+    /// The key was answered: the greeting continues on the same layer, or the layer cross-fades out while the
+    /// screen underneath (Home's staircase, or the login card) appears.
+    private func launchWaitingChanged(_ waiting: Bool) {
+        if waiting {
+            launchHold = .covering
+            return
+        }
+        guard launchHold == .covering else { return }
+        if openingVisible {
+            launchHold = .idle
+            return
+        }
+        launchHold = .fading
+        Task {
+            do { try await Task.sleep(for: .seconds(NativeLaunch.coverFadeSeconds)) } catch {}
+            if launchHold == .fading { launchHold = .idle }
+        }
+    }
+
     // MARK: State
 
     private var rootErrorPresented: Binding<Bool> {
-        Binding(get: { client.error != nil && !client.conversationPresented && !client.placementPresented },
+        Binding(get: { client.error != nil && !client.conversationPresented && !client.placementPresented && !client.restoring },
                 set: { if !$0 { client.error = nil } })
     }
 
@@ -248,9 +348,11 @@ struct RootView: View {
 
     private var openingVisible: Bool { opening.phase != .finished && openingReadiness.displayEligible && !reduceMotion && !voiceOver }
     private var homeEntryVisible: Bool { !openingVisible || opening.phase == .handoff }
+    /// Skipping the greeting reveals Home at once; after the hand-off (or with no greeting at all) the staircase runs.
+    private var homeEntryAnimated: Bool { !opening.greeted || opening.animateHome }
 
     private var openingSentence: String {
-        if client.state?.sessions.contains(where: { $0.isResumable }) == true {
+        if let state = client.state, TodayPlanner.resumableSession(state) != nil {
             return "Разговор на месте. Давай дожмём мысль."
         }
         let completedToday = client.state?.sessions.contains { session in
@@ -261,6 +363,7 @@ struct RootView: View {
 
     private func runOpening() async {
         guard opening.begin(readiness: openingReadiness, reduceMotion: reduceMotion || voiceOver) else { return }
+        launchHold = .idle
         do {
             try await Task.sleep(for: .milliseconds(NativeOpeningState.greetingMilliseconds))
             guard opening.beginHandoff() else { return }
@@ -274,6 +377,67 @@ struct RootView: View {
 
     private func finishOpening(animated: Bool) {
         opening.finish(animated: animated)
+    }
+
+    // MARK: Badges and capsules (MOTION-PASS 0.5.2 §8.9)
+
+    /// «Сегодня»: a lesson review waits for the improved attempt.
+    private var todayBadge: Int {
+        (client.state?.sessions ?? []).filter { $0.status == "review" && $0.isInProgress && $0.isFresh() }.count
+    }
+
+    /// «Созвоны»: calls that need «кто есть кто», plus reviews that became ready while the learner was elsewhere.
+    private var callsBadge: Int {
+        let calls = client.state?.callSignals ?? []
+        let speakers = calls.filter { $0.status == "needs-speaker" }.count
+        let ready = calls.filter { $0.status == "ready" && unseenReadyCalls.contains($0.id) }.count
+        return speakers + ready
+    }
+
+    /// id → status of every call: the moment a review becomes ready is noticed here.
+    private var callStatuses: [String: String] {
+        var statuses: [String: String] = [:]
+        for call in client.state?.callSignals ?? [] { statuses[call.id] = call.status }
+        return statuses
+    }
+
+    private func noticeFinishedCalls(old: [String: String], new: [String: String]) {
+        let working: Set<String> = ["awaiting-upload", "queued", "processing", "analysing"]
+        let finished = new.keys.filter { id in
+            new[id] == "ready" && old[id].map { working.contains($0) } == true
+        }.sorted()
+        guard client.signedIn, !finished.isEmpty, selectedTab != .calls else { return }
+        unseenReadyCalls.formUnion(finished)
+        if let id = finished.first, let call = client.state?.callSignals.first(where: { $0.id == id }) {
+            callReady = CallReadyNotice(id: call.id, title: call.title)
+        }
+    }
+
+    private func openReadyCall(_ notice: CallReadyNotice) {
+        unseenReadyCalls.remove(notice.id)
+        callReady = nil
+        CallsNavigator.shared.open(.call(notice.id))
+        selectedTab = .calls
+    }
+
+    private func expireCallReady() async {
+        guard callReady != nil else { return }
+        do { try await Task.sleep(for: .seconds(6)) } catch { return }
+        callReady = nil
+    }
+
+    /// A lesson minimised with «Свернуть» stays one tap away above the tab bar (the PC has the session pill).
+    private func lessonCapsule(on tab: ShellTab) -> Conversation? {
+        guard client.signedIn, !client.conversationPresented, !client.placementPresented,
+              let current = client.conversation else { return nil }
+        let session = client.state?.session(current.id) ?? current
+        guard session.isInProgress else { return nil }
+        // Today's own card already continues this lesson.
+        if tab == .today,
+           TodayPlanner.hero(state: client.state, hasPendingRecording: client.hasUnuploadedRecording) == .resume(sessionID: session.id) {
+            return nil
+        }
+        return session
     }
 
     /// First appearance after login: the placement test opens once; «Продолжу позже» leaves Today usable.
@@ -346,6 +510,84 @@ private struct StartingCapsule: View {
     }
 }
 
+/// A call review that just became ready while the learner was on another tab.
+private struct CallReadyNotice: Equatable {
+    let id: String
+    let title: String
+}
+
+/// «Разбор созвона готов · Открыть»: floating chrome for a few seconds, the badge on «Созвоны» stays.
+private struct CallReadyCapsule: View {
+    let notice: CallReadyNotice
+    let open: () -> Void
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.seal.fill").font(.body.weight(.semibold)).foregroundStyle(Theme.limeInk)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Разбор созвона готов").font(.footnote.weight(.semibold))
+                Text(notice.title).font(.caption).foregroundStyle(Theme.inkSecondary).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Button("Открыть", action: open)
+                .buttonStyle(QuietButton())
+                .accessibilityLabel("Открыть разбор созвона «\(notice.title)»")
+        }
+        .foregroundStyle(Theme.ink)
+        .padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 6)
+        .modifier(LiquidChrome(radius: 28, tint: nil, interactive: false))
+        .padding(.horizontal, 14)
+        .frame(maxWidth: 560)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// Puts «Текущее занятие · Открыть» above the tab bar of one tab while a lesson is minimised.
+private struct CurrentLessonInset: ViewModifier {
+    let session: Conversation?
+    let open: (Conversation) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func body(content: Content) -> some View {
+        content
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let session {
+                    CurrentLessonCapsule(title: session.lesson.title) { open(session) }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                        .transition(reduceMotion ? AnyTransition.opacity : AnyTransition.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard, value: session?.id)
+    }
+}
+
+private struct CurrentLessonCapsule: View {
+    let title: String
+    let open: () -> Void
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform").font(.body.weight(.semibold)).foregroundStyle(Theme.violet)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Текущее занятие").font(.footnote.weight(.semibold))
+                    Text(title).font(.caption).foregroundStyle(Theme.inkSecondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text("Открыть").font(.footnote.weight(.semibold)).foregroundStyle(Theme.violet)
+            }
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 18).padding(.vertical, 10)
+            .frame(maxWidth: 560, minHeight: 52)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(PressButton())
+        .modifier(LiquidChrome(radius: 26, tint: nil, interactive: true))
+        .accessibilityLabel("Текущее занятие: " + title)
+        .accessibilityHint("Открывает свёрнутое занятие")
+    }
+}
+
 /// Placement test cover. The flow itself owns its close action («Продолжу позже»).
 struct ShellPlacementCover: View {
     var body: some View {
@@ -360,12 +602,8 @@ struct LoginView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
-                    HStack(alignment: .center) {
-                        BrandMark(size: 52)
-                        Spacer()
-                        VoiceOrb(mode: .ready, level: 0, mood: .happy, statusDescription: "Smooth Talk", interactive: true)
-                            .frame(width: 104, height: 104)
-                    }
+                    BrandMark(size: 64, mood: .happy, interactive: true)
+                        .entrance(0)
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Говори увереннее.\nНа английском.")
                             .font(TypeScale.hero).tracking(-0.6)
@@ -373,10 +611,15 @@ struct LoginView: View {
                         Text("Созвоны, разборы и прогресс — на телефоне и компьютере.")
                             .foregroundStyle(Theme.inkSecondary)
                     }
+                    .entrance(1)
                     loginCard
+                        .entrance(2)
                     Text("Доступ сохраняется на этом iPhone. Личная история хранится на твоём сервере.")
                         .font(.footnote).foregroundStyle(Theme.inkSecondary)
-                }.padding(24).padding(.top, 20).frame(maxWidth: 600, alignment: .leading).frame(maxWidth: .infinity)
+                        .entrance(3)
+                }
+                .padding(24).padding(.top, 20).frame(maxWidth: 600, alignment: .leading).frame(maxWidth: .infinity)
+                .entranceStage()
             }
             .modifier(LiquidCanvas())
             .scrollDismissesKeyboard(.interactively)
@@ -396,6 +639,17 @@ struct LoginView: View {
                 SecureField("Код доступа", text: $code)
                     .textInputAutocapitalization(.never).autocorrectionDisabled().padding(14)
                     .background(Theme.well, in: RoundedRectangle(cornerRadius: Radius.input, style: .continuous))
+                if client.restoreFailure == .codeRefused {
+                    // The saved code was refused at launch: say so here, no alert.
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Theme.warning)
+                            .accessibilityHidden(true)
+                        Text("Код больше не подходит — введи его заново")
+                            .font(.footnote.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
                 Button {
                     Task {
                         await client.login(code: code)

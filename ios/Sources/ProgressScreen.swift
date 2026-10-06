@@ -14,17 +14,22 @@ struct ProgressScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Уровень английского меняет только тест, опыт растёт от практики.")
-                        .font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                    // One companion per screen: in the overview's empty state it moves down into that state.
+                    ScreenIntro(text: "Уровень английского меняет только тест, опыт растёт от практики.",
+                                mood: hasProgress ? .proud : .sleepy,
+                                showsCompanion: hasProgress || segment != "overview")
+                        .entrance(0)
                     SelectionRow(selection: $segment, options: [
                         SelectionOption(id: "overview", title: "Обзор", icon: "square.grid.2x2"),
                         SelectionOption(id: "skills", title: "Навыки", icon: "chart.bar"),
                         SelectionOption(id: "history", title: "История", icon: "clock"),
                         SelectionOption(id: "rewards", title: "Награды", icon: "rosette")])
+                        .entrance(1)
                     segmentContent
                 }
                 .padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 32)
                 .frame(maxWidth: 680).frame(maxWidth: .infinity)
+                .entranceStage()
             }
             .modifier(LiquidCanvas())
             .navigationTitle("Прогресс")
@@ -40,11 +45,18 @@ struct ProgressScreen: View {
 
     @ViewBuilder private var segmentContent: some View {
         switch segment {
-        case "skills": SkillsOverview()
-        case "history": HistoryList()
-        case "rewards": rewards
+        case "skills": SkillsOverview().entrance(2)
+        case "history": HistoryList().entrance(2)
+        case "rewards": rewards.entrance(2)
         default: overview
         }
+    }
+
+    /// Anything to show yet: a practice with a review, experience, or a placement result.
+    private var hasProgress: Bool {
+        let completed = state?.progression?.completedPractice ?? state?.completed ?? 0
+        let xp = state?.progression?.xp ?? state?.xp ?? 0
+        return completed > 0 || xp > 0 || state?.placementSignal?.hasResult == true
     }
 
     /// «12 практик с разбором, 5 дней с практикой. На этой неделе — 3 из 7.»
@@ -61,15 +73,27 @@ struct ProgressScreen: View {
 
     private var overview: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if !hasProgress {
+                FeatureEmptyState(icon: "chart.line.uptrend.xyaxis", title: "Пока тут тихо",
+                                  text: "Пройди тест уровня или первое занятие с разбором — здесь появятся уровень, опыт и навыки.",
+                                  mood: .sleepy)
+                    .contentSurface()
+                    .entrance(2)
+            }
             if let placement = state?.placement, state?.placementSignal != nil {
                 PlacementLevelCard(view: placement, onOpen: { openPlacement() }, onStart: { client.placementPresented = true })
+                    .entrance(3)
             }
             if let progression = state?.progression {
                 JourneySummary(progression: progression, facts: rankFacts)
+                    .entrance(4)
             }
             if let results = state?.progression?.recentResults, let latest = results.first {
-                Text("Последнее занятие").font(TypeScale.title3).accessibilityAddTraits(.isHeader).padding(.top, 4)
-                PracticeOutcomeView(result: latest)
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Последнее занятие").font(TypeScale.title3).accessibilityAddTraits(.isHeader).padding(.top, 4)
+                    PracticeOutcomeView(result: latest)
+                }
+                .entrance(5)
             }
         }
     }
@@ -308,20 +332,16 @@ private struct HistoryGroup: Identifiable {
     var id: String { title }
 }
 
-/// A finished session reads as plain text; a pill only for a state that still changes (web History).
+/// A finished session reads as plain text; a pill only for a state that still changes (web History, the same
+/// words and tones as `sessionStatusLabel` / `sessionTone`).
 private struct HistoryRowLabel: View {
     let session: Conversation
     let xp: Int?
     private var status: (title: String, color: Color?) {
-        if session.analysisFailed { return ("Разбор не получился", Theme.danger) }
-        if session.status == "analysing" { return ("Разбор готовится", Theme.cyan) }
-        if session.awaitsRetry && session.status == "completed" { return ("Попытка ждёт", Theme.warning) }
-        if session.status == "review" { return ("Разбор готов", Theme.lime) }
-        if session.status == "completed" { return ("Завершено", nil) }
-        return ("Можно продолжить", Theme.lavender)
+        (SessionStatusCopy.label(session), SessionStatusCopy.tone(session))
     }
     private var meta: String {
-        var parts = [session.mode == "call" ? "Созвон" : "С опорами"]
+        var parts = [ModeCopy.title(session.mode)]
         if let date = session.latestDate { parts.append(RuFormat.time(date)) }
         if status.color == nil { parts.append(status.title) }
         return parts.joined(separator: " · ")

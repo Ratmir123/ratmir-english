@@ -113,9 +113,12 @@ struct RankLadderView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("Ранги открываются за XP из завершённых занятий. Это опыт практики — не CEFR и не оценка IELTS.")
                         .font(.subheadline).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                        .entrance(0)
+                    // Each rank row takes its own step (1…6) of the staircase.
                     if let progression { RankLadder(progression: progression) }
                     Color.clear.frame(height: 1).id("rank-ladder-bottom")
                 }.padding(20).frame(maxWidth: 640).frame(maxWidth: .infinity)
+                .entranceStage()
             }
 #if DEBUG
             .task {
@@ -139,8 +142,9 @@ struct RankLadder: View {
     private var next: PracticeRank? { RewardArt.nextRank(progression.level) }
     var body: some View {
         VStack(spacing: 10) {
-            ForEach(RewardArt.ranks) { rank in
-                rankRow(rank)
+            ForEach(Array(RewardArt.ranks.enumerated()), id: \.element.id) { index, rank in
+                // Outside a staircase (no `entranceStage`) this is a no-op.
+                rankRow(rank).entrance(index + 1)
             }
         }
     }
@@ -186,7 +190,7 @@ struct AchievementsList: View {
         VStack(spacing: 12) {
             ForEach(Array(achievements.enumerated()), id: \.element.id) { index, achievement in
                 AchievementRow(achievement: achievement, nearestGoal: achievement.id == nextGoalID)
-                    .staggeredReveal(index)
+                    .rowReveal(index)
             }
         }
     }

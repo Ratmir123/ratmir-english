@@ -1,0 +1,138 @@
+/* «Для тебя» (MOTION-PASS-0.5.2 §7–§8). Full width and lighter than the catalog below it: compact tiles instead of list rows,
+   chips for patterns, one quiet line for the empty state. Tiles are opaque content surfaces: no glass, nothing nested in them. */
+.forYou { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; container: foryou / inline-size; }
+
+.head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 4px 16px; min-width: 0; }
+.headCopy { display: grid; gap: 2px; min-width: 0; }
+.headCopy :global(.caption) { text-wrap: pretty; }
+.all { flex-shrink: 0; margin-right: -4px; }
+
+/* Tiles: two to four columns by the width the block really has (not the window); a snapping row on a phone.
+   The column count follows the tile count, so a wide block never leaves a lonely tile on its last line. */
+.tiles { list-style: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.tiles[data-layout='row'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tiles[data-layout='list'] { gap: 10px; }
+@container foryou (min-width: 700px) {
+  .tiles[data-layout='row'][data-count='3'] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container foryou (min-width: 880px) {
+  .tiles[data-layout='row']:is([data-count='5'], [data-count='6']) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container foryou (min-width: 1000px) {
+  .tiles[data-layout='row'][data-count='4'] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@container foryou (max-width: 559px) {
+  .tiles[data-layout='row'] {
+    --bleed: clamp(16px, 4vw, 44px);
+    grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: min(84%, 320px);
+    overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scroll-padding-inline: var(--bleed);
+    /* Edge to edge, with room for the tile shadow (a scroller clips both axes). */
+    margin: -6px calc(-1 * var(--bleed)) -14px; padding: 6px var(--bleed) 14px;
+    scrollbar-width: none;
+  }
+  .tiles[data-layout='row']::-webkit-scrollbar { display: none; }
+  .tiles[data-layout='row'] > li { scroll-snap-align: start; }
+  .tiles[data-layout='row'][data-count='1'] { grid-auto-columns: 100%; }
+}
+
+.tile {
+  position: relative; display: flex; min-width: 0; border-radius: var(--radius-tile);
+  background: var(--surface-card); box-shadow: inset 0 0 0 1px var(--hairline), var(--e1);
+  transition: background-color 240ms var(--ease-out), transform var(--press-ms, 160ms) var(--ease-out);
+}
+/* Today's plan: the same tile on a quiet lavender wash, so it reads first without another container. */
+.tile[data-kind='plan'] { background: color-mix(in srgb, var(--accent-lavender) 16%, var(--surface-card)); }
+@media (hover: hover) and (pointer: fine) {
+  .tile:has(.main:hover:not(:disabled)) { background: var(--surface-hover); }
+  .tile[data-kind='plan']:has(.main:hover:not(:disabled)) { background: color-mix(in srgb, var(--accent-lavender) 24%, var(--surface-card)); }
+}
+.tile:has(.main:active:not(:disabled)) { transform: scale(.985); transition-duration: 120ms; }
+
+.main {
+  display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; padding: 16px 16px 14px;
+  border-radius: inherit; text-align: left; color: var(--text-primary);
+}
+.main[data-foot='true'] { padding-bottom: 54px; }
+.main:focus-visible { border-radius: inherit; outline-offset: 2px; }
+.main:disabled { cursor: progress; }
+.title {
+  font-family: var(--font-display); font-size: 17px; font-weight: 800; line-height: 1.3; letter-spacing: -.2px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; text-wrap: balance;
+}
+.why { font-size: 13.5px; line-height: 1.45; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tiles[data-layout='list'] .title { -webkit-line-clamp: 3; }
+.tiles[data-layout='list'] .why { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; text-wrap: pretty; }
+.tile[data-status='done'] .title { color: var(--text-secondary); }
+
+.meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin-top: auto; padding-top: 10px;
+  font-size: 12.5px; font-weight: 600; line-height: 1.4; color: var(--text-secondary);
+}
+.sep { color: var(--text-tertiary); }
+/* Pressure is a quiet colour, not bars: calm cyan, violet, warm pink. */
+.tier { width: 8px; height: 8px; margin-right: 2px; border-radius: 50%; flex-shrink: 0; background: var(--accent-cyan); box-shadow: inset 0 0 0 1px rgb(24 23 28 / .08); }
+.tier[data-tier='2'] { background: var(--accent-violet); }
+.tier[data-tier='3'] { background: var(--accent-pink); }
+.planLabel { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-violet-ink); font-weight: 700; }
+.state { color: var(--accent-violet-ink); font-weight: 700; }
+
+/* Footer: the other mode on the left, the partner's line on the right. Clicks between them reach the tile. */
+.foot { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; pointer-events: none; }
+.foot > * { pointer-events: auto; }
+.alt {
+  min-height: 36px; padding: 6px 8px; border-radius: 12px; font-size: 13px; font-weight: 650; line-height: 1.2; text-align: left;
+  color: var(--accent-violet-ink); transition: background-color 240ms var(--ease-out), color 240ms var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) { .alt:hover:not(:disabled) { background: var(--surface-sunken); color: var(--text-primary); } }
+.alt:disabled { opacity: .5; cursor: progress; }
+.alt:focus-visible { border-radius: 12px; }
+.preparing { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; font-size: 13px; font-weight: 650; color: var(--text-secondary); }
+.preparing > span { width: 14px; height: 14px; border-width: 2px; }
+.listen { display: inline-flex; margin-left: auto; }
+.listen button { width: 36px; height: 36px; background: var(--surface-sunken); box-shadow: none; color: var(--text-secondary); }
+@media (hover: hover) and (pointer: fine) { .listen button:hover:not(:disabled) { background: var(--surface-sunken-2); color: var(--text-primary); } }
+@media (pointer: coarse) {
+  .alt, .preparing { min-height: 44px; }
+  .listen button { width: 44px; height: 44px; }
+  .main[data-foot='true'] { padding-bottom: 60px; }
+}
+
+/* Patterns: light chips «pattern → scenario» that open the scenario sheet. */
+.patterns { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; margin-top: 6px; }
+.patternsTitle { font-size: var(--text-15); font-weight: 700; margin-right: 2px; }
+.chips { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.chips > li { display: flex; min-width: 0; max-width: 100%; }
+.chip {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 40px; min-width: 0; max-width: 100%; padding: 8px 14px;
+  border-radius: 20px; text-align: left; font-size: 13.5px; line-height: 1.35; color: var(--text-primary);
+  background: var(--surface-card); box-shadow: inset 0 0 0 1px var(--hairline);
+  transition: background-color 240ms var(--ease-out), transform var(--press-ms, 160ms) var(--ease-out);
+}
+.chip strong { font-weight: 650; overflow-wrap: anywhere; }
+.chip svg { flex-shrink: 0; color: var(--text-tertiary); }
+.chipFamily { color: var(--text-secondary); overflow-wrap: anywhere; }
+@media (hover: hover) and (pointer: fine) { .chip:hover { background: var(--surface-hover); } }
+.chip:active { transform: scale(.98); transition-duration: 120ms; }
+.chip:focus-visible { border-radius: 20px; }
+@media (pointer: coarse) { .chip { min-height: 44px; } }
+
+/* Empty: one light line with a curious companion and the way to get drills. */
+.empty { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; min-width: 0; }
+.empty p { flex: 1 1 240px; font-size: var(--text-15); line-height: 1.5; color: var(--text-secondary); text-wrap: pretty; }
+.emptyMascot { margin: -6px 0 -6px -4px; }
+
+/* The full list (sheet). */
+.note { font-size: var(--text-15); color: var(--text-secondary); }
+.done summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 6px 2px;
+  font-size: var(--text-15); font-weight: 700; cursor: pointer; list-style: none; border-radius: 12px;
+}
+.done summary::-webkit-details-marker { display: none; }
+.caret { flex-shrink: 0; color: var(--text-tertiary); transition: transform 240ms var(--ease-out); }
+.done[open] .caret { transform: rotate(90deg); }
+.done > ul { margin-top: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tile, .chip, .alt, .caret { transition: none; }
+  .tile:has(.main:active:not(:disabled)), .chip:active { transform: none; }
+}

@@ -34,8 +34,10 @@ final class NativeFlowTests: XCTestCase {
         return try JSONDecoder().decode(TrainingState.self, from: data(value))
     }
     private func session(_ id: String, status: String, analysis: Bool = false) -> [String: Any] {
+        // Touched just now: only lessons from the last 72 h may own Today (MOTION-PASS 0.5.2 §8.1).
         var value: [String: Any] = ["id": id, "status": status, "mode": "call", "lesson": ["title": "Lesson " + id, "goal": "g", "why": "w", "minutes": 10],
-                                    "turns": [["id": "a1", "role": "assistant", "text": "Hi"]], "retries": []]
+                                    "turns": [["id": "a1", "role": "assistant", "text": "Hi"]], "retries": [],
+                                    "updatedAt": ISO8601DateFormatter().string(from: Date())]
         if analysis { value["analysis"] = ["summary": "s", "strengths": [], "priorities": [["title": "p", "turnId": "u1", "quote": "q", "explanation": "e", "example": "x", "retryInstruction": "r"]], "limitations": []] }
         return value
     }
@@ -221,6 +223,41 @@ final class NativeFlowTests: XCTestCase {
         XCTAssertFalse(client.conversationPresented)
     }
 
+    /// MOTION-PASS 0.5.2 §6: every partner line arrives hidden, opening applies to that line, the next one is
+    /// hidden again, and a line that cannot be heard is shown.
+    @MainActor func testPartnerTextArrivesHiddenOpensPerLineAndFallsBackWithoutVoice() async throws {
+        let client = try preparedClient(status: "active")
+        var value = conversation(status: "active")
+        value.removeValue(forKey: "analysis")
+        value["turns"] = [["id": "a1", "role": "assistant", "text": "What got you into climbing?"]]
+        let opened = try JSONDecoder().decode(Conversation.self, from: data(value))
+        client.conversation = opened
+        client.status = try JSONDecoder().decode(ServerStatus.self, from: data(["brain": ["model": "m", "verified": true], "audio": ["configured": true]]))
+        let line = try XCTUnwrap(opened.turns.first)
+        XCTAssertFalse(client.partnerTextShown(line, in: opened), "Hidden by default, whatever the mode")
+        client.revealPartnerText()
+        XCTAssertTrue(client.partnerTextShown(line, in: opened))
+        XCTAssertFalse(client.previewRequests.contains("sessions/\(sessionID)/show-text"), "Previews never call the server")
+        client.hidePartnerText()
+        XCTAssertFalse(client.partnerTextShown(line, in: opened), "«Скрыть текст» hides it again")
+        client.revealPartnerText()
+        var reply = value
+        reply["turns"] = [["id": "a1", "role": "assistant", "text": "What got you into climbing?"],
+                          ["id": "u2", "role": "user", "text": "A friend took me once."],
+                          ["id": "a2", "role": "assistant", "text": "Nice. Indoor or outdoor?"]]
+        client.previewResponses["sessions/\(sessionID)/message"] = try data(reply)
+        client.draft = "A friend took me once."
+        await client.send()
+        XCTAssertEqual(client.previewRequestBodies["sessions/\(sessionID)/message"]?["textVisible"] as? Bool, true,
+                       "The answered line was opened, so the server marks it")
+        let current = try XCTUnwrap(client.conversation)
+        let next = try XCTUnwrap(current.turns.last)
+        XCTAssertEqual(next.id, "a2")
+        XCTAssertFalse(client.partnerTextShown(next, in: current), "The next line arrives hidden")
+        client.status = try JSONDecoder().decode(ServerStatus.self, from: data(["brain": ["model": "m", "verified": true], "audio": ["configured": false]]))
+        XCTAssertTrue(client.partnerTextForced(next, in: current), "Without voice the line is read, not hidden")
+    }
+
     func testPollingBacksOffInsteadOfStopping() {
         XCTAssertEqual(TrainingClient.pollDelay(failures: 0), 3)
         XCTAssertEqual(TrainingClient.pollDelay(failures: 1), 6)
@@ -272,6 +309,16 @@ final class NativeFlowTests: XCTestCase {
                        "Scoring needs nothing from the learner, so it never blocks the next step")
         XCTAssertEqual(TodayPlanner.hero(state: try state(["placement": completed, "drills": [["id": "d2", "title": "Done", "status": "done"]], "progression": recommendation]), hasPendingRecording: false), .recommendation)
         XCTAssertEqual(TodayPlanner.hero(state: try state(["placement": completed]), hasPendingRecording: false), .empty)
+        // Web rules (today-plan.ts): a retry parked with «Отложить попытку» and a lesson untouched for 4 days never
+        // own Today, yet both stay reachable in «Незаконченные занятия».
+        var parked = session("p1", status: "review", analysis: true)
+        parked["retryDeferred"] = true
+        var stale = session("s1", status: "active")
+        stale["updatedAt"] = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-4 * 86_400))
+        let aged = try state(["placement": completed, "sessions": [parked, stale], "drills": [drill]])
+        XCTAssertEqual(TodayPlanner.hero(state: aged, hasPendingRecording: false), .drill(id: "d1"))
+        XCTAssertEqual(Set(TodayPlanner.laterSessions(aged, heroSessionID: nil).map(\.id)), Set(["p1", "s1"]))
+        XCTAssertFalse(aged.sessions.contains { $0.isInProgress && $0.isFresh() })
     }
 
     func testDeferredSessionKeepsItsRetryLoop() throws {
@@ -465,6 +512,47 @@ final class LiveTranscriptTokenTests: XCTestCase {
         let revision = stream.revision
         stream.update(phrase)
         XCTAssertEqual(stream.revision, revision, "Duplicate deltas do not trigger another scroll/layout update")
+    }
+}
+
+/// MOTION-PASS 0.5.2 §5: the caption reveal queue.
+final class LiveCaptionScheduleTests: XCTestCase {
+    func testBurstStaysWithinTheLagAndSteadySpeechAppearsAtOnce() {
+        var tokens = LiveTranscriptTokens()
+        tokens.update("Hello")
+        var captions = LiveCaptionSchedule.merge([], words: tokens.words, now: 100)
+        XCTAssertEqual(captions.map(\.revealAt), [100], "The first word appears at once")
+        XCTAssertTrue(captions[0].entrance)
+        tokens.update("Hello there")
+        captions = LiveCaptionSchedule.merge(captions, words: tokens.words, now: 100.4)
+        XCTAssertEqual(captions.last?.revealAt, 100.4, "Steady speech is not delayed")
+        let burst = (1...12).map { "w\($0)" }.joined(separator: " ")
+        tokens.update("Hello there " + burst)
+        captions = LiveCaptionSchedule.merge(captions, words: tokens.words, now: 100.42)
+        let slots = captions.suffix(12).map(\.revealAt)
+        XCTAssertEqual(slots, slots.sorted(), "A burst lands in spoken order")
+        XCTAssertGreaterThanOrEqual(slots.first ?? 0, 100.42)
+        XCTAssertLessThanOrEqual((slots.last ?? 0) - 100.42, LiveCaptionSchedule.maximumLag + 1e-9, "Never more than ~350 ms behind")
+        XCTAssertEqual(Array(captions.prefix(2)).map(\.revealAt), [100, 100.4], "Words on screen keep their place")
+        XCTAssertTrue(captions.suffix(12).allSatisfy(\.entrance))
+    }
+
+    func testRevisionsCrossFadeInPlaceAndYoungWordsCompleteSilently() {
+        var tokens = LiveTranscriptTokens()
+        tokens.update("I think clim")
+        var captions = LiveCaptionSchedule.merge([], words: tokens.words, now: 10)
+        XCTAssertEqual(captions[1].revealAt, 10 + LiveCaptionSchedule.wordInterval, accuracy: 1e-9)
+        tokens.update("I think climbing")
+        captions = LiveCaptionSchedule.merge(captions, words: tokens.words, now: 10.15)
+        XCTAssertEqual(captions[2].text, "climbing")
+        XCTAssertNil(captions[2].formerText, "A word completed while it is still fading in does not cross-fade")
+        tokens.update("I thought climbing")
+        captions = LiveCaptionSchedule.merge(captions, words: tokens.words, now: 11)
+        XCTAssertEqual(captions[1].text, "thought")
+        XCTAssertEqual(captions[1].formerText, "think", "An older word cross-fades in place")
+        XCTAssertEqual(captions[1].revisedAt, 11)
+        XCTAssertEqual(captions[1].revealAt, 10 + LiveCaptionSchedule.wordInterval, accuracy: 1e-9, "A revision is never queued again")
+        XCTAssertEqual(captions.map(\.id), tokens.words.map(\.id))
     }
 }
 
@@ -763,16 +851,26 @@ final class NativeChromeTests: XCTestCase {
             XCTAssertTrue(state.consumed, "Completing onboarding or closing a conversation cannot unexpectedly play a launch greeting")
             XCTAssertEqual(state.phase, .finished)
             XCTAssertFalse(state.animateHome)
+            XCTAssertFalse(state.greeted, "No greeting was shown, so Home still gets its staircase")
         }
+        // MOTION-PASS 0.5.2 §4: a refused saved code goes back to the login card; anything else keeps the launch layer.
+        XCTAssertEqual(TrainingClient.classifyRestoreFailure(TrainingHTTPError(status: 401, message: "Код не подошёл.")), .codeRefused)
+        XCTAssertEqual(TrainingClient.classifyRestoreFailure(TrainingHTTPError(status: 403, message: "Нет доступа.")), .codeRefused)
+        XCTAssertEqual(TrainingClient.classifyRestoreFailure(TrainingHTTPError(status: 502, message: "Сервер временно не отвечает (502). Попробуй ещё раз.")),
+                       .unreachable("Сервер временно не отвечает (502). Попробуй ещё раз."))
+        XCTAssertTrue(TrainingClient.classifyRestoreFailure(URLError(.notConnectedToInternet)).isUnreachable)
+        XCTAssertFalse(TrainingClient.hasSavedAccess(server: ""), "Without a server address the login card shows at once")
     }
 
     func testOpeningIsBoundedAndCannotReplayAfterSkipOrForegroundResume() {
         let ready = NativeOpeningReadiness(signedIn: true, stateLoaded: true, onboardingBlocked: false, protectedActivity: false, foreground: true)
         XCTAssertGreaterThanOrEqual(NativeOpeningState.greetingMilliseconds, 3_000, "The greeting leaves time to see the mascot settle and read the phrase")
         XCTAssertLessThanOrEqual(NativeOpeningState.greetingMilliseconds, 3_500, "Launch remains bounded and immediately skippable")
-        XCTAssertGreaterThanOrEqual(NativeOpeningState.handoffSeconds, 0.55)
-        XCTAssertLessThanOrEqual(NativeOpeningState.handoffSeconds, 0.65)
-        XCTAssertLessThanOrEqual(NativeOpeningState.homeEntranceSeconds + 5 * NativeOpeningState.homeStaggerSeconds, 1.05, "The complete Home cascade has a bounded final settlement")
+        XCTAssertGreaterThanOrEqual(NativeOpeningState.handoffSeconds, 0.7, "A slow, soft hand-off (MOTION-PASS 0.5.2)")
+        XCTAssertLessThanOrEqual(NativeOpeningState.handoffSeconds, 0.9)
+        XCTAssertLessThanOrEqual(NativeEntrance.duration + Double(NativeEntrance.maxSteps) * NativeEntrance.step, 1.6,
+                                 "The complete staircase has a bounded final settlement")
+        XCTAssertLessThan(NativeLaunch.coverFadeSeconds, NativeOpeningState.handoffSeconds, "Without a greeting the launch layer leaves sooner")
         for pose in [VoiceOrbGreetingPose.neutral, .arriving, .lifted, .landing] {
             XCTAssertGreaterThanOrEqual(pose.scaleX, 0.90)
             XCTAssertGreaterThanOrEqual(pose.scaleY, 0.90)
@@ -787,6 +885,7 @@ final class NativeChromeTests: XCTestCase {
         state.finish(animated: false)
         XCTAssertEqual(state.phase, .finished)
         XCTAssertFalse(state.animateHome, "Tap/keyboard/cancel reveals usable Home immediately")
+        XCTAssertTrue(state.greeted, "A skipped greeting shows Home at once instead of replaying the staircase")
         XCTAssertFalse(state.begin(readiness: ready, reduceMotion: false))
         XCTAssertFalse(state.beginHandoff(), "A late hold timer cannot recreate a handoff after skip")
         state.finish(animated: true)

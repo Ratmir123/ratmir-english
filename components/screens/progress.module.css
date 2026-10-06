@@ -1,5 +1,11 @@
 .progress { container: progress / inline-size; }
+.tabs { display: grid; } /* the staircase block around the section tabs; keeps them full width like a direct grid item */
 .panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+/* Switching sections: the new panel settles in softly (the screen's arrival is the staircase instead). */
+.panel[data-switched] { animation: panelIn var(--reveal-ms) var(--ease-out) both; }
+@keyframes panelIn { from { opacity: 0; transform: translate3d(0, var(--reveal-rise), 0); filter: blur(var(--reveal-blur)); } }
+@media (prefers-reduced-motion: reduce) { .panel[data-switched] { animation: panelFade 200ms ease-out both; } }
+@keyframes panelFade { from { opacity: 0; } }
 .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .intro { font-size: var(--text-13); color: var(--text-secondary); max-width: 72ch; }
 
@@ -36,12 +42,12 @@
 .skillCopy strong { font-weight: 650; overflow-wrap: anywhere; }
 .skillCopy small { font-size: var(--text-13); color: var(--text-secondary); }
 .steps { display: flex; gap: 5px; flex-shrink: 0; }
-.steps i { width: 22px; height: 8px; border-radius: 4px; background: var(--surface-sunken-2); transition: background-color 240ms var(--ease-out); }
+.steps i { width: 22px; height: 8px; border-radius: 4px; background: var(--surface-sunken-2); transition: background-color var(--hover-ms) var(--ease-out); }
 .steps i[data-lit='true'] { background: var(--accent-violet); }
 .steps i:nth-child(2)[data-lit='true'] { background: var(--accent-lime); }
 .evidence summary { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; cursor: pointer; list-style: none; color: var(--accent-violet-ink); font-size: 13px; font-weight: 650; }
 .evidence summary::-webkit-details-marker { display: none; }
-.evidence summary svg { transition: transform 200ms var(--ease-out); }
+.evidence summary svg { transition: transform var(--hover-ms) var(--ease-out); }
 .evidence[open] summary svg { transform: rotate(90deg); }
 .evidence ul { list-style: none; display: grid; gap: 8px; padding: 4px 0 6px; }
 .evidence li { display: grid; gap: 2px; justify-items: start; padding: 10px 12px; border-radius: 14px; background: var(--surface-sunken); }
@@ -58,7 +64,7 @@
 .history > li:last-child .historyOpen { border-bottom-left-radius: var(--radius-card); }
 .historyOpen {
   display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; min-height: 64px; padding: 12px 10px 12px 18px; text-align: left;
-  transition: background-color 160ms var(--ease-out);
+  transition: background-color var(--hover-ms) var(--ease-out);
 }
 @media (hover: hover) and (pointer: fine) { .historyOpen:hover { background: var(--surface-hover); } }
 .historyCopy { display: grid; gap: 3px; flex: 1; min-width: 0; }

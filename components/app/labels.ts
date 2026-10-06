@@ -8,10 +8,12 @@ export const TAB_NAMES: Record<TabId, string> = {
 };
 export const TAB_ORDER: TabId[] = ['today', 'practice', 'calls', 'progress', 'profile'];
 
-export const MODE_LABEL: Record<Mode, string> = { learning: 'С опорами', call: 'Созвон' };
+// Practice modes (MOTION-PASS-0.5.2 §8): «Созвон» alone is reserved for real calls (the «Созвоны» tab).
+export const MODE_LABEL: Record<Mode, string> = { learning: 'С опорами', call: 'Как на созвоне' };
+// Partner text is hidden in both modes (§6), so the hints speak only of support and pressure.
 export const MODE_HINT: Record<Mode, string> = {
-  learning: 'Текст собеседника виден, есть подсказки — удобно пробовать новое.',
-  call: 'Как настоящий звонок: только голос, без подсказок.',
+  learning: 'Подсказки под рукой, собеседник говорит проще — удобно пробовать новое.',
+  call: 'Без подсказок и поблажек, в темпе настоящего созвона.',
 };
 
 // Skill, group and state names come from lib/types.ts (canonical for iPhone and PC).
@@ -26,7 +28,12 @@ export const CTA = {
   finish: 'Закончить и получить разбор',
   back: 'Вернуться к занятию',
   complete: 'Завершить занятие',
-  defer: 'На сегодня всё',
+  /** Parks the retry: the lesson stays unfinished (MOTION-PASS-0.5.2 §8.5). */
+  defer: 'Отложить попытку',
+  /** Leaves a finished lesson. */
+  home: 'На главную',
+  /** End screen of a finished lesson → Сегодня. */
+  next: 'Следующий шаг',
   retry: 'Проверить попытку',
   reanalyse: 'Повторить разбор',
 } as const;

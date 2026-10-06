@@ -17,7 +17,7 @@
 .rankEmblem[data-dragging='true'], .rankEmblem[data-dragging='true'] .rankTouch { cursor: grabbing; }
 .rankFeedback, .rankFloat, .rankBody, .rankSway, .rankFace { position: absolute; display: block; inset: 0; pointer-events: none; }
 .rankFeedback { transition: transform var(--spring-bouncy-ms) var(--spring-bouncy); }
-.rankEmblem[data-pressed='true'] .rankFeedback { transform: translateY(3px) scale(.92, .95) rotate(-4deg); transition: transform 100ms var(--ease-out); }
+.rankEmblem[data-pressed='true'] .rankFeedback { transform: translateY(3px) scale(.92, .95) rotate(-4deg); transition: transform var(--pressed-ms) var(--ease-out); }
 .rankFloat { transform-origin: 50% 64%; }
 .rankEmblem[data-moving='true'] .rankFloat { animation: rank-float var(--rank-period) var(--sway-ease) infinite; }
 .rankArt { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; -webkit-user-drag: none; }
@@ -116,7 +116,7 @@
 
 .achievementEmblem { position: relative; display: inline-block; flex: 0 0 auto; pointer-events: none; isolation: isolate; }
 .achievementArt { display: block; width: 100%; height: 100%; object-fit: contain; transform-origin: 50% 68%; }
-.achievementFeedback { position: absolute; inset: 0; display: block; transition: transform 200ms var(--ease-out); }
+.achievementFeedback { position: absolute; inset: 0; display: block; transition: transform var(--press-ms) var(--ease-out); }
 .achievementFloor { position: absolute; left: 25%; bottom: 10%; width: 50%; height: 8%; border-radius: 50%; background: radial-gradient(ellipse, rgb(24 23 28 / .14), transparent 70%); }
 .achievementEmblem[data-locked='true'] .achievementArt { filter: grayscale(.85) opacity(.55); }
 .achievementEmblem[data-moving='true'][data-reward-motion='earned'] .achievementArt { animation: reward-float 4.4s cubic-bezier(.45, 0, .55, 1) infinite; }

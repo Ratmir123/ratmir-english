@@ -31,7 +31,10 @@ targets:
         CFBundleShortVersionString: '$(MARKETING_VERSION)'
         CFBundleVersion: '$(CURRENT_PROJECT_VERSION)'
         NSMicrophoneUsageDescription: Записывать твои ответы в тренировках разговора и созвонах, чтобы разобрать их.
-        UILaunchScreen: {}
+        # The system launch screen is the app background (Theme.base, light and dark), so the launch layer
+        # continues it without a flash (MOTION-PASS 0.5.2 §4).
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
   RatmirEnglishTests:

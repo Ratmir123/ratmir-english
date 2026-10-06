@@ -21,6 +21,34 @@ export function createVoiceMeter(): VoiceMeterStore & { setLevel(level: number):
   };
 }
 
+/**
+ * Live captions of the learner's own speech (MOTION-PASS-0.5.2 §5). Kept outside React state like the meter:
+ * only the caption view subscribes, so a transcript delta never re-renders the shell.
+ * `phase`: starting (mic requested) → listening (capturing) → finishing (stop pressed, final text pending) → idle.
+ */
+export type CaptionPhase = 'idle' | 'starting' | 'listening' | 'finishing';
+export type LiveTranscriptSnapshot = { phase: CaptionPhase; contextKey: string | null; text: string; status: string; final: boolean };
+export type LiveTranscriptStore = {
+  subscribe(listener: () => void): () => void;
+  getSnapshot(): LiveTranscriptSnapshot;
+};
+export const IDLE_TRANSCRIPT: LiveTranscriptSnapshot = { phase: 'idle', contextKey: null, text: '', status: '', final: false };
+
+export function createLiveTranscriptStore(): LiveTranscriptStore & { update(patch: Partial<LiveTranscriptSnapshot>): void } {
+  let snapshot = IDLE_TRANSCRIPT;
+  const listeners = new Set<() => void>();
+  return {
+    subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    getSnapshot() { return snapshot; },
+    update(patch) {
+      const next = { ...snapshot, ...patch };
+      if ((Object.keys(next) as (keyof LiveTranscriptSnapshot)[]).every(key => next[key] === snapshot[key])) return;
+      snapshot = next;
+      listeners.forEach(listener => listener());
+    },
+  };
+}
+
 export function pcmToBase64(pcm: Int16Array): string {
   const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
   let binary = '';
@@ -130,7 +158,7 @@ export class BrowserLiveTranscriber {
   private committing = false;
   private text = '';
   private finalText: string | null = null;
-  constructor(private onText: (text: string) => void, private onStatus: (text: string) => void) {}
+  constructor(private onText: (text: string, final: boolean) => void, private onStatus: (text: string) => void) {}
   get liveMinutes() { return this.sentBytes / PCM_RATE / 2 / 60; }
   get isClosed() { return this.closed; }
 
@@ -154,7 +182,8 @@ export class BrowserLiveTranscriber {
         if (this.closed) { socket.close(); resolve(); return; }
         try { socket.send(JSON.stringify({ type: 'session.update', session: { type: 'transcription', audio: { input: {
           format: { type: 'audio/pcm', rate: PCM_RATE }, turn_detection: null,
-          transcription: { model: 'gpt-live-transcribe', languages: ['en', 'ru'], delay: 'low',
+          // 'minimal' = earliest partial words (MOTION-PASS-0.5.2 §5); the completed text still arrives after commit.
+          transcription: { model: 'gpt-live-transcribe', languages: ['en', 'ru'], delay: 'minimal',
             prompt: 'An English learner speaking spontaneously. Preserve um, uh, like, repetitions, false starts, unfinished phrases and grammar mistakes. Transcribe what was actually said. Do not correct, translate, summarize or complete words.' },
         } } } })); } catch { this.fail(); resolve(); return; }
         this.ready = true; this.onStatus('Слушаю. Текст появляется по ходу речи.');
@@ -165,10 +194,10 @@ export class BrowserLiveTranscriber {
         let message: { type?: string; delta?: string; transcript?: string };
         try { message = JSON.parse(String(event.data)); } catch { this.fail(); return; }
         if (message.type === 'conversation.item.input_audio_transcription.delta' && typeof message.delta === 'string') {
-          this.text += message.delta; this.onText(this.text);
+          this.text += message.delta; this.onText(this.text, false);
         } else if (message.type === 'conversation.item.input_audio_transcription.completed' && typeof message.transcript === 'string') {
           if (this.committing) this.finalText = message.transcript;
-          this.text = message.transcript; this.onText(this.text);
+          this.text = message.transcript; this.onText(this.text, true);
         } else if (message.type === 'error' || message.type === 'conversation.item.input_audio_transcription.failed') this.fail();
       };
       socket.onerror = () => { clearTimeout(timeout); this.fail(); resolve(); };
@@ -206,7 +235,7 @@ export class BrowserLiveTranscriber {
   }
   private fail() {
     this.failed = true;
-    this.onStatus('Живой текст недоступен. После остановки распознаю полную запись.');
+    this.onStatus('Живого текста нет — распознаю после записи.');
     this.close();
   }
   close() {

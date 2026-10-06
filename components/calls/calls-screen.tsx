@@ -17,7 +17,11 @@ import { dismissUpload, getServerUploadsSnapshot, getUploadsSnapshot, subscribeU
 import { CallUploadCard } from './upload-call';
 import { CallDetailView, UploadProgress } from './call-detail';
 import { PatternsPanel } from './patterns-panel';
+import type { MascotEmotion } from '../shell/companion';
+import { ScreenMascot } from '../shell/screen-mascot';
 import styles from './calls.module.css';
+
+const UPLOADING: UploadJob['phase'][] = ['creating', 'preparing', 'uploading', 'completing'];
 
 /** One call as a list row: title with its state, who/when, then the one line that matters for that state. */
 function CallItem({ call, job, selected, onSelect }: { call: CallSummary; job: UploadJob | null; selected: boolean; onSelect: () => void }) {
@@ -124,18 +128,26 @@ export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId }: {
   const patterns = state.patterns ?? [];
   const drills = state.drills ?? [];
   const needsAction = calls.filter(call => call.status === 'needs-speaker').length;
+  const hasList = pendingJobs.length > 0 || calls.length > 0;
+  // The screen's companion (MOTION-PASS-0.5.2 §3): thinking while a call is processed or uploaded, surprised when one
+  // needs «кто есть кто», listening otherwise. Without calls it moves into the empty state, larger and curious.
+  const working = calls.some(call => isCallProcessing(call.status)) || uploads.some(job => UPLOADING.includes(job.phase));
+  const mood: MascotEmotion = working ? 'thinking' : needsAction ? 'surprised' : 'listening';
 
   return (
     <section ref={root} className={cx(kit.scope, styles.screen)} data-view={selected ? 'detail' : 'list'} aria-label="Созвоны">
       <div className={styles.layout}>
         <div className={styles.listPane}>
-          <div className={styles.pageHead}>
-            <h1>Созвоны</h1>
-            <p>Загрузи звонок — получишь разбор, тренировки из своих же моментов и обновлённые паттерны.</p>
+          <div className={styles.pageHead} data-enter>
+            <div className={styles.pageCopy}>
+              <h1>Созвоны</h1>
+              <p>Загрузи звонок — получишь разбор, тренировки из своих же моментов и обновлённые паттерны.</p>
+            </div>
+            {hasList ? <ScreenMascot emotion={mood} fluid className={cx('screen-mascot', styles.headMascot)} /> : null}
           </div>
-          <CallUploadCard onCreated={id => { void fetchCalls(); void refreshApp(); select(id); }} />
-          {pendingJobs.length || calls.length ? (
-            <section className={styles.callsBlock} aria-labelledby="calls-list-title">
+          <div data-enter><CallUploadCard onCreated={id => { void fetchCalls(); void refreshApp(); select(id); }} /></div>
+          {hasList ? (
+            <section className={styles.callsBlock} aria-labelledby="calls-list-title" data-enter>
               <div className={styles.sectionTitle}>
                 <h2 id="calls-list-title">Звонки</h2>
                 {needsAction
@@ -156,17 +168,20 @@ export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId }: {
               ) : null}
             </section>
           ) : (
-            <div className={cx(kit.glass, styles.empty)}>
-              <h2>Первый звонок — первый разбор</h2>
-              <ul>
-                <li><PhoneCallIcon size={18} aria-hidden="true" />Итог, что сработало и что стоило денег — с цитатами и временем.</li>
-                <li><CursorClickIcon size={18} aria-hidden="true" />«Как сказать сильнее» — твоим голосом, можно послушать.</li>
-                <li><TargetIcon size={18} aria-hidden="true" />Тренировки из твоих моментов и паттерны от звонка к звонку.</li>
-              </ul>
+            <div className={cx(kit.glass, styles.empty)} data-enter>
+              <div className={styles.emptyCopy}>
+                <h2>Первый звонок — первый разбор</h2>
+                <ul>
+                  <li><PhoneCallIcon size={18} aria-hidden="true" />Итог, что сработало и что стоило денег — с цитатами и временем.</li>
+                  <li><CursorClickIcon size={18} aria-hidden="true" />«Как сказать сильнее» — твоим голосом, можно послушать.</li>
+                  <li><TargetIcon size={18} aria-hidden="true" />Тренировки из твоих моментов и паттерны от звонка к звонку.</li>
+                </ul>
+              </div>
+              <ScreenMascot emotion="curious" fluid className={styles.emptyMascot} />
             </div>
           )}
         </div>
-        <div className={styles.detailPane}>
+        <div className={styles.detailPane} data-enter>
           {selected ? (
             <>
               <button type="button" className={cx(kit.btn, kit.quiet, kit.small, styles.backButton)} style={{ justifySelf: 'start' }} onClick={() => select(null)}>

@@ -12,9 +12,13 @@
   .listPane { position: sticky; top: 16px; max-height: calc(100dvh - 32px); overflow: auto; padding: 2px 4px 16px 2px; scrollbar-width: thin; }
   .backButton { display: none !important; }
 }
-.pageHead { display: grid; gap: 6px; padding-bottom: 4px; }
+/* Header: title and lede, the screen's companion at the right end (globals .screen-mascot: 96 px, 72 px ≤ 640 px). */
+.pageHead { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 4px; min-width: 0; }
+.pageCopy { display: grid; gap: 6px; flex: 1 1 auto; min-width: 0; }
 .pageHead h1 { margin: 0; font-family: var(--k-display); font-size: clamp(28px, 3.4vw, 34px); font-weight: 800; letter-spacing: -.025em; line-height: 1.1; }
 .pageHead p { margin: 0; font-size: 15px; color: var(--k-text-2); line-height: 1.5; max-width: 52ch; }
+/* In the narrow list column of the master–detail layout the companion steps down a size. */
+@container calls (min-width: 1000px) { .pageHead .headMascot { width: 84px; height: 84px; } }
 .callsBlock { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; margin-top: 8px; }
 .sectionTitle { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 4px; min-width: 0; }
 .sectionTitle h2 { margin: 0; font-family: var(--k-display); font-size: 19px; font-weight: 800; letter-spacing: -.01em; line-height: 1.25; }
@@ -139,7 +143,18 @@
 .uploadHead { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .uploadHead strong { flex: 1; min-width: 0; font-size: 14.5px; line-height: 1.35; overflow-wrap: anywhere; }
 
-.empty { display: grid; gap: 12px; padding: 22px; }
+/* No calls yet: what a review gives, next to a larger curious companion (on top of it in narrow columns). */
+.empty { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'copy mascot'; align-items: center; gap: 8px 20px; padding: 22px; }
+.emptyCopy { grid-area: copy; display: grid; gap: 12px; min-width: 0; }
+.emptyMascot { grid-area: mascot; width: 128px; height: 128px; margin: -6px -4px -10px 0; }
+@container calls (max-width: 540px) {
+  .empty { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'mascot' 'copy'; }
+  .emptyMascot { justify-self: center; width: 112px; height: 112px; margin: -6px 0 -4px; }
+}
+@container calls (min-width: 1000px) {
+  .empty { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'mascot' 'copy'; }
+  .emptyMascot { justify-self: center; width: 112px; height: 112px; margin: -6px 0 -4px; }
+}
 .empty h2 { margin: 0; font-family: var(--k-display); font-size: 19px; font-weight: 800; line-height: 1.25; }
 .empty ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
 .empty li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--k-text-2); line-height: 1.45; }

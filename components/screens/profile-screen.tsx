@@ -11,6 +11,7 @@ import { useApp } from '../app/app-context';
 import { messageOf, request } from '../app/api';
 import { ReminderSettings } from '../reminder-settings';
 import { SubscriptionLimits } from '../subscription-limits';
+import { ScreenMascot } from '../shell/screen-mascot';
 import { Segmented } from '../ui/segmented';
 import styles from './profile.module.css';
 
@@ -51,7 +52,7 @@ function ProfileForm() {
     } catch (reason) { setError(messageOf(reason, 'Не удалось сохранить профиль.')); }
     finally { setSaving(false); }
   };
-  return <form className={`surface ${styles.card}`} onSubmit={submit} aria-labelledby="profile-me" noValidate>
+  return <form className={`surface ${styles.card}`} onSubmit={submit} aria-labelledby="profile-me" noValidate data-enter>
     <div className={styles.head}><h2 id="profile-me">О тебе</h2></div>
     <div className={styles.fields}>
       <label>Имя<input value={form.name} onChange={event => update('name', event.target.value)} maxLength={80} autoComplete="given-name" /></label>
@@ -97,7 +98,7 @@ function VoiceCard() {
     catch (reason) { setError(messageOf(reason, 'Не удалось сохранить ключ.')); }
     finally { setBusy(false); }
   };
-  return <section className={`surface ${styles.card}`} aria-labelledby="profile-voice">
+  return <section className={`surface ${styles.card}`} aria-labelledby="profile-voice" data-enter>
     <div className={styles.head}><h2 id="profile-voice">Голос</h2>{status && <span className={`chip ${configured ? 'lime' : 'warning'}`}>{configured ? 'Подключён' : 'Нет ключа'}</span>}</div>
     <p className="caption">Распознавание речи и голос собеседника работают через OpenAI API и оплачиваются отдельно. Без ключа можно заниматься текстом.</p>
     <form className={styles.inline} onSubmit={save}>
@@ -120,7 +121,7 @@ function ModelCard() {
   const brain = status?.brain;
   const state = !status ? app.data.statusFailed ? { tone: 'warning', label: 'Статус недоступен' } : { tone: '', label: 'Проверяю…' }
     : brain?.authenticated ? { tone: 'lime', label: 'Подключена' } : { tone: 'warning', label: 'Нужен вход в подписку' };
-  return <section className={`surface ${styles.card}`} aria-labelledby="profile-model">
+  return <section className={`surface ${styles.card}`} aria-labelledby="profile-model" data-enter>
     <div className={styles.head}><h2 id="profile-model">Учебная модель</h2><span className={`chip ${state.tone}`}>{state.label}</span></div>
     <p className={styles.body}><strong>GPT‑6.1 Sol</strong> подбирает занятия, ведёт диалог и разбирает ответы{brain?.mode === 'siwc' ? ' через твою подписку ChatGPT' : ' через локальный Codex и лимиты подписки'}.</p>
     {status && !brain?.authenticated && !brain?.error && <p className="caption">Войди в подписку, чтобы Sol мог вести занятия и разборы.</p>}
@@ -144,15 +145,17 @@ function DataCard() {
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const status = app.data.status;
-  return <section className={`surface ${styles.card} ${styles.dataCard}`} aria-labelledby="profile-data">
+  return <section className={`surface ${styles.card} ${styles.dataCard}`} aria-labelledby="profile-data" data-enter>
     <div className={styles.head}><h2 id="profile-data">Данные</h2></div>
     <p className="caption">{status?.hosting === 'server' ? 'Компьютер и телефон используют одну историю на твоём сервере.' : 'История хранится на этом компьютере.'}</p>
     <div className="rows">
       <a className={styles.row} href="/api/export" download><DownloadSimpleIcon size={18} aria-hidden="true" /><span>Скачать историю (JSON)</span></a>
+      {/* The warning says exactly what goes (MOTION-PASS-0.5.2 §8.2, same text on iPhone). */}
       <details className={styles.danger}>
-        <summary className={styles.row}><TrashIcon size={18} aria-hidden="true" /><span>Удалить историю тренировок</span><CaretRightIcon size={15} className={styles.caret} aria-hidden="true" /></summary>
+        <summary className={styles.row}><TrashIcon size={18} aria-hidden="true" /><span>Удалить всю практику</span><CaretRightIcon size={15} className={styles.caret} aria-hidden="true" /></summary>
         <div className={styles.dangerBody}>
-          <p className="caption">Удалятся занятия, аудио, разборы и прогресс на их основе. Профиль останется. Отменить нельзя.</p>
+          <p className="caption">Удалятся занятия, записи, созвоны с разборами, паттерны, тренировки и результат теста уровня. Профиль и принятые факты останутся. Отменить нельзя.</p>
+          <a className={`text-button ${styles.backup}`} href="/api/export" download><DownloadSimpleIcon size={16} aria-hidden="true" />Сначала скачать копию</a>
           <label>Чтобы подтвердить, введи DELETE<input value={typed} onChange={event => setTyped(event.target.value)} autoComplete="off" spellCheck={false} /></label>
           <button type="button" className="button danger" disabled={busy || typed !== 'DELETE'} onClick={async () => { setBusy(true); const done = await app.lesson.resetAll(); setBusy(false); if (done) setTyped(''); }}>
             <TrashIcon size={16} />{busy ? 'Удаляю…' : 'Удалить навсегда'}</button>
@@ -167,7 +170,7 @@ function DataCard() {
 function AppearanceCard() {
   const [theme, setTheme] = useState<ThemePreference>('system');
   useEffect(() => { setTheme(readThemePreference()); return followThemeChanges(setTheme); }, []);
-  return <section className={`surface ${styles.card}`} aria-labelledby="profile-appearance">
+  return <section className={`surface ${styles.card}`} aria-labelledby="profile-appearance" data-enter>
     <div className={styles.head}><h2 id="profile-appearance">Оформление</h2></div>
     <Segmented label="Тема оформления" block value={theme} onChange={value => { setTheme(value); saveThemePreference(value); }}
       options={(['system', 'light', 'dark'] as const).map(id => ({ id, label: THEME_LABEL[id] }))} />
@@ -180,22 +183,25 @@ export function ProfileScreen() {
   const state = app.data.state!;
   const version = app.data.status?.app?.version ?? APP_VERSION;
   return <div className={`screen ${styles.profile}`} data-screen="profile">
-    <header className="screen-header"><div><h1 tabIndex={-1} data-screen-heading style={{ outline: 'none' }}>Профиль</h1><p className="lede">Цели, голос, напоминания и твои данные.</p></div></header>
+    <header className="screen-header with-mascot" data-enter>
+      <div><h1 tabIndex={-1} data-screen-heading style={{ outline: 'none' }}>Профиль</h1><p className="lede">Цели, голос, напоминания и твои данные.</p></div>
+      <ScreenMascot emotion="wink" fluid className="screen-mascot" />
+    </header>
     <div className={styles.grid}>
       <div className={styles.column}>
         <ProfileForm />
         {/* FactsPanel («Мой плейбук») brings its own heading, explanation and rows; the host gives it the surface. */}
-        <div className={`surface ${styles.card}`}>
+        <div className={`surface ${styles.card}`} data-enter>
           <FactsPanel facts={state.profileFacts ?? []} onChanged={() => void app.data.refresh()} />
         </div>
       </div>
       <div className={styles.column}>
         <AppearanceCard />
         <VoiceCard />
-        <section className={`surface ${styles.card}`} aria-labelledby="reminder-title"><ReminderSettings /></section>
+        <section className={`surface ${styles.card}`} aria-labelledby="reminder-title" data-enter><ReminderSettings /></section>
         <ModelCard />
         <DataCard />
-        <p className={styles.version}>{APP_NAME} {version}{APP_CHANNEL ? ` · ${APP_CHANNEL}` : ''}</p>
+        <p className={styles.version} data-enter>{APP_NAME} {version}{APP_CHANNEL ? ` · ${APP_CHANNEL}` : ''}</p>
       </div>
     </div>
   </div>;

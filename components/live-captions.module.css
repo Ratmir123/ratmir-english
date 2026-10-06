@@ -1,26 +1,68 @@
-.caption { position: relative; min-width: 0; overflow: hidden; display: grid; gap: 6px; }
-.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.status { min-width: 0; font-size: var(--text-13); font-weight: 650; color: var(--text-secondary); }
-.liveDot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--accent-lime); box-shadow: 0 0 0 0 var(--accent-lime-soft); animation: live 1.6s infinite; }
-@keyframes live { 70% { box-shadow: 0 0 0 7px transparent; } }
+/* Live captions of the learner's own speech (MOTION-PASS-0.5.2 §5), same numbers as the iPhone view.
+   The area opens once per recording at its final, fixed height — a one-line status + 3 lines of words (2 on phones) —
+   and never grows line by line. Words animate only transform / opacity / filter (3 px rise, blur 3 → 0, 260 ms);
+   revisions cross-fade in 200 ms; the newest line glides in (JS, 240 ms). The host sets --caption-gap to its own grid
+   gap so the collapsed area takes no space at all. */
+.shell {
+  --caption-line: calc(var(--text-17) * 1.6);
+  --caption-lines: 3;
+  display: grid; grid-template-rows: 0fr; min-width: 0;
+  margin-bottom: calc(-1 * var(--caption-gap, 0px));
+  opacity: 0;
+  transition: grid-template-rows 280ms var(--ease-exit, cubic-bezier(.4, 0, 1, 1)), opacity 180ms var(--ease-exit, cubic-bezier(.4, 0, 1, 1));
+}
+.shell[data-open='true'] {
+  grid-template-rows: 1fr; opacity: 1;
+  transition: grid-template-rows 420ms var(--ease-out), opacity 300ms var(--ease-out) 60ms;
+}
+.caption { position: relative; min-width: 0; min-height: 0; overflow: hidden; display: grid; gap: 6px; padding-bottom: var(--caption-gap, 0px); }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 20px; }
+/* One line, always: statuses are short; the ellipsis only guards an unexpectedly narrow window. */
+.status { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--text-13); font-weight: 650; color: var(--text-secondary); animation: fade 240ms var(--ease-out) both; }
 
+/* The live dot breathes with transform + opacity on its own layer (no box-shadow animation while recording). */
+.liveDot { position: relative; width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--accent-lime); opacity: .35; transition: opacity 240ms var(--ease-out); }
+.liveDot[data-live='true'] { opacity: 1; }
+.liveDot::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--accent-lime); opacity: 0; }
+.liveDot[data-live='true']::after { animation: live 1.6s var(--ease-out) infinite; }
+@keyframes live { 0% { transform: scale(1); opacity: .55; } 70%, 100% { transform: scale(2.8); opacity: 0; } }
+
+.frame { position: relative; min-width: 0; }
 .viewport {
-  max-height: 132px; min-height: 64px; padding: 2px 6px 4px 0;
-  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
-  scrollbar-width: thin; scrollbar-color: var(--surface-sunken-2) transparent; scroll-behavior: auto; border-radius: 8px; scroll-padding-bottom: 6px;
+  height: calc(var(--caption-lines) * var(--caption-line) + 6px); padding: 2px 6px 4px 0;
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; contain: layout paint;
+  scrollbar-width: thin; scrollbar-color: var(--surface-sunken-2) transparent; scroll-behavior: auto; border-radius: 8px;
 }
 .caption .words { margin: 0; min-height: 0; color: var(--text-primary); font-size: var(--text-17); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-.word { display: inline-block; max-width: 100%; vertical-align: baseline; animation: arrive 220ms var(--ease-out); }
-.placeholder { color: var(--text-tertiary); font-size: var(--text-15); }
-.latest {
-  display: flex; align-items: center; gap: 6px; min-height: 34px; margin: -2px 0 4px auto; padding: 5px 12px;
-  border-radius: var(--radius-pill); background: var(--accent-violet-soft); color: var(--accent-violet-ink);
-  font-size: var(--text-12); font-weight: 650; cursor: pointer;
-}
-.latest:active { transform: scale(.97); }
-.caption small { font-size: var(--text-12); color: var(--text-tertiary); }
+/* A word settles in place: up 3 px out of a 3 px blur. No overshoot (reserved for the mascot and rewards). */
+.word { position: relative; display: inline-block; max-width: 100%; vertical-align: baseline; animation: word-in 260ms var(--ease-out) both; }
+@keyframes word-in { from { opacity: 0; transform: translate3d(0, 3px, 0); filter: blur(3px); } }
+/* A revised word cross-fades in place: the new text sharpens in while the replaced text dissolves over it. */
+.revised { display: inline-block; animation: word-revise 200ms var(--ease-out) both; }
+@keyframes word-revise { from { opacity: 0; filter: blur(2px); } }
+.ghost { position: absolute; left: 0; top: 0; white-space: pre; pointer-events: none; animation: word-ghost 200ms var(--ease-out) both; }
+@keyframes word-ghost { to { opacity: 0; filter: blur(2px); } }
+.placeholder { color: var(--text-tertiary); font-size: var(--text-15); animation: fade 240ms var(--ease-out) both; }
+@keyframes fade { from { opacity: 0; } }
 
-/* A new word settles in place; no overshoot (that is reserved for the mascot and rewards). */
-@keyframes arrive { from { opacity: .35; transform: translateY(3px); } }
-@media (max-width: 600px) { .viewport { max-height: 112px; } .latest { min-height: 44px; } }
-@media (prefers-reduced-motion: reduce) { .word, .liveDot { animation: none; } .latest:active { transform: none; } }
+/* Back to the newest words: floats over the viewport so the area keeps its height. */
+.latest {
+  position: absolute; right: 6px; bottom: 4px; display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 12px;
+  border-radius: var(--radius-pill); background: linear-gradient(var(--accent-violet-soft), var(--accent-violet-soft)), var(--surface-solid);
+  color: var(--accent-violet-ink); font-size: var(--text-12); font-weight: 650; cursor: pointer;
+  opacity: 0; transform: translate3d(0, 4px, 0); pointer-events: none;
+  transition: opacity 200ms var(--ease-out), transform 240ms var(--ease-out);
+}
+.latest[data-visible='true'] { opacity: 1; transform: none; pointer-events: auto; }
+.latest[data-visible='true']:active { transform: scale(.97); }
+
+@media (max-width: 600px) { .shell { --caption-lines: 2; } .latest { min-height: 36px; } }
+@media (prefers-reduced-motion: reduce) {
+  /* Fewer, gentler: the area simply appears, words cross-fade without travel or blur. */
+  .shell, .shell[data-open='true'] { transition: opacity 160ms linear; }
+  .word, .revised { animation: fade 160ms linear both; }
+  .ghost { animation: word-gone 160ms linear both; }
+  .liveDot[data-live='true']::after { animation: none; }
+  .latest, .latest[data-visible='true'], .latest[data-visible='true']:active { transform: none; transition: opacity 160ms linear; }
+}
+@keyframes word-gone { to { opacity: 0; } }

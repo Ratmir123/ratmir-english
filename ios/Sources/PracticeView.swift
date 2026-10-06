@@ -1,22 +1,31 @@
 import SwiftUI
 
-/// «Практика»: personal drills first, then the server catalog (`GET /api/families` → `catalog`).
-/// A tile opens its detail sheet; the sheet closes before the lesson starts, so the
-/// conversation sheet can always present.
+/// «Практика» (MOTION-PASS-0.5.2 §7–§8): the intro with the live companion and «Своя тема», «Для тебя»
+/// (PracticeForYou.swift: plan and drill tiles, pattern rows, «Все тренировки · N»), then the server catalog
+/// (`GET /api/families` → `catalog`). A sheet closes before its lesson starts, so the conversation sheet can always
+/// present. The blocks rise «лесенкой» the first time the tab appears (§2).
 struct PracticeScreen: View {
+    /// The same lede the web shows under «Практика».
+    static let lede = "Выбери ситуацию — задачу и сложность подберёт Sol по твоим последним попыткам."
     @EnvironmentObject private var client: TrainingClient
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selected: CatalogFamily? = nil
     @State private var pendingStart: PracticeStartRequest? = nil
+    @State private var showFreeTopic = false
+    @State private var pendingFree: FreeTopicRequest? = nil
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
-                    forYouSection
+                    intro.entrance(0)
+                    PracticeForYou(onOpenFamily: { family in selected = family }).entrance(1)
                     catalogContent
                 }
                 .padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 32)
                 .frame(maxWidth: 680).frame(maxWidth: .infinity)
+                .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.reveal, value: client.catalog.isEmpty)
+                .entranceStage()
             }
             .modifier(LiquidCanvas())
             .navigationTitle("Практика")
@@ -33,6 +42,13 @@ struct PracticeScreen: View {
                 }
                 .environmentObject(client)
             }
+            .sheet(isPresented: $showFreeTopic, onDismiss: startPendingFreeTopic) {
+                FreeTopicSheet { request in
+                    pendingFree = request
+                    showFreeTopic = false
+                }
+                .environmentObject(client)
+            }
 #if DEBUG
             .task {
                 guard PreviewFixtures.screen == "practice-detail" else { return }
@@ -43,26 +59,19 @@ struct PracticeScreen: View {
         }
     }
 
-    @ViewBuilder private var forYouSection: some View {
-        let drills = client.state?.drills ?? []
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Для тебя").font(TypeScale.title3).accessibilityAddTraits(.isHeader)
-                Text(drills.isEmpty ? "Тренировки из твоих созвонов: моменты, которые стоили денег, и спорные места."
-                                    : "Переиграй реальные моменты — по одному за раз.")
-                    .font(.footnote).foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+    /// Header companion (§3): determined while drills wait. With nothing pending the «Для тебя» empty line holds the
+    /// (curious) companion instead — one companion per screen, as on the web.
+    private var hasPendingDrills: Bool { client.state?.drills?.contains(where: { !$0.isDone }) == true }
+
+    private var intro: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ScreenIntro(text: Self.lede, mood: hasPendingDrills ? .determined : .curious, showsCompanion: hasPendingDrills)
+            Button { showFreeTopic = true } label: {
+                Label("Своя тема", systemImage: "sparkles")
             }
-            if drills.isEmpty {
-                GroupedRows {
-                    Button { client.requestedTab = .calls } label: {
-                        ListRowLabel(icon: "square.and.arrow.up", title: "Загрузить созвон",
-                                     detail: "После разбора здесь появятся тренировки из твоих моментов")
-                    }
-                    .buttonStyle(RowButtonStyle())
-                }
-            } else {
-                DrillsList(drills: drills)
-            }
+            .buttonStyle(QuietButton())
+            .disabled(client.hasUnuploadedRecording)
+            .accessibilityHint("Разговор на тему, которую выберешь сам")
         }
     }
 
@@ -71,6 +80,7 @@ struct PracticeScreen: View {
             if let message = client.catalogError {
                 InlineBanner(tone: .error, title: "Каталог не загрузился", message: message, actionTitle: "Повторить",
                              action: { Task { await client.loadCatalog(force: true) } })
+                    .entrance(2)
             } else {
                 HStack(spacing: 10) {
                     ProgressView().tint(Theme.violet)
@@ -78,10 +88,14 @@ struct PracticeScreen: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 12)
+                .entrance(2)
             }
         } else {
-            ForEach(client.catalog) { section in
+            // Sections on screen at the first appearance join the staircase; a catalog that arrives later rises in.
+            ForEach(Array(client.catalog.enumerated()), id: \.element.id) { index, section in
                 CatalogSectionView(section: section) { family in selected = family }
+                    .entrance(2 + index)
+                    .transition(reduceMotion ? AnyTransition.opacity : NativeMotion.insertion)
             }
         }
     }
@@ -90,6 +104,12 @@ struct PracticeScreen: View {
         guard let request = pendingStart else { return }
         pendingStart = nil
         Task { await client.startFamily(familyId: request.familyID, mode: request.mode, topic: request.topic) }
+    }
+
+    private func startPendingFreeTopic() {
+        guard let request = pendingFree else { return }
+        pendingFree = nil
+        Task { await client.startFree(mode: request.mode, context: request.context, topic: request.topic) }
     }
 }
 
@@ -115,7 +135,7 @@ private struct CatalogSectionView: View {
             }
             GroupedRows {
                 ForEach(Array(section.families.enumerated()), id: \.element.id) { index, family in
-                    if index > 0 { RowDivider(inset: 56) }
+                    if index > 0 { RowDivider(inset: 74) }
                     Button { onSelect(family) } label: {
                         FamilyTile(family: family, starting: client.isStarting(TrainingClient.familyKey(family.id)))
                     }
@@ -136,10 +156,11 @@ enum FamilyAccent {
         default: return Theme.cyan
         }
     }
-    static func modeTitle(_ mode: String) -> String { mode == "call" ? "Созвон" : "С опорами" }
+    /// Mode names (MOTION-PASS-0.5.2 §8): «Созвон» alone clashed with the «Созвоны» tab of real calls.
+    static func modeTitle(_ mode: String) -> String { mode == "call" ? "Как на созвоне" : "С опорами" }
 }
 
-/// A scenario row: stroke icon in the text colour, title, one-line description and a meta line.
+/// A scenario row: artwork, title, description and a meta line.
 private struct FamilyTile: View {
     let family: CatalogFamily
     let starting: Bool
@@ -150,8 +171,7 @@ private struct FamilyTile: View {
     }
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
-            Image(systemName: family.symbol).font(.body.weight(.medium)).foregroundStyle(Theme.ink)
-                .frame(width: 26).accessibilityHidden(true)
+            ScenarioArtwork(familyID: family.id, symbol: family.symbol)
             VStack(alignment: .leading, spacing: 3) {
                 Text(family.title).font(.subheadline.weight(.semibold)).multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
@@ -240,8 +260,8 @@ struct FamilyDetailSheet: View {
                     .font(.footnote).foregroundStyle(Theme.inkSecondary)
             } else {
                 SelectionRow(selection: $mode, options: [
-                    SelectionOption(id: "learning", title: "С опорами", icon: "lightbulb"),
-                    SelectionOption(id: "call", title: "Созвон", icon: "phone")])
+                    SelectionOption(id: "learning", title: FamilyAccent.modeTitle("learning"), icon: "lightbulb"),
+                    SelectionOption(id: "call", title: FamilyAccent.modeTitle("call"), icon: "phone")])
                 Text(ModeCopy.explanation(mode)).font(.footnote).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

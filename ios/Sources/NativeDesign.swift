@@ -110,52 +110,56 @@ enum TypeScale {
     static let bigStat = Font.system(.largeTitle, design: .rounded).weight(.bold).monospacedDigit()
 }
 
-// MARK: - Motion (DESIGN-SYSTEM §2 Motion)
+// MARK: - Motion (MOTION-PASS-0.5.2 §1)
 
-/// Ordinary controls and state changes ease out without overshoot (DESIGN-PASS 0.5.1 «Движение»):
-/// press 160 ms, state 240 ms. `bouncy` is only for the mascot, medals and reward moments.
-/// State and hit targets never wait for motion.
+/// «Glass jelly settles»: things decelerate long and soft on the expo-out curve (0.16, 1, 0.3, 1) and never snap;
+/// slightly slower than 0.5.1, exits shorter than entrances. `bouncy` is only for the mascot, medals and reward
+/// moments. State and hit targets never wait for motion. `FeatureMotion` (CallsComponents.swift) mirrors these.
 enum NativeMotion {
-    static let press = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.16)
-    static let standard = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.24)
-    static let bouncy = Animation.bouncy(duration: 0.5, extraBounce: 0.1)
-    static let selection = Animation.spring(response: 0.28, dampingFraction: 0.88)
-    static let settle = Animation.spring(response: 0.30, dampingFraction: 0.82)
-    static let reveal = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.32)
-    static let feedback = Animation.easeOut(duration: 0.16)
+    /// Pressed controls: 200 ms.
+    static let press = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.20)
+    /// State changes (expand, swap, insert): 380 ms.
+    static let standard = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.38)
+    /// Content that rises into place (`RevealEffect`, `rowReveal`): 500 ms.
+    static let reveal = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.50)
+    /// Small value changes (numbers, ticks): 200 ms.
+    static let feedback = Animation.easeOut(duration: 0.20)
+    static let selection = Animation.spring(response: 0.42, dampingFraction: 0.86)
+    static let settle = Animation.spring(response: 0.48, dampingFraction: 0.84)
+    /// Leaving accelerates away and is shorter than arriving (web `--ease-exit`).
+    static let exit = Animation.timingCurve(0.4, 0, 1, 1, duration: 0.24)
+    /// A row's pressed fill inside a grouped surface.
+    static let rowPress = Animation.easeOut(duration: 0.16)
+    /// Progress fills (`transform`-like width changes): 900 ms.
+    static let progress = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.90)
+    /// Reduce Motion: fewer and gentler — a cross-fade instead of travel or blur.
+    static let crossFade = Animation.easeInOut(duration: 0.30)
+    /// Mascot, medals and reward moments only (680 ms on the web).
+    static let bouncy = Animation.bouncy(duration: 0.66, extraBounce: 0.1)
+    /// Lists and cards stagger 70 ms, at most eight steps.
+    static let staggerStep = 0.07
+    static let staggerLimit = 8
     static var insertion: AnyTransition {
         .modifier(active: RevealEffect(progress: 0), identity: RevealEffect(progress: 1))
     }
-    /// Lists and cards stagger 40 ms, at most six items.
-    static func stagger(_ index: Int) -> Animation { standard.delay(Double(min(max(index, 0), 6)) * 0.04) }
+    static func stagger(_ index: Int) -> Animation {
+        standard.delay(Double(min(max(index, 0), staggerLimit)) * staggerStep)
+    }
 }
 
-/// Opacity + 8 pt rise + blur 6 → 0.
+/// Opacity + 10 pt rise + blur 4 → 0 (web `.reveal`).
 struct RevealEffect: ViewModifier {
     let progress: Double
     func body(content: Content) -> some View {
         content.opacity(progress)
-            .offset(y: CGFloat(1 - progress) * 8)
-            .blur(radius: CGFloat(1 - progress) * 6)
-    }
-}
-
-/// Staggered entrance for cards (max six). Reduce Motion: shown at once.
-struct StaggeredReveal: ViewModifier {
-    let index: Int
-    @State private var shown = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func body(content: Content) -> some View {
-        content.modifier(RevealEffect(progress: shown || reduceMotion ? 1 : 0))
-            .onAppear {
-                guard !shown else { return }
-                if reduceMotion { shown = true } else { withAnimation(NativeMotion.stagger(index)) { shown = true } }
-            }
+            .offset(y: CGFloat(1 - progress) * 10)
+            .blur(radius: CGFloat(1 - progress) * 4)
     }
 }
 
 extension View {
-    func staggeredReveal(_ index: Int) -> some View { modifier(StaggeredReveal(index: index)) }
+    /// Kept for source compatibility: the light row cascade (`rowReveal`, Entrance.swift).
+    func staggeredReveal(_ index: Int) -> some View { rowReveal(index) }
 }
 
 // MARK: - Russian formatting
@@ -540,7 +544,7 @@ struct RowButtonStyle: ButtonStyle {
         configuration.label
             .opacity(isEnabled ? 1 : 0.46)
             .background(configuration.isPressed && isEnabled ? Theme.fill : Color.clear)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(NativeMotion.rowPress, value: configuration.isPressed)
     }
 }
 
@@ -766,13 +770,14 @@ struct SegmentPressButton: ButtonStyle {
 
 // MARK: - Small components
 
+/// The brand is the companion itself (MOTION-PASS-0.5.2 §3), no letter mark: Login ≈ 64 pt (happy),
+/// Profile «О приложении» ≈ 44 pt (calm). Decorative: the adjacent text names the app.
 struct BrandMark: View {
     let size: CGFloat
+    var mood: VoiceOrbMood = .calm
+    var interactive = false
     var body: some View {
-        Text("S·").font(.system(size: size * 0.55, weight: .bold, design: .rounded))
-            .foregroundStyle(Theme.onAccent).frame(width: size, height: size)
-            .background(Theme.lime, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
-            .accessibilityLabel("Smooth Talk")
+        ScreenMascot(mood: mood, size: size, interactive: interactive)
     }
 }
 
@@ -1006,7 +1011,7 @@ struct SoftDisclosureStyle: DisclosureGroupStyle {
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(reduceMotion ? nil : NativeMotion.standard) { configuration.isExpanded.toggle() }
+                withAnimation(reduceMotion ? NativeMotion.crossFade : NativeMotion.standard) { configuration.isExpanded.toggle() }
             } label: {
                 HStack(spacing: 12) {
                     configuration.label.frame(maxWidth: .infinity, alignment: .leading)
@@ -1018,7 +1023,7 @@ struct SoftDisclosureStyle: DisclosureGroupStyle {
                 .accessibilityValue(configuration.isExpanded ? "Развёрнуто" : "Свёрнуто")
                 .accessibilityHint("Дважды коснись, чтобы " + (configuration.isExpanded ? "свернуть подробности." : "раскрыть подробности."))
             if configuration.isExpanded {
-                configuration.content.transition(reduceMotion ? .identity : NativeMotion.insertion)
+                configuration.content.transition(reduceMotion ? AnyTransition.opacity : NativeMotion.insertion)
             }
         }
     }
@@ -1089,13 +1094,13 @@ struct LiquidProgressBar: View {
             }
         }
         .frame(height: height)
-        .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.6), value: clamped)
+        .animation(reduceMotion ? nil : NativeMotion.progress, value: clamped)
         .accessibilityElement()
         .accessibilityValue("\(Int((clamped * 100).rounded())) процентов")
     }
 }
 
-// MARK: - Launch greeting
+// MARK: - Launch layer (MOTION-PASS-0.5.2 §4)
 
 /// Launch decoration never waits on a model or owns navigation. An interrupted
 /// launch is consumed, so foreground/background changes cannot replay it.
@@ -1118,14 +1123,17 @@ struct NativeOpeningState {
     private(set) var phase = Phase.waiting
     private(set) var consumed = false
     private(set) var animateHome = false
+    /// The greeting was on screen: a skip then reveals Home at once instead of replaying the staircase.
+    private(set) var greeted = false
     static let greetingMilliseconds = 3_200
-    static let handoffSeconds = 0.60
-    static let homeEntranceSeconds = 0.56
-    static let homeStaggerSeconds = 0.08
+    /// The hand-off to Home: a slow, soft fade of the whole layer (companion included, in place) while
+    /// Today's staircase rises underneath.
+    static let handoffSeconds = 0.80
     mutating func begin(readiness: NativeOpeningReadiness, reduceMotion: Bool) -> Bool {
         guard readiness.ready, !consumed else { return false }
         consumed = true
         animateHome = readiness.allowed && !reduceMotion
+        greeted = animateHome
         phase = animateHome ? .greeting : .finished
         return phase == .greeting
     }
@@ -1141,82 +1149,262 @@ struct NativeOpeningState {
     }
 }
 
-struct NativeHomeEntrance: ViewModifier {
-    let visible: Bool
-    let animated: Bool
-    let index: Int
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func body(content: Content) -> some View {
-        content.opacity(visible || reduceMotion ? 1 : 0)
-            .offset(y: visible || reduceMotion ? 0 : 12)
-            .animation(animated && !reduceMotion ? .timingCurve(0.23, 1, 0.32, 1, duration: NativeOpeningState.homeEntranceSeconds).delay(Double(min(5, max(0, index))) * NativeOpeningState.homeStaggerSeconds) : nil, value: visible)
-            .transaction { transaction in
-                if !animated || reduceMotion { transaction.animation = nil; transaction.disablesAnimations = true }
-            }
-    }
+/// What the launch layer shows. One view and one companion serve every stage, so nothing remounts or jumps.
+enum LaunchStage: Equatable {
+    /// The saved access key is being checked: the companion breathes (calm), nothing else.
+    case waiting
+    /// The server did not answer: a sad companion, the reason, «Повторить» and «Ввести код заново».
+    case offline(detail: String, retrying: Bool)
+    /// «Привет, …» next to the same companion, then the hand-off to Home.
+    case greeting
 }
 
-/// No visible continue button: the entire greeting can be tapped or escaped.
-struct NativeOpeningGreeting: View {
+enum NativeLaunch {
+    /// The layer cross-fades out when no greeting follows it (Home without a greeting, a refused code, «Ввести код заново»).
+    static let coverFadeSeconds = 0.5
+    /// The companion appears a moment after the first frame (the system launch screen is the bare background).
+    static let mascotDelayMilliseconds = 150
+    /// A slow server gets a quiet «Подключаюсь к серверу…» under the companion.
+    static let slowHintSeconds = 4.0
+    /// A sign-in that hangs becomes «Нет связи с сервером» instead of an endless launch.
+    static let restoreTimeoutSeconds = 30.0
+    /// The companion's frame in every stage: the greeting continues from the very first launch frame.
+    static let mascotSize = CGSize(width: 176, height: 184)
+}
+
+/// One launch layer from the first frame to the hand-off (MOTION-PASS-0.5.2 §4): the app background and the same
+/// companion instance (176 × 184, its centre at 40 % of the screen) while the saved key is checked, when the server
+/// cannot be reached and during the greeting. Text below the companion never moves it. The greeting can be tapped
+/// or escaped at any moment; there is no visible continue button.
+struct LaunchView: View {
+    let stage: LaunchStage
     let name: String
     let sentence: String
-    let active: Bool
+    /// Fading out: the greeting's hand-off to Home or a plain cover fade.
     let leaving: Bool
+    let leaveSeconds: Double
     let skip: () -> Void
-    @State private var entered = false
+    let retry: () -> Void
+    let enterCode: () -> Void
+    @State private var shown = false
+    @State private var greeted = false
     @State private var played = false
-    @State private var pose = VoiceOrbGreetingPose.arriving
-    @State private var mood = VoiceOrbMood.happy
+    @State private var slow = false
+    @State private var pose: VoiceOrbGreetingPose
+    @State private var greetingMood: VoiceOrbMood?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(stage: LaunchStage, name: String = "ты", sentence: String = "", leaving: Bool = false,
+         leaveSeconds: Double = NativeOpeningState.handoffSeconds, skip: @escaping () -> Void = {},
+         retry: @escaping () -> Void = {}, enterCode: @escaping () -> Void = {}) {
+        self.stage = stage
+        self.name = name
+        self.sentence = sentence
+        self.leaving = leaving
+        self.leaveSeconds = leaveSeconds
+        self.skip = skip
+        self.retry = retry
+        self.enterCode = enterCode
+        // Straight into the greeting (no launch wait before it): the companion lands squashed and springs up.
+        let direct = stage == .greeting
+        _pose = State(initialValue: direct ? VoiceOrbGreetingPose.arriving : VoiceOrbGreetingPose.neutral)
+        _greetingMood = State(initialValue: direct ? VoiceOrbMood.happy : nil)
+    }
+
+    private var isGreeting: Bool { stage == .greeting }
+    private var offline: (detail: String, retrying: Bool)? {
+        if case .offline(let detail, let retrying) = stage { return (detail, retrying) }
+        return nil
+    }
+    private var isOffline: Bool { offline != nil }
+    /// Launch: calm, breathing. Offline: sad (thinking while it retries). Greeting: happy, a hop of joy.
+    private var mood: VoiceOrbMood {
+        if let offline = offline { return offline.retrying ? .thinking : .sad }
+        return greetingMood ?? .calm
+    }
+
     var body: some View {
-        Button(action: skip) {
-            VStack(spacing: 18) {
-                Spacer(minLength: 18)
-                VoiceOrb(mode: .ready, level: 0, mood: mood, greetingPose: pose, interactive: false)
-                    .frame(width: 176, height: 184).allowsHitTesting(false).accessibilityHidden(true)
-                    .opacity(entered && !leaving ? 1 : 0)
-                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.62), value: entered)
-                    .animation(reduceMotion ? nil : .timingCurve(0.4, 0, 0.6, 1, duration: 0.38), value: leaving)
-                Text("Привет, \(name).")
-                    .font(TypeScale.hero).tracking(-0.6)
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                    .opacity(entered && !leaving ? 1 : 0).offset(y: leaving ? -4 : entered ? 0 : 12)
-                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.58).delay(0.24), value: entered)
-                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.18), value: leaving)
-                Text(sentence).font(.body).foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 360)
-                    .opacity(entered && !leaving ? 1 : 0).offset(y: leaving ? -3 : entered ? 0 : 10)
-                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.58).delay(0.54), value: entered)
-                    .animation(reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.18), value: leaving)
-                Spacer(minLength: 18)
-                Spacer(minLength: 0).frame(height: 42)
-            }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
-                .foregroundStyle(Theme.ink)
-                .background {
-                    Theme.base.opacity(leaving ? 0 : 1)
-                        .animation(reduceMotion ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: NativeOpeningState.handoffSeconds), value: leaving)
+        GeometryReader { proxy in
+            ZStack(alignment: .top) {
+                Theme.base
+                    .opacity(leaving ? 0 : 1)
+                    .animation(reduceMotion ? NativeMotion.crossFade : fade, value: leaving)
+                if dynamicTypeSize.isAccessibilitySize {
+                    // Large text: no greeting runs here, so the layer may scroll and the companion can be smaller.
+                    ScrollView {
+                        column(mascot: CGSize(width: 120, height: 125))
+                            .padding(.top, 72).padding(.horizontal, 24).padding(.bottom, 40)
+                            .frame(width: proxy.size.width)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                } else {
+                    column(mascot: NativeLaunch.mascotSize)
+                        .padding(.top, mascotTop(proxy.size.height))
+                        .padding(.horizontal, 28)
+                        .frame(width: proxy.size.width)
                 }
-        }.buttonStyle(.plain).contentShape(Rectangle()).ignoresSafeArea()
-            .keyboardShortcut(.cancelAction)
-            .accessibilityLabel("Привет, " + name + ". " + sentence)
-            .accessibilityHint("Коснись, чтобы сразу открыть главную.")
-            .task(id: active) {
-                guard active, scenePhase == .active, !played else { return }
-                played = true
-                entered = true
-                pose = .neutral
-                guard !reduceMotion else { return }
-                do {
-                    try await Task.sleep(for: .milliseconds(780))
-                    pose = .lifted
-                    mood = .joy
-                    try await Task.sleep(for: .milliseconds(760))
-                    pose = .landing
-                    try await Task.sleep(for: .milliseconds(640))
-                    pose = .neutral
-                } catch { return }
             }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+        }
+        .ignoresSafeArea()
+        .foregroundStyle(Theme.ink)
+        .contentShape(Rectangle())
+        .onTapGesture { if isGreeting { skip() } }
+        .background { skipShortcut }
+        .accessibilityElement(children: .contain)
+        .task { await revealCompanion() }
+        .task(id: isGreeting && scenePhase == .active) { await greet() }
+        .task(id: stage == .waiting) { await watchSlowServer() }
+    }
+
+    private func column(mascot: CGSize) -> some View {
+        VStack(spacing: 18) {
+            VoiceOrb(mode: .ready, level: 0, mood: mood, greetingPose: pose, interactive: false)
+                .frame(width: mascot.width, height: mascot.height)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .opacity(shown && !leaving ? 1 : 0)
+                .animation(reduceMotion ? NativeMotion.crossFade : arrive, value: shown)
+                .animation(reduceMotion ? NativeMotion.crossFade : fade, value: leaving)
+            ZStack(alignment: .top) {
+                greetingLines
+                waitingLine
+                if let offline = offline {
+                    offlineBlock(offline)
+                        .transition(reduceMotion ? AnyTransition.opacity
+                                    : AnyTransition.opacity.combined(with: AnyTransition.offset(y: 8)))
+                }
+            }
+            .frame(maxWidth: 420)
+            .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.reveal, value: isOffline)
+        }
+    }
+
+    private var greetingLines: some View {
+        VStack(spacing: 18) {
+            Text("Привет, \(name).")
+                .font(TypeScale.hero).tracking(-0.6)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .opacity(greeted && !leaving ? 1 : 0)
+                .offset(y: greeted || reduceMotion ? 0 : 12)
+                .animation(reduceMotion ? NativeMotion.crossFade : lineIn.delay(0.24), value: greeted)
+                .animation(reduceMotion ? NativeMotion.crossFade : lineOut, value: leaving)
+            Text(sentence)
+                .font(.body).foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 360)
+                .opacity(greeted && !leaving ? 1 : 0)
+                .offset(y: greeted || reduceMotion ? 0 : 10)
+                .animation(reduceMotion ? NativeMotion.crossFade : lineIn.delay(0.54), value: greeted)
+                .animation(reduceMotion ? NativeMotion.crossFade : lineOut, value: leaving)
+        }
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityHidden(!isGreeting)
+        .accessibilityAddTraits(isGreeting ? .isButton : [])
+        .accessibilityHint(isGreeting ? "Коснись, чтобы сразу открыть главную." : "")
+        .accessibilityAction(.default) { if isGreeting { skip() } }
+    }
+
+    /// Only after a few seconds of waiting: the server is slow, not the app.
+    private var waitingLine: some View {
+        Text("Подключаюсь к серверу…")
+            .font(.footnote)
+            .foregroundStyle(Theme.inkSecondary)
+            .opacity(stage == .waiting && slow && !leaving ? 1 : 0)
+            .animation(reduceMotion ? NativeMotion.crossFade : NativeMotion.reveal, value: slow)
+            .animation(NativeMotion.exit, value: stage == .waiting)
+            .allowsHitTesting(false)
+            .accessibilityHidden(stage != .waiting)
+    }
+
+    private func offlineBlock(_ offline: (detail: String, retrying: Bool)) -> some View {
+        VStack(spacing: 10) {
+            Text("Нет связи с сервером")
+                .font(TypeScale.title2)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text(offline.detail)
+                .font(.subheadline)
+                .foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 10) {
+                Button(action: retry) {
+                    HStack(spacing: 10) {
+                        if offline.retrying { ProgressView().tint(Theme.ctaLabel) }
+                        Text(offline.retrying ? "Подключаюсь…" : "Повторить")
+                    }
+                }
+                .buttonStyle(PrimaryButton())
+                Button("Ввести код заново", action: enterCode)
+                    .buttonStyle(QuietButton())
+            }
+            .disabled(offline.retrying)
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: 360)
+    }
+
+    @ViewBuilder private var skipShortcut: some View {
+        if isGreeting {
+            Button("Открыть главную", action: skip)
+                .keyboardShortcut(.cancelAction)
+                .opacity(0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// The companion's top edge: its centre sits at 40 % of the screen height in every stage.
+    private func mascotTop(_ height: CGFloat) -> CGFloat {
+        max(40, (height * 0.40 - NativeLaunch.mascotSize.height / 2).rounded())
+    }
+
+    /// The companion arrives: a long, soft deceleration.
+    private var arrive: Animation { .timingCurve(0.16, 1, 0.3, 1, duration: 0.7) }
+    private var lineIn: Animation { .timingCurve(0.16, 1, 0.3, 1, duration: 0.62) }
+    /// Text leaves first and faster (exits are shorter than entrances).
+    private var lineOut: Animation { .timingCurve(0.4, 0, 1, 1, duration: min(0.36, leaveSeconds)) }
+    /// The layer and the companion fade together, softly and in place: no jump, nothing left behind.
+    private var fade: Animation { .timingCurve(0.42, 0, 0.2, 1, duration: leaveSeconds) }
+
+    /// A launch or offline layer: the companion appears a moment after the first frame.
+    private func revealCompanion() async {
+        guard !shown, !isGreeting else { return }
+        do { try await Task.sleep(for: .milliseconds(NativeLaunch.mascotDelayMilliseconds)) } catch { return }
+        shown = true
+    }
+
+    /// Calm → happy perk-up → a hop of joy → landing, next to the same companion that waited at launch.
+    private func greet() async {
+        guard isGreeting, scenePhase == .active, !played else { return }
+        played = true
+        shown = true
+        greeted = true
+        greetingMood = .happy
+        pose = .neutral
+        guard !reduceMotion else { return }
+        do {
+            try await Task.sleep(for: .milliseconds(780))
+            pose = .lifted
+            greetingMood = .joy
+            try await Task.sleep(for: .milliseconds(760))
+            pose = .landing
+            try await Task.sleep(for: .milliseconds(640))
+            pose = .neutral
+            greetingMood = .happy
+        } catch { return }
+    }
+
+    private func watchSlowServer() async {
+        guard stage == .waiting else { slow = false; return }
+        do { try await Task.sleep(for: .seconds(NativeLaunch.slowHintSeconds)) } catch { return }
+        slow = true
     }
 }

@@ -22,8 +22,9 @@ export function SessionScreen() {
   const tone = sessionTone(s);
   const mode = (s.baseline ? 'Старая стартовая проба' : MODE_LABEL[s.mode]) + (s.lesson.track === 'ielts-foundation' ? ' · Основа для IELTS' : '');
   const avoid = conversation ? (s.lesson.mustAvoid ?? []).slice(0, 6) : [];
+  // Top-level blocks carry data-enter: opening a lesson runs the 'screen' staircase (MOTION-PASS-0.5.2 §2).
   return <div className={`screen ${styles.session}`} data-screen="session">
-    <header className={styles.header}>
+    <header className={styles.header} data-enter="">
       <button type="button" className={`text-button ${styles.back}`} onClick={() => { lesson.voice.stop(); app.nav.closeSession(); }}>
         <CaretLeftIcon size={16} weight="bold" />{TAB_NAMES[app.nav.returnTab]}</button>
       <h1 tabIndex={-1} data-screen-heading className={styles.title}>{s.lesson.title}</h1>
@@ -41,7 +42,7 @@ export function SessionScreen() {
     <ErrorBanner />
     <ProcessingNote />
     {conversation && <ConversationView />}
-    {failedWithoutReview && <section className={`surface ${styles.failedTranscript}`} aria-labelledby="saved-turns">
+    {failedWithoutReview && <section className={`surface ${styles.failedTranscript}`} data-enter="" aria-labelledby="saved-turns">
       <h2 id="saved-turns" className={styles.blockTitle}>Твои ответы сохранены</h2>
       <Turns turns={s.turns} />
     </section>}

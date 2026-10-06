@@ -1,22 +1,27 @@
-/* Practice: personal blocks first, then the catalog as grouped lists (no card grid, no icon tiles).
-   Group heads sit in a left column when the content area (not the window) is wide enough. */
+/* Practice: the header, «Для тебя» (components/practice/for-you.tsx, full width), then the catalog as grouped lists.
+   Catalog group heads sit in a left column when the content area (not the window) is wide enough. */
 .practice { gap: 28px; container: practice / inline-size; }
 
-.header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 20px; }
-.headerCopy { flex: 1 1 340px; display: grid; gap: 6px; min-width: 0; }
+/* Header: title and lede, «Своя тема», the live companion at the right end (MOTION-PASS-0.5.2 §3). */
+.header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: 'copy action mascot'; align-items: center; gap: 12px 20px; }
+.headerCopy { grid-area: copy; display: grid; gap: 6px; min-width: 0; }
 .headerCopy h1 { outline: none; }
-.headerCopy p { color: var(--text-secondary); font-size: var(--text-15); }
-.header > :global(.button) { flex-shrink: 0; }
+.headerCopy p { color: var(--text-secondary); font-size: var(--text-15); text-wrap: pretty; }
+.freeTopic { grid-area: action; }
+.headerMascot { grid-area: mascot; }
+/* Without the companion (the «Для тебя» empty line holds it) the button takes the right end. */
+.header[data-companion='false'] { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'copy action'; }
+@container practice (max-width: 600px) {
+  .header { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'copy mascot' 'action action'; gap: 12px 14px; }
+  .header[data-companion='false'] { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'copy' 'action'; }
+  .freeTopic { justify-self: start; }
+}
 
 .group { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
 .groupHead { display: grid; gap: 2px; align-content: start; min-width: 0; }
 .groupHead h3 { font-family: var(--font-display); font-size: 19px; font-weight: 800; line-height: 1.25; letter-spacing: -.2px; text-wrap: balance; }
 .groupHead :global(.caption) { text-wrap: pretty; }
 .count { margin-top: 2px; font-size: 12.5px; font-weight: 600; color: var(--text-tertiary); }
-.count :global(.text-button) { display: inline; min-height: 0; padding: 0; font-size: inherit; }
-.groupBody { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; min-width: 0; }
-.drills { display: grid; gap: 10px; min-width: 0; }
-.subhead { font-size: var(--text-15); font-weight: 700; }
 
 .catalog { display: grid; grid-template-columns: minmax(0, 1fr); gap: 26px; padding-top: 26px; border-top: 1px solid var(--hairline); }
 .catalogTitle { margin-bottom: -6px; }
@@ -37,6 +42,9 @@
 .row:active { background: var(--surface-sunken); }
 @media (hover: hover) and (pointer: fine) { .row:hover { background: var(--surface-hover); } }
 .rowIcon { display: grid; place-items: center; width: 22px; height: 22px; flex-shrink: 0; color: var(--text-secondary); }
+.rowIcon[data-artwork='true'] { width: 44px; height: 44px; }
+.rowIcon img { display: block; width: 44px; height: 44px; object-fit: contain; }
+.row:has(.rowIcon[data-artwork='true']) { align-items: center; min-height: 76px; }
 .rowCopy { display: grid; gap: 2px; flex: 1; min-width: 0; }
 .rowCopy strong { font-size: var(--text-15); font-weight: 700; line-height: 1.35; overflow-wrap: break-word; }
 .rowCopy small { font-size: 13.5px; line-height: 1.45; color: var(--text-secondary); text-wrap: pretty; }
@@ -45,16 +53,13 @@
 .chevron { flex-shrink: 0; align-self: center; color: var(--text-tertiary); }
 .newDot { display: inline-block; width: 8px; height: 8px; margin: 0 0 2px 8px; border-radius: 50%; vertical-align: middle;
   background: var(--accent-lime); box-shadow: inset 0 0 0 1px rgb(24 23 28 / .1); }
-.status[data-tone='lime'] { color: var(--accent-lime-ink); font-weight: 650; }
-.status[data-tone='warning'] { color: var(--status-warning-ink); font-weight: 650; }
-.status[data-tone='cyan'] { color: var(--accent-cyan-ink); font-weight: 650; }
-.status[data-tone='violet'] { color: var(--accent-violet-ink); font-weight: 650; }
 
 /* A narrow list moves time and mode under the title instead of squeezing the copy. */
 @container rows (max-width: 440px) {
   .row { flex-wrap: wrap; column-gap: 12px; }
   .rowMeta { order: 3; display: flex; gap: 8px; min-width: 0; margin-left: 34px; flex-basis: 100%; padding-top: 0; }
   .row:not(:has(.rowIcon)) .rowMeta { margin-left: 0; }
+  .row:has(.rowIcon[data-artwork='true']) .rowMeta { margin-left: 56px; }
 }
 
 /* Family sheet */

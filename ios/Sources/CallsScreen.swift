@@ -53,20 +53,35 @@ private struct CallsScreenContent: View {
     }
     private var pollIdentity: String { store.pollKey + "|" + (scenePhase == .active ? "active" : "inactive") }
 
+    /// MOTION-PASS 0.5.2 §3: a call being processed → thinking; one waiting for «кто есть кто» → surprised;
+    /// otherwise listening. With no calls the companion sits, curious and larger, in the empty state instead.
+    private var introMood: VoiceOrbMood {
+        if store.isAnyProcessing { return .thinking }
+        if store.calls.contains(where: { $0.kind == .needsSpeaker }) { return .surprised }
+        return .listening
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    ScreenIntro(text: "Загрузи звонок — получишь разбор, тренировки из своих же моментов и обновлённые паттерны.",
+                                mood: introMood, showsCompanion: !store.calls.isEmpty)
+                        .entrance(0)
                     CallUploadCard(compact: false)
+                        .entrance(1)
                     banners
                     CallsInsightsRow(patterns: store.patterns, facts: store.facts, open: { path.append($0) })
+                        .entrance(2)
                     callsSection
+                        .entrance(3)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
                 .padding(.bottom, 32)
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
+                .entranceStage()
             }
             .background { FeatureBackdrop() }
             .refreshable {
@@ -137,7 +152,8 @@ private struct CallsScreenContent: View {
             }
             if store.calls.isEmpty {
                 FeatureEmptyState(icon: "phone.bubble", title: "Пока пусто",
-                                  text: "Загрузи запись или транскрипт звонка — или опиши его по памяти. Разберу, что сработало, что стоило денег, и соберу тренировки из твоих моментов.")
+                                  text: "Загрузи запись или транскрипт звонка — или опиши его по памяти. Разберу, что сработало, что стоило денег, и соберу тренировки из твоих моментов.",
+                                  mood: .curious, companionSize: 104)
                     .featureGlass(radius: 24)
             } else {
                 GroupedRows {
@@ -374,7 +390,7 @@ struct CallProgressRing: View {
             }
         }
         .frame(width: size, height: size)
-        .animation(reduceMotion ? nil : FeatureMotion.standard, value: percent)
+        .animation(reduceMotion ? nil : FeatureMotion.progress, value: percent)
         .accessibilityHidden(true)
     }
 }

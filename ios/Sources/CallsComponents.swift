@@ -34,13 +34,16 @@ enum FeaturePalette {
     })
 }
 
-/// Same curves as `NativeMotion`: no overshoot on ordinary controls; `bouncy` only for reward moments.
+/// Mirrors `NativeMotion` exactly (MOTION-PASS-0.5.2 §1): no overshoot on ordinary controls; `bouncy` only for
+/// reward moments.
 enum FeatureMotion {
     static let press = NativeMotion.press
     static let standard = NativeMotion.standard
-    static let bouncy = Animation.bouncy(duration: 0.5, extraBounce: 0.1)
-    static let reveal = Animation.easeOut(duration: 0.32)
-    static func stagger(_ index: Int) -> Animation { standard.delay(Double(min(max(index, 0), 6)) * 0.04) }
+    static let bouncy = NativeMotion.bouncy
+    static let reveal = NativeMotion.reveal
+    static let exit = NativeMotion.exit
+    static let progress = NativeMotion.progress
+    static func stagger(_ index: Int) -> Animation { NativeMotion.stagger(index) }
 }
 
 // MARK: - Materials
@@ -82,24 +85,9 @@ extension View {
     func featureSurface(radius: CGFloat = 28, padding: CGFloat = 18) -> some View {
         modifier(FeatureSurface(radius: radius, padding: padding))
     }
-    /// Reveal: opacity + 8 pt rise + blur 6→0, staggered 40 ms (max 6). Reduce Motion: shown at once.
-    func featureReveal(_ index: Int = 0) -> some View { modifier(FeatureReveal(index: index)) }
-}
-
-struct FeatureReveal: ViewModifier {
-    let index: Int
-    @State private var shown = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func body(content: Content) -> some View {
-        content
-            .opacity(shown || reduceMotion ? 1 : 0)
-            .offset(y: shown || reduceMotion ? 0 : 8)
-            .blur(radius: shown || reduceMotion ? 0 : 6)
-            .onAppear {
-                guard !shown else { return }
-                if reduceMotion { shown = true } else { withAnimation(FeatureMotion.stagger(index)) { shown = true } }
-            }
-    }
+    /// The shared light reveal cascade (`rowReveal`, Entrance.swift): opacity + 10 pt rise + blur 4 → 0,
+    /// 70 ms apart, at most six steps. Reduce Motion: shown at once.
+    func featureReveal(_ index: Int = 0) -> some View { rowReveal(index) }
 }
 
 /// The shell's quiet background (one tone with barely visible depth; solid with Reduce Transparency).
@@ -244,7 +232,7 @@ struct FeatureProgressBar: View {
             }
         }
         .frame(height: height)
-        .animation(reduceMotion ? nil : FeatureMotion.standard, value: clamped)
+        .animation(reduceMotion ? nil : FeatureMotion.progress, value: clamped)
         .accessibilityElement()
         .accessibilityLabel(accessibilityText.isEmpty ? "Прогресс" : accessibilityText)
     }
@@ -254,10 +242,17 @@ struct FeatureEmptyState: View {
     let icon: String
     let title: String
     let text: String
+    /// A screen's empty state holds the live companion instead of the symbol (MOTION-PASS-0.5.2 §3).
+    var mood: VoiceOrbMood? = nil
+    var companionSize: CGFloat = 96
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 30, weight: .medium)).foregroundStyle(FeaturePalette.violet)
-                .accessibilityHidden(true)
+            if let mood {
+                ScreenMascot(mood: mood, size: companionSize)
+            } else {
+                Image(systemName: icon).font(.system(size: 30, weight: .medium)).foregroundStyle(FeaturePalette.violet)
+                    .accessibilityHidden(true)
+            }
             Text(title).font(.headline).multilineTextAlignment(.center)
             Text(text).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)

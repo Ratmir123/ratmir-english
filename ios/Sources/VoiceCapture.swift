@@ -106,6 +106,13 @@ struct LiveSpeechCredential: Decodable {
     let ticket: String?
 }
 
+/// One-line states under the live captions (the line keeps its height, so they stay short).
+enum LiveCaptionCopy {
+    static let connecting = "Подключаю живой текст…"
+    static let listening = "Слушаю — текст появляется по ходу речи"
+    static let unavailable = "Живой текст недоступен — распознаю после записи"
+}
+
 /// The permanent API key never reaches this client. Credentials exist only in memory.
 @MainActor final class LiveTranscriber {
     private var socket: URLSessionWebSocketTask?
@@ -156,15 +163,17 @@ struct LiveSpeechCredential: Decodable {
         self.socket = socket
         socket.resume()
         receiver = Task { [weak self] in await self?.receiveEvents() }
+        // MOTION-PASS §5: "minimal" delay, so words reach the caption line almost as they are spoken.
         try await send(["type": "session.update", "session": ["type": "transcription", "audio": ["input": [
             "format": ["type": "audio/pcm", "rate": 24000],
-            "transcription": ["model": "gpt-live-transcribe", "languages": ["en", "ru"], "delay": "low",
+            "transcription": ["model": "gpt-live-transcribe", "languages": ["en", "ru"], "delay": "minimal",
                 "prompt": "An English learner speaking spontaneously. Preserve fillers such as um, uh and like, repetitions, false starts, unfinished phrases and grammar mistakes. Transcribe what was actually said. Do not correct, translate, summarize or complete their words."],
             "turn_detection": NSNull()
         ]]]])
         guard !closed else { throw CancellationError() }
         ready = true
-        onState?("Слушаю. Текст появится по ходу речи.")
+        onState?(LiveCaptionCopy.listening)
+        // Audio captured while the socket was opening goes out first, in order.
         drain()
     }
 
@@ -252,7 +261,7 @@ struct LiveSpeechCredential: Decodable {
 
     private func fail() {
         failed = true; buffers.removeAll(); pendingBytes = 0
-        onState?("Живой текст недоступен. После остановки распознаю полную запись.")
+        onState?(LiveCaptionCopy.unavailable)
         close()
     }
     func close() {

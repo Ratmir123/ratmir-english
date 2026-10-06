@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ArrowsClockwiseIcon, CheckCircleIcon, LightningIcon, MicrophoneIcon, PaperPlaneRightIcon, SkipForwardIcon, SpeakerHighIcon, StopIcon, WarningIcon } from '@phosphor-icons/react';
+import { ArrowsClockwiseIcon, CheckCircleIcon, EyeIcon, LightningIcon, MicrophoneIcon, PaperPlaneRightIcon, SkipForwardIcon, SpeakerHighIcon, StopIcon, WarningIcon } from '@phosphor-icons/react';
 import { ApiRequestError, mediaUrl } from '@/lib/client/api';
 import { createVoiceMeter } from '@/lib/browser-audio';
 import type { PlacementTask, PlacementView } from '@/lib/placement/types';
@@ -290,12 +290,17 @@ export function RoleplayTaskView(props: VoiceTaskProps & { task: RoleplayTask })
   const playback = useRef<MeteredPlayback | null>(null);
   const [micReady, setMicReady] = useState(recorder.mic === 'ready');
   const started = useRef(false);
+  // MOTION-PASS-0.5.2 §6: the partner's line is heard first; its text is revealed on request (this line only) and
+  // stands in for good when there is no voice or it failed to play.
+  const [revealed, setRevealed] = useState(false);
+  const [unvoiced, setUnvoiced] = useState(!task.partnerLine.audioUrl);
+  const textShown = unvoiced || revealed;
 
   useEffect(() => () => { playback.current?.stop(); playback.current = null; }, []);
 
   const playLine = useCallback(() => {
     const url = task.partnerLine.audioUrl;
-    if (!url) { setPhase({ kind: 'read' }); return; }
+    if (!url) { setUnvoiced(true); setPhase({ kind: 'read' }); return; }
     setPhase({ kind: 'partner' });
     const current = playMetered(mediaUrl(url), speech);
     playback.current = current;
@@ -307,7 +312,9 @@ export function RoleplayTaskView(props: VoiceTaskProps & { task: RoleplayTask })
     }).catch(error => {
       if (playback.current !== current || !cycle.alive.current) return;
       playback.current = null;
-      setPhase(error instanceof DOMException && error.name === 'NotAllowedError' ? { kind: 'blocked' } : { kind: 'read' });
+      const blocked = error instanceof DOMException && error.name === 'NotAllowedError';
+      if (!blocked) setUnvoiced(true);
+      setPhase(blocked ? { kind: 'blocked' } : { kind: 'read' });
     });
   }, [task.partnerLine.audioUrl, speech, setPhase, later, startRecording, cycle.alive]);
 
@@ -331,9 +338,12 @@ export function RoleplayTaskView(props: VoiceTaskProps & { task: RoleplayTask })
           <FeatureMascot size={124} state={mascotState} speech={speech} mic={recorder.meterStore} interactive={false}
             label={phase.kind === 'partner' ? 'Собеседник говорит' : 'Слушает тебя'} />
         </div>
-        <div className={cx(kit.glass, styles.bubble, kit.en)} lang="en">
-          <span className={kit.visuallyHidden} lang="ru">Собеседник: </span>
-          {task.partnerLine.text}
+        <div className={cx(kit.glass, styles.bubble)} data-hidden={!textShown}>
+          <span className={kit.visuallyHidden}>Собеседник: </span>
+          {textShown ? <span key="line" lang="en" className={cx(kit.en, styles.bubbleText)}>{task.partnerLine.text}</span>
+            : <span key="hidden" className={styles.bubbleHidden}>Реплика звучит голосом. Текст можно открыть, если не расслышал.</span>}
+          {!unvoiced && <button type="button" className={cx(kit.btn, kit.quiet, kit.small, styles.bubbleToggle)} data-testid="roleplay-text-toggle"
+            onClick={() => setRevealed(value => !value)}>{revealed ? 'Скрыть текст' : <><EyeIcon size={16} weight="bold" />Показать текст</>}</button>}
         </div>
       </div>
 

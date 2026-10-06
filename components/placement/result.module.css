@@ -38,7 +38,7 @@
 .badgeBase { fill: var(--k-lavender-soft); }
 .badgeRim { fill: none; stroke: rgb(255 255 255 / .7); stroke-width: 1.5; }
 /* Vertical level on the group, horizontal wave on the path: one transform each (SVG-safe). */
-.level { transform: translateY(calc((1 - var(--fill, .5)) * 160px)); animation: fillUp 1.6s cubic-bezier(.22, 1, .36, 1) .15s both; }
+.level { transform: translateY(calc((1 - var(--fill, .5)) * 160px)); animation: fillUp 1.6s var(--k-ease) .15s both; }
 .levelBack { transform: translateY(calc((1 - var(--fill, .5)) * 160px - 5px)); animation-delay: .05s; }
 .wave { animation: waveMove 3.8s linear infinite; }
 .liquid { fill: var(--k-lime); }
@@ -49,7 +49,7 @@
 .badgeText { font-family: var(--k-display); font-weight: 900; font-size: 50px; letter-spacing: -2px; text-anchor: middle; dominant-baseline: central; }
 .badgeTextBase { fill: var(--k-text); }
 .badgeTextLiquid { fill: #18171c; }
-.badgeLabelGroup { transform-origin: 80px 80px; animation: assemble .7s var(--k-bouncy) .75s both; }
+.badgeLabelGroup { transform-origin: 80px 80px; animation: assemble var(--k-bouncy-ms) var(--k-bouncy) .75s both; }
 @keyframes assemble { from { opacity: 0; transform: scale(.6); } }
 .badgeCaption { margin-top: 8px; font-size: 12.5px; font-weight: 650; color: var(--k-text-2); }
 @media (prefers-reduced-motion: reduce) {
@@ -86,13 +86,13 @@
 .axisTrack { position: absolute; left: 0; right: 0; top: 8px; height: 8px; border-radius: 999px; background: var(--k-sunken-2); }
 .axisRange {
   position: absolute; top: 8px; height: 8px; border-radius: 999px; background: var(--k-violet);
-  transform-origin: left center; animation: grow .7s cubic-bezier(.22, 1, .36, 1) both; animation-delay: calc(min(var(--i, 0), 5) * 50ms + .15s);
+  transform-origin: left center; animation: grow var(--k-fill-ms) var(--k-ease) both; animation-delay: calc(min(var(--i, 0), 5) * 60ms + .15s);
 }
 @keyframes grow { from { transform: scaleX(0); } }
 .axisMarker {
   position: absolute; top: 4px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: var(--k-solid);
   box-shadow: 0 0 0 3px var(--k-violet), 0 3px 8px -2px rgb(24 23 28 / .35);
-  animation: markerIn .35s cubic-bezier(.23, 1, .32, 1) both; animation-delay: calc(min(var(--i, 0), 5) * 50ms + .5s);
+  animation: markerIn var(--k-reveal-ms) var(--k-ease) both; animation-delay: calc(min(var(--i, 0), 5) * 60ms + .5s);
 }
 @keyframes markerIn { from { opacity: 0; transform: scale(.4); } }
 .axisTicks { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(6, 1fr); pointer-events: none; }
@@ -165,7 +165,7 @@
 .review > summary:focus-visible { outline: 3px solid var(--k-focus); outline-offset: 2px; }
 .reviewTitle { display: grid; gap: 2px; min-width: 0; font-family: var(--k-display); font-size: 20px; font-weight: 800; letter-spacing: -.015em; }
 .reviewTitle small { font-family: var(--font-body, inherit); font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--k-text-2); }
-.review > summary svg { flex-shrink: 0; color: var(--k-text-2); transition: transform 220ms cubic-bezier(.23, 1, .32, 1); }
+.review > summary svg { flex-shrink: 0; color: var(--k-text-2); transition: transform var(--k-hover-ms) var(--k-ease); }
 .review[open] > summary svg { transform: rotate(180deg); }
 .reviewBody { display: grid; gap: 20px; padding: 0 clamp(18px, 2.4vw, 24px) 22px; }
 .reviewGroup { display: grid; gap: 10px; }
@@ -202,7 +202,7 @@
 .skillTrack { grid-column: 1 / -1; position: relative; height: 4px; border-radius: 999px; background: var(--k-sunken-2); overflow: hidden; }
 .skillTrack[data-empty='true'] { background: repeating-linear-gradient(90deg, var(--k-sunken-2) 0 4px, transparent 4px 8px); }
 .skillTrack > span { position: absolute; inset: 0; border-radius: inherit; background: var(--k-violet); transform-origin: left center; transform: scaleX(var(--fill, 0));
-  animation: skill-fill 700ms cubic-bezier(.22, 1, .36, 1) both; animation-delay: calc(var(--i, 0) * 40ms); }
+  animation: skill-fill var(--k-fill-ms) var(--k-ease) both; animation-delay: calc(min(var(--i, 0), 8) * 50ms); }
 @keyframes skill-fill { from { transform: scaleX(0); } }
 .levelActions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .levelHeadline { margin: 0; font-size: 14px; line-height: 1.45; color: var(--k-text-2); }

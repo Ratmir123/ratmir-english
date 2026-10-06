@@ -34,12 +34,14 @@ struct FactsView: View {
                     .padding(.bottom, 32)
                     .frame(maxWidth: 720)
                     .frame(maxWidth: .infinity)
+                    .entranceStage()
             }
             .background { FeatureBackdrop() }
             .navigationTitle("Факты о тебе")
         }
     }
 
+    /// Blocks carry their staircase step; embedded in a host without a stage they simply show.
     private var content: some View {
         VStack(alignment: .leading, spacing: 18) {
             if !embedded {
@@ -47,6 +49,7 @@ struct FactsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .entrance(0)
             }
             if let error {
                 FeatureBanner(message: error, onDismiss: { self.error = nil })
@@ -55,18 +58,21 @@ struct FactsView: View {
                 FeatureEmptyState(icon: "person.text.rectangle", title: "Фактов пока нет",
                                   text: "После разбора звонка здесь появятся предложения: ставки, кейсы и договорённости, которые прозвучали.")
                     .featureGlass(radius: 24)
+                    .entrance(1)
             }
             if !suggested.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     FeatureSectionTitle(title: "Проверь, всё ли верно · \(suggested.count)", subtitle: "Прими только то, что верно. Ставки — для своего типа клиента.")
                     group(suggested)
                 }
+                .entrance(1)
             }
-            ForEach(acceptedKinds, id: \.self) { kind in
+            ForEach(Array(acceptedKinds.enumerated()), id: \.element) { index, kind in
                 VStack(alignment: .leading, spacing: 10) {
                     FeatureSectionTitle(title: FeatureLabels.factKind(kind))
                     group(accepted.filter { $0.kind == kind })
                 }
+                .entrance(2 + index)
             }
             if !rejected.isEmpty {
                 DisclosureGroup {
@@ -82,6 +88,7 @@ struct FactsView: View {
                 }
                 .padding(16)
                 .featureGlass(radius: 22)
+                .entrance(2 + acceptedKinds.count)
             }
         }
         .onChange(of: signature) { _, _ in overrides = nil }

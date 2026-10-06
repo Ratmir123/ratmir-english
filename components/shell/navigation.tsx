@@ -10,6 +10,7 @@ import { ElapsedTime } from '../ui/elapsed';
 import { RollingNumber } from '../ui/rolling-number';
 import { Companion } from './companion';
 import { TAB_ICONS } from './navigation-icons';
+import { ScreenMascot } from './screen-mascot';
 
 function useBadges() {
   const { data, seenReviews } = useApp();
@@ -40,23 +41,27 @@ export function Sidebar() {
     if (current) element.style.setProperty('--lens-y', `${current.offsetTop}px`);
   }, [nav.tab, nav.sessionOpen]);
   const engineOk = !!data.status?.brain.authenticated;
+  // Every item carries data-enter="side": at the launch hand-off the rail fills from the top in its own wave.
   return <aside className="sidebar glass" aria-label="Навигация">
-    <button type="button" className="brand" onClick={() => app.go('today')} aria-label={`${APP_NAME} — на главную`}>
-      <span className="brand-mark" aria-hidden="true">S</span>
-      <span className="brand-copy">{APP_NAME}<small>Тренинг общения</small></span>
-    </button>
-    {minimized && <button type="button" className="nav-session" onClick={() => nav.openSession()} aria-label={`Текущее занятие: ${sessionStatusLabel(minimized)}`} title="Вернуться к занятию">
+    {/* The live companion is the logo (MOTION-PASS-0.5.2 §3, calm, pointer play); the name beside it goes home.
+        In the 720–1099 px icon rail only the companion shows. */}
+    <div className="brand" data-enter="side">
+      <ScreenMascot emotion="calm" fluid className="brand-mark" />
+      <button type="button" className="brand-copy" onClick={() => app.go('today')} aria-label={`${APP_NAME} — на главную`}>{APP_NAME}<small>Тренинг общения</small></button>
+    </div>
+    {minimized && <button type="button" className="nav-session" data-enter="side" onClick={() => nav.openSession()} aria-label={`Текущее занятие: ${sessionStatusLabel(minimized)}`} title="Вернуться к занятию">
       <span className="pulse" aria-hidden="true" />
       <span style={{ minWidth: 0 }}><strong>Текущее занятие</strong><small>{sessionStatusLabel(minimized)}</small></span>
       <ArrowRightIcon size={16} style={{ marginLeft: 'auto', flexShrink: 0 }} />
     </button>}
     <nav aria-label="Разделы">
       <div ref={list} className="nav-list">
-        <span className="nav-lens" aria-hidden="true" />
+        {/* The lens keeps its own transform (its position), so it only fades in. */}
+        <span className="nav-lens" aria-hidden="true" data-enter="fade" />
         {TAB_ORDER.map(id => {
           const Icon = TAB_ICONS[id];
           const current = nav.tab === id;
-          return <button key={id} type="button" className="nav-item" aria-current={current ? 'page' : undefined} onClick={() => app.go(id)}>
+          return <button key={id} type="button" className="nav-item" data-enter="side" aria-current={current ? 'page' : undefined} onClick={() => app.go(id)}>
             <Icon size={21} weight={current ? 'fill' : 'regular'} aria-hidden="true" /><span>{TAB_NAMES[id]}</span>
             {id === 'calls' && badges.calls > 0 && <span className="badge" aria-label={`Нужно действие: ${badges.calls}`}>{badges.calls}</span>}
             {id === 'today' && badges.todayDot && <span className="badge" aria-label="Разбор готов" style={{ minWidth: 10, width: 10, height: 10, padding: 0 }} />}
@@ -65,18 +70,18 @@ export function Sidebar() {
       </div>
     </nav>
     <div className="sidebar-footer">
-      {progression && <button type="button" className="sidebar-rank" data-xp-target onClick={() => app.go('progress', { progress: 'rewards' })}
+      {progression && <button type="button" className="sidebar-rank" data-xp-target data-enter="side" onClick={() => app.go('progress', { progress: 'rewards' })}
         aria-label={`Ранг «${rankProgress(progression).band.title}», ${progression.xp} XP. Открыть награды`}>
         <span className="row"><RankMedal level={progression.level} size={34} animated={false} />
           <span className="sidebar-rank-copy"><strong>{rankProgress(progression).band.title}</strong><span className="caption tabular"><RollingNumber value={progression.xp} /> XP · ур. {progression.level}</span></span></span>
         <span className="progress-track lime" style={{ '--value': rankProgress(progression).ratio } as CSSProperties}><span /></span>
       </button>}
-      <button type="button" className="nav-item" onClick={app.launchQuick} title="Быстрый разбор фразы — Ctrl+Alt+E из любого окна" aria-keyshortcuts="Control+Alt+E">
+      <button type="button" className="nav-item" data-enter="side" onClick={app.launchQuick} title="Быстрый разбор фразы — Ctrl+Alt+E из любого окна" aria-keyshortcuts="Control+Alt+E">
         <LightningIcon size={21} aria-hidden="true" /><span>Быстрый разбор</span>
       </button>
       {(() => {
         const engine = `Sol · ${data.status ? engineOk ? data.status.brain.mode === 'siwc' ? 'подписка ChatGPT' : 'подписка Codex' : 'нужно подключение' : data.statusFailed ? 'статус недоступен' : 'проверяю…'}`;
-        return <div className="engine-status" role="status" title={`GPT‑6.1 ${engine}`}><i data-ok={engineOk} aria-hidden="true" /><span>{engine}</span></div>;
+        return <div className="engine-status" data-enter="side" role="status" title={`GPT‑6.1 ${engine}`}><i data-ok={engineOk} aria-hidden="true" /><span>{engine}</span></div>;
       })()}
     </div>
     {lesson.starting && <span className="visually-hidden" role="status">{lesson.starting.label}</span>}
@@ -87,7 +92,7 @@ export function TabBar() {
   const app = useApp();
   const badges = useBadges();
   const index = Math.max(0, TAB_ORDER.indexOf(app.nav.tab));
-  return <nav className="tab-bar glass" aria-label="Разделы" style={{ '--tab-index': index } as CSSProperties}>
+  return <nav className="tab-bar glass" data-enter="chrome" aria-label="Разделы" style={{ '--tab-index': index } as CSSProperties}>
     <span className="tab-lens" aria-hidden="true" />
     {TAB_ORDER.map((id: TabId) => {
       const Icon = TAB_ICONS[id];
@@ -115,7 +120,7 @@ export function SessionPill() {
 export function PreparationPanel() {
   const { lesson } = useApp();
   if (!lesson.starting) return null;
-  return <div className="glass" role="status" style={{ position: 'fixed', zIndex: 40, right: 20, bottom: 'calc(20px + env(safe-area-inset-bottom))', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 18px 10px 10px', borderRadius: 26, maxWidth: 'calc(100vw - 40px)' }}>
+  return <div className="glass prep-panel" role="status">
     <span style={{ width: 52, height: 52, flexShrink: 0 }}><Companion state="thinking" size={52} interactive={false} exclusive={false} status="Готовлю занятие" /></span>
     <span style={{ display: 'grid' }}><strong>{lesson.starting.label}…</strong><span className="caption">Подбираю задачу по твоим последним попыткам · <ElapsedTime startedAt={lesson.starting.since} /></span></span>
   </div>;

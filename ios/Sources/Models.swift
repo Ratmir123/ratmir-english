@@ -707,9 +707,12 @@ struct Conversation: Decodable, Identifiable {
     let processing: Processing?
     let completion: Completion?
     let retryDeferred: Bool?
+    /// A removed v0.4 baseline probe: never Today's step (web `inProgressSessions`).
+    let isBaseline: Bool
 
     private enum CodingKeys: String, CodingKey {
         case id, lesson, mode, status, turns, analysis, retries, error, createdAt, updatedAt, completedAt, processing, completion, retryDeferred
+        case baseline
     }
 }
 
@@ -730,6 +733,7 @@ extension Conversation {
         processing = (try? c.decodeIfPresent(Processing.self, forKey: .processing)) ?? nil
         completion = (try? c.decodeIfPresent(Completion.self, forKey: .completion)) ?? nil
         retryDeferred = (try? c.decodeIfPresent(Bool.self, forKey: .retryDeferred)) ?? nil
+        isBaseline = c.contains(.baseline) && ((try? c.decodeNil(forKey: .baseline)) == false)
     }
 
     var userTurnCount: Int { turns.filter { $0.role == "user" }.count }
@@ -746,8 +750,20 @@ extension Conversation {
         if status == "completed" { return retryDeferred == true || completion?.needsRetry == true }
         return status == "review"
     }
-    /// Sessions that belong on Today's "Продолжить" card.
+    /// Anything that can still be opened and continued (including a retry parked with «Отложить попытку»).
+    /// Today's primary card is stricter: `isInProgress` and `isFresh(now:)` (MOTION-PASS 0.5.2 §8.1).
     var isResumable: Bool { isLive || status == "review" || awaitsRetry }
+    /// Unfinished and not deliberately parked (web `inProgressSessions`): a deferred retry never comes back as today's step.
+    var isInProgress: Bool {
+        !isBaseline && retryDeferred != true && ["active", "analysing", "review", "error"].contains(status)
+    }
+    /// Touched within 72 h, or still being analysed (web `isFresh`). Older unfinished lessons move to «Незаконченные».
+    func isFresh(now: Date = Date()) -> Bool {
+        if status == "analysing" { return true }
+        guard let touched = (updatedAt ?? createdAt).flatMap(NativeDate.parse) else { return false }
+        return now.timeIntervalSince(touched) < Conversation.staleAfter
+    }
+    static let staleAfter: TimeInterval = 72 * 3600
     var latestDate: Date? {
         (completedAt ?? updatedAt ?? createdAt).flatMap(NativeDate.parse)
     }

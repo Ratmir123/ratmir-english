@@ -76,21 +76,29 @@
   --radius-card: 28px; --radius-sheet: 34px; --radius-tile: 22px; --radius-input: 18px; --radius-small: 14px; --radius-pill: 999px;
   --touch: 44px;
 
-  /* Motion: damped-spring curves sampled into linear() */
+  /* Motion 0.5.2 «glass jelly settles» (MOTION-PASS-0.5.2 §1): things decelerate long and soft (expo-out), never snap,
+     exits are shorter than entrances. components/ui/motion.ts mirrors these numbers for script-driven animation. */
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  --ease-out-quint: var(--ease-out); /* legacy name */
+  --press-ms: 200ms;   /* release of a press */
+  --pressed-ms: 120ms; /* going down */
+  --hover-ms: 240ms;   /* hover, colour, background, small state changes */
+  --reveal-ms: 460ms; --reveal-rise: 10px; --reveal-blur: 4px; --reveal-step: 60ms;
+  --sheet-in-ms: 560ms; --sheet-out-ms: 300ms; --backdrop-ms: 420ms;
+  --toast-in-ms: 480ms; --toast-out-ms: 260ms;
+  --fill-ms: 900ms;    /* progress fills */
+  --vt-out-ms: 220ms; --vt-in-ms: 520ms; /* view transitions (session / placement open and close) */
+  /* Damped-spring curves sampled into linear(). Critically damped: lenses and lifts settle without overshoot.
+     Overshoot (bouncy/jelly) is reserved for the mascot, rank/achievement medals and reward moments. */
   --spring-press: linear(0, 0.045, 0.147, 0.273, 0.402, 0.521, 0.627, 0.715, 0.787, 0.844, 0.888, 0.922, 0.947, 0.965, 0.978, 0.986, 1);
-  --spring-press-ms: 220ms;
-  /* Critically damped: routine state changes settle without overshoot. Overshoot (bouncy/jelly) is reserved for
-     the mascot, rank/achievement medals and reward moments (DESIGN-PASS-0.5.1). */
+  --spring-press-ms: 260ms;
   --spring-default: linear(0, 0.06, 0.19, 0.34, 0.48, 0.6, 0.7, 0.78, 0.845, 0.893, 0.93, 0.955, 0.972, 0.984, 0.991, 0.996, 1);
-  --spring-default-ms: 340ms;
+  --spring-default-ms: 520ms;
   --spring-bouncy: linear(0, 0.031, 0.109, 0.217, 0.341, 0.468, 0.59, 0.702, 0.8, 0.883, 0.949, 0.999, 1.035, 1.06, 1.074, 1.079, 1.079, 1.074, 1.066, 1.057, 1.047, 1.037, 1.027, 1.019, 1.012, 1.006, 1.002, 0.998, 1);
-  --spring-bouncy-ms: 520ms;
+  --spring-bouncy-ms: 680ms;
   --spring-jelly: linear(0, 0.116, 0.39, 0.714, 1.003, 1.203, 1.298, 1.3, 1.235, 1.139, 1.041, 0.964, 0.918, 0.904, 0.916, 0.942, 0.973, 1, 1.019, 1.029, 1.029, 1.022, 1.013, 1.004, 0.997, 0.992, 0.991, 0.992, 0.994, 0.997, 1, 1.002, 1.003, 1.003, 1.002, 1.001, 1, 1, 0.999, 0.999, 1);
   --spring-jelly-ms: 1290ms;
-  --ease-out: cubic-bezier(.23, 1, .32, 1);
-  --ease-out-quint: cubic-bezier(.22, 1, .36, 1);
-  --press-ms: 160ms;
-  --reveal-ms: 280ms;
 
   /* Layout */
   --sidebar-width: 232px;
@@ -207,7 +215,8 @@
 
 /* ---------- Base ---------- */
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; background: var(--bg-base); }
+/* A stable scrollbar gutter: the page never shifts sideways when it starts or stops scrolling (launch hand-off, sheets). */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; background: var(--bg-base); scrollbar-gutter: stable; }
 body {
   margin: 0; min-height: 100dvh; background: var(--bg-base); color: var(--text-primary);
   font-family: var(--font-body); font-size: var(--text-15); line-height: 1.55;
@@ -245,7 +254,7 @@ small, .caption { font-size: var(--text-13); line-height: 1.45; color: var(--tex
 input, textarea, select {
   width: 100%; min-height: var(--touch); border: 1px solid var(--surface-glass-hairline); border-radius: var(--radius-input);
   padding: 11px 16px; background: var(--surface-sunken); color: var(--text-primary);
-  transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
+  transition: border-color var(--hover-ms) var(--ease-out), background-color var(--hover-ms) var(--ease-out), box-shadow var(--hover-ms) var(--ease-out);
 }
 input:hover, textarea:hover, select:hover { border-color: var(--surface-sunken-2); }
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent-violet); background: var(--surface-solid); box-shadow: 0 0 0 4px var(--accent-violet-soft); }
@@ -277,7 +286,7 @@ legend { padding: 0; font-weight: 700; }
   box-shadow: inset 0 0 0 1px var(--hairline), var(--e1);
 }
 .surface.flat { box-shadow: inset 0 0 0 1px var(--hairline); }
-.surface.interactive, button.surface, a.surface { transition: background-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out); }
+.surface.interactive, button.surface, a.surface { transition: background-color var(--hover-ms) var(--ease-out), box-shadow var(--hover-ms) var(--ease-out); }
 @media (hover: hover) and (pointer: fine) {
   .surface.interactive:hover:not(:disabled), button.surface:hover:not(:disabled), a.surface:hover { background: var(--surface-hover); }
 }
@@ -321,10 +330,11 @@ legend { padding: 0; font-weight: 700; }
   min-height: var(--touch); padding: 0 20px; border-radius: var(--radius-pill); border: 0;
   font-weight: 650; font-size: var(--text-15); line-height: 1.2; white-space: nowrap; text-align: center;
   transform: scale(var(--press));
-  transition: transform var(--press-ms) var(--ease-out), background-color 180ms var(--ease-out), box-shadow 220ms var(--ease-out), color 180ms var(--ease-out), opacity 180ms var(--ease-out);
+  transition: transform var(--press-ms) var(--ease-out), background-color var(--hover-ms) var(--ease-out), box-shadow var(--hover-ms) var(--ease-out),
+    color var(--hover-ms) var(--ease-out), opacity var(--hover-ms) var(--ease-out), filter var(--hover-ms) var(--ease-out);
   user-select: none; -webkit-user-select: none;
 }
-.button:active:not(:disabled) { --press: .97; transition-duration: 90ms; }
+.button:active:not(:disabled) { --press: .97; transition-duration: var(--pressed-ms); }
 .button svg { flex-shrink: 0; }
 .button.primary { background: var(--cta-bg); color: var(--cta-fg); box-shadow: var(--cta-glow); }
 .button.primary:hover:not(:disabled) { filter: brightness(1.08); }
@@ -345,7 +355,7 @@ legend { padding: 0; font-weight: 700; }
 .text-button {
   display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 4px;
   color: var(--accent-violet-ink); font-weight: 650; font-size: var(--text-15); border-radius: 10px;
-  transition: color 160ms var(--ease-out), opacity 160ms var(--ease-out);
+  transition: color var(--hover-ms) var(--ease-out), opacity var(--hover-ms) var(--ease-out);
 }
 .text-button:hover:not(:disabled) { color: var(--text-primary); }
 .text-button.muted { color: var(--text-secondary); }
@@ -356,10 +366,10 @@ legend { padding: 0; font-weight: 700; }
   display: inline-grid; place-items: center; flex-shrink: 0; width: var(--touch); height: var(--touch); border-radius: 50%;
   color: var(--text-primary); background: var(--surface-glass-strong);
   box-shadow: inset 0 1px 0 var(--surface-glass-highlight), inset 0 0 0 1px var(--surface-glass-hairline);
-  transform: scale(var(--press)); transition: transform var(--press-ms) var(--ease-out), background-color 160ms var(--ease-out);
+  transform: scale(var(--press)); transition: transform var(--press-ms) var(--ease-out), background-color var(--hover-ms) var(--ease-out), color var(--hover-ms) var(--ease-out);
 }
 .icon-button:hover:not(:disabled) { background: var(--surface-solid); }
-.icon-button:active:not(:disabled) { --press: .94; transition-duration: 90ms; }
+.icon-button:active:not(:disabled) { --press: .94; transition-duration: var(--pressed-ms); }
 .icon-button.plain { background: transparent; box-shadow: none; }
 .icon-button:disabled { opacity: .45; }
 .disabled-reason { display: flex; align-items: flex-start; gap: 6px; font-size: var(--text-13); color: var(--text-secondary); }
@@ -399,12 +409,12 @@ legend { padding: 0; font-weight: 700; }
 .spacer { flex: 1; }
 .divider { height: 1px; background: var(--surface-glass-hairline); border: 0; margin: 0; }
 
-/* Progress bar with spring fill and a one-shot shimmer */
+/* Progress bar: the fill glides to its value (transform only) */
 .progress-track { position: relative; height: 10px; border-radius: var(--radius-pill); background: var(--surface-sunken-2); overflow: hidden; }
 .progress-track > span {
   position: absolute; inset: 0; transform-origin: left center; transform: scaleX(var(--value, 0)); border-radius: inherit;
   background: var(--accent-violet);
-  transition: transform 600ms var(--ease-out-quint);
+  transition: transform var(--fill-ms) var(--ease-out);
 }
 .progress-track.lime > span { background: var(--accent-lime); }
 
@@ -427,7 +437,7 @@ legend { padding: 0; font-weight: 700; }
 .segmented > button {
   position: relative; z-index: 1; min-height: 36px; padding: 0 16px; border-radius: var(--radius-pill);
   font-size: var(--text-13); font-weight: 650; color: var(--text-secondary); white-space: nowrap;
-  transition: color 180ms var(--ease-out);
+  transition: color var(--hover-ms) var(--ease-out);
 }
 .segmented > button[aria-checked='true'], .segmented > button[aria-selected='true'] { color: var(--text-primary); }
 .segmented > button:disabled { opacity: .45; }
@@ -447,6 +457,11 @@ legend { padding: 0; font-weight: 700; }
 .screen:focus { outline: none; }
 .screen-header { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
 .screen-header .lede { color: var(--text-secondary); margin-top: 6px; font-size: var(--text-15); }
+/* The screen's one companion sits at the right end of its header (MOTION-PASS-0.5.2 §3); title and lede keep the room. */
+.screen-header.with-mascot { flex-wrap: nowrap; align-items: center; }
+.screen-header.with-mascot > :first-child { flex: 1 1 auto; min-width: 0; }
+.screen-mascot { width: 96px; height: 96px; flex-shrink: 0; margin: -12px -4px -12px 0; }
+@media (max-width: 640px) { .screen-mascot { width: 72px; height: 72px; margin: -8px -2px -8px 0; } }
 
 /* Sidebar (≥ 1100 px), icon rail (720–1099 px): floating glass navigation */
 .sidebar {
@@ -455,24 +470,27 @@ legend { padding: 0; font-weight: 700; }
   display: flex; flex-direction: column; gap: var(--space-2); padding: 18px 12px 14px;
   border-radius: var(--radius-sheet);
 }
-.brand {
-  display: flex; align-items: center; gap: 10px; padding: 4px 10px 14px; border-radius: 16px; text-align: left;
-  font-family: var(--font-display); font-size: 21px; font-weight: 850; letter-spacing: -.4px; line-height: 1;
+/* Brand: the live companion is the logo (calm, pointer play); the name beside it goes home. */
+.brand { display: flex; align-items: center; gap: 4px; min-height: 52px; padding: 0 4px 12px 2px; }
+.brand-mark { width: 44px; height: 44px; flex-shrink: 0; margin: -4px 0 -6px; }
+.brand-copy {
+  min-width: 0; padding: 6px 8px; border-radius: 12px; text-align: left;
+  font-family: var(--font-display); font-size: 21px; font-weight: 850; letter-spacing: -.4px; line-height: 1; color: var(--text-primary);
+  transition: background-color var(--hover-ms) var(--ease-out);
 }
-.brand-mark { width: 34px; height: 34px; border-radius: 12px; display: grid; place-items: center; flex-shrink: 0; background: var(--text-primary); color: var(--accent-lime); font-size: 17px; }
-.brand-copy { min-width: 0; }
+@media (hover: hover) and (pointer: fine) { .brand-copy:hover { background: var(--surface-sunken); } }
 .brand small { display: block; margin-top: 4px; font-family: var(--font-body); font-size: 12px; font-weight: 600; letter-spacing: 0; color: var(--text-tertiary); }
 .nav-list { position: relative; display: grid; gap: 4px; isolation: isolate; }
 .nav-lens {
   position: absolute; top: 0; left: 0; right: 0; z-index: -1; height: 46px; border-radius: 16px; pointer-events: none;
   background: var(--surface-solid); box-shadow: var(--e1), inset 0 1px 0 var(--surface-glass-highlight);
   transform: translateY(var(--lens-y, 0)); opacity: var(--lens-o, 0);
-  transition: transform var(--spring-default-ms) var(--spring-default), opacity 160ms var(--ease-out);
+  transition: transform var(--spring-default-ms) var(--spring-default), opacity var(--hover-ms) var(--ease-out);
 }
 .nav-item {
   position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 46px; padding: 0 12px;
   border-radius: 16px; color: var(--text-secondary); font-weight: 650; font-size: var(--text-15); text-align: left;
-  transition: color 160ms var(--ease-out), background-color 160ms var(--ease-out);
+  transition: color var(--hover-ms) var(--ease-out), background-color var(--hover-ms) var(--ease-out);
 }
 .nav-item:hover { color: var(--text-primary); }
 .nav-item[aria-current='page'] { color: var(--text-primary); }
@@ -488,7 +506,7 @@ legend { padding: 0; font-weight: 700; }
 .nav-session .pulse { width: 10px; height: 10px; border-radius: 50%; background: var(--accent-violet); box-shadow: 0 0 0 0 var(--accent-violet-soft); animation: pulse 2s infinite; flex-shrink: 0; }
 @keyframes pulse { 70% { box-shadow: 0 0 0 8px transparent; } }
 .sidebar-footer { margin-top: auto; display: grid; gap: 6px; }
-.sidebar-rank { display: grid; gap: 8px; padding: 12px; border-radius: 18px; background: var(--surface-sunken); text-align: left; transition: background-color 180ms var(--ease-out); }
+.sidebar-rank { display: grid; gap: 8px; padding: 12px; border-radius: 18px; background: var(--surface-sunken); text-align: left; transition: background-color var(--hover-ms) var(--ease-out); }
 .sidebar-rank:hover { background: var(--surface-sunken-2); }
 .sidebar-rank .row { gap: 10px; min-width: 0; }
 .sidebar-rank-copy { min-width: 0; display: grid; }
@@ -507,7 +525,7 @@ legend { padding: 0; font-weight: 700; }
 .tab-bar button {
   position: relative; z-index: 1; display: grid; justify-items: center; gap: 2px; min-height: 52px; padding: 6px 2px; border-radius: 22px;
   color: var(--text-secondary); font-size: 11.5px; font-weight: 700;
-  transition: color 160ms var(--ease-out);
+  transition: color var(--hover-ms) var(--ease-out);
 }
 .tab-bar button[aria-current='page'] { color: var(--text-primary); }
 .tab-bar button[aria-current='page'] svg { color: var(--accent-violet); }
@@ -525,10 +543,16 @@ legend { padding: 0; font-weight: 700; }
 }
 .session-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Page loading (SSR placeholder: no nav, no flash of the full app in the quick window) */
+/* The launch layer covers the page (components/startup-welcome.tsx): no scrollbar from the shell mounting beneath. */
+:root[data-launch='covering'] { overflow: hidden; }
+/* Centred full-page state (sign-in). The cold open itself is the launch layer. */
 .boot { position: relative; z-index: 1; min-height: 100dvh; display: grid; place-items: center; }
-.boot-dot { width: 74px; height: 74px; border-radius: 40%; background: radial-gradient(circle at 35% 30%, #ffffffcc, transparent 45%), linear-gradient(140deg, var(--accent-cyan), var(--accent-violet)); opacity: .9; animation: boot-breathe 2.4s ease-in-out infinite; }
-@keyframes boot-breathe { 50% { transform: scale(1.06, .95); } }
+/* «Готовлю занятие»: floating glass that arrives like a toast (no filter on glass). */
+.prep-panel {
+  position: fixed; z-index: 40; right: 20px; bottom: calc(20px + env(safe-area-inset-bottom)); max-width: calc(100vw - 40px);
+  display: flex; align-items: center; gap: 12px; padding: 10px 18px 10px 10px; border-radius: 26px;
+  animation: toast-in var(--toast-in-ms) var(--ease-out) both;
+}
 .skeleton { border-radius: var(--radius-card); background: linear-gradient(100deg, var(--surface-sunken) 30%, var(--surface-sunken-2) 50%, var(--surface-sunken) 70%); background-size: 300% 100%; animation: skeleton 1.6s linear infinite; }
 @keyframes skeleton { to { background-position: -150% 0; } }
 
@@ -541,13 +565,16 @@ legend { padding: 0; font-weight: 700; }
 .toast {
   pointer-events: auto; display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 16px; border-radius: 22px;
   font-size: var(--text-15); font-weight: 550;
-  animation: toast-in 260ms var(--ease-out-quint) both;
+  animation: toast-in var(--toast-in-ms) var(--ease-out) both;
 }
+/* Leaving (timed out, closed or acted on): a short sink, never a snap. Glass gets no filter. */
+.toast[data-leaving='true'] { pointer-events: none; animation: toast-out var(--toast-out-ms) var(--ease-exit) both; }
 .toast > svg { flex-shrink: 0; }
 .toast > span { flex: 1; min-width: 0; }
 .toast[data-tone='error'] > svg { color: var(--status-error); }
 .toast[data-tone='success'] > svg { color: var(--accent-lime-ink); }
-@keyframes toast-in { from { opacity: 0; transform: translateY(12px); } }
+@keyframes toast-in { from { opacity: 0; transform: translate3d(0, 18px, 0) scale(.97); } }
+@keyframes toast-out { to { opacity: 0; transform: translate3d(0, 10px, 0) scale(.98); } }
 
 /* Banners inside a screen (errors near the failing control) */
 .banner { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: 20px; font-size: var(--text-15); }
@@ -565,35 +592,78 @@ dialog.sheet {
   border-radius: var(--radius-sheet); background: var(--surface-glass-strong); overflow: hidden;
   -webkit-backdrop-filter: blur(40px) saturate(170%); backdrop-filter: blur(40px) saturate(170%);
   box-shadow: inset 0 1px 0 var(--surface-glass-highlight), inset 0 0 0 1px var(--surface-glass-hairline), var(--e3);
+  /* Opens with a long soft rise (560 ms), closes faster (300 ms): `overlay`/`display` keep the closed dialog in the top
+     layer until its exit ends, so the page is usable again at once (components/ui/sheet.tsx keeps the content). */
+  transition-property: opacity, transform, overlay, display;
+  transition-duration: var(--sheet-out-ms);
+  transition-timing-function: var(--ease-exit);
+  transition-behavior: allow-discrete;
 }
-dialog.sheet[open] { animation: sheet-in 300ms var(--ease-out-quint) both; }
-dialog.sheet::backdrop { background: var(--surface-scrim); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); animation: fade-in 220ms var(--ease-out) both; }
+dialog.sheet[open] { transition-duration: var(--sheet-in-ms); transition-timing-function: var(--ease-out); }
+dialog.sheet:not([open]) { opacity: 0; transform: translate3d(0, 14px, 0) scale(.985); pointer-events: none; }
+@starting-style { dialog.sheet[open] { opacity: 0; transform: translate3d(0, 28px, 0) scale(.98); } }
+dialog.sheet::backdrop {
+  background: var(--surface-scrim); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  transition-property: opacity, overlay, display;
+  transition-duration: var(--sheet-out-ms);
+  transition-timing-function: var(--ease-exit);
+  transition-behavior: allow-discrete;
+}
+dialog.sheet[open]::backdrop { transition-duration: var(--backdrop-ms); transition-timing-function: var(--ease-out); }
+dialog.sheet:not([open])::backdrop { opacity: 0; }
+@starting-style { dialog.sheet[open]::backdrop { opacity: 0; } }
 .sheet-body { display: grid; gap: var(--space-4); padding: 28px 26px 24px; max-height: inherit; overflow: auto; overscroll-behavior: contain; }
 .sheet-actions { display: grid; gap: 10px; margin-top: 4px; }
 .sheet-close { position: absolute; top: 14px; right: 14px; }
-@keyframes sheet-in { from { opacity: 0; transform: translateY(20px); } }
 @keyframes fade-in { from { opacity: 0; } }
 @media (max-width: 640px) {
   dialog.sheet { width: 100vw; max-width: 100vw; margin: auto 0 0; border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; padding-bottom: env(safe-area-inset-bottom); }
 }
 
-/* Reveal + stagger (cards, lists) */
-.reveal { animation: reveal var(--reveal-ms) var(--ease-out) both; animation-delay: calc(min(var(--i, 0), 5) * 30ms); }
-@keyframes reveal { from { opacity: 0; transform: translateY(6px); } }
+/* Reveal + light stagger for content that arrives later (rows of a list, capped at 6 steps). Never on a [data-enter]
+   block: when the staircase ends, its animation would hand over to this one and play twice. */
+.reveal { animation: reveal var(--reveal-ms) var(--ease-out) both; animation-delay: calc(min(var(--i, 0), 6) * var(--reveal-step)); }
+@keyframes reveal { from { opacity: 0; transform: translate3d(0, var(--reveal-rise), 0); filter: blur(var(--reveal-blur)); } }
+
+/* Staircase entrance (MOTION-PASS-0.5.2 §2). Blocks marked [data-enter] rise in screen order while their root carries
+   [data-entering] (set by components/ui/entrance.ts, removed when done, so hover/press transitions stay untouched).
+   Content is visible by default: without JS nothing waits. 'launch' = cold open, 'screen' = tab switch. */
+[data-entering] [data-enter] {
+  animation: enter var(--enter-ms) var(--ease-out) both;
+  animation-delay: calc(var(--enter-base) + min(var(--enter-i, 0), var(--enter-max)) * var(--enter-step));
+}
+[data-entering='launch'] { --enter-ms: 900ms; --enter-step: 85ms; --enter-base: 60ms; --enter-max: 9; --enter-rise: 20px; --enter-blur: 8px; }
+[data-entering='screen'] { --enter-ms: 620ms; --enter-step: 48ms; --enter-base: 0ms; --enter-max: 7; --enter-rise: 12px; --enter-blur: 5px; }
+/* Glass chrome never gets a filter (it would cut its backdrop): it slides in from its own edge. A container whose
+   own items carry the wave (`fade`) only fades in, so its children do not travel twice. */
+[data-entering] [data-enter='chrome'] { animation-name: enter-chrome; }
+[data-entering] [data-enter='side'] { animation-name: enter-side; }
+[data-entering] [data-enter='fade'] { animation-name: enter-fade; }
+@keyframes enter { from { opacity: 0; transform: translate3d(0, var(--enter-rise), 0) scale(.985); filter: blur(var(--enter-blur)); } }
+@keyframes enter-chrome { from { opacity: 0; transform: translate3d(0, calc(var(--enter-rise) * 1.6), 0); } }
+@keyframes enter-side { from { opacity: 0; transform: translate3d(calc(var(--enter-rise) * -1), 0, 0); } }
+@keyframes enter-fade { from { opacity: 0; } }
 
 /* Interactive cards lift on hover (pointer devices only) */
 @media (hover: hover) and (pointer: fine) {
-  .lift { transition: transform var(--spring-default-ms) var(--spring-default), box-shadow 240ms var(--ease-out); }
+  .lift { transition: transform var(--spring-default-ms) var(--spring-default), box-shadow var(--hover-ms) var(--ease-out); }
   .lift:hover { transform: translateY(-2px); }
 }
-.press { --press: 1; transform: scale(var(--press)); transition: transform var(--press-ms) var(--ease-out), background-color 180ms var(--ease-out); }
-.press:active:not(:disabled) { --press: .98; transition-duration: 90ms; }
+.press { --press: 1; transform: scale(var(--press)); transition: transform var(--press-ms) var(--ease-out), background-color var(--hover-ms) var(--ease-out); }
+.press:active:not(:disabled) { --press: .98; transition-duration: var(--pressed-ms); }
 
-/* View transitions between tabs: cross-fade + 12 px slide */
-::view-transition-old(screen) { animation: vt-out 120ms var(--ease-out) both; }
-::view-transition-new(screen) { animation: vt-in 240ms var(--ease-out-quint) both; }
+/* View transitions only where continuity matters (MOTION-PASS-0.5.2 §2): a lesson or the level test opening and
+   closing; tab switches use the staircase. 'screen': the content column cross-fades (the lesson's own blocks stair in
+   inside it) while the chrome around it swaps at once. 'layer': the whole page cross-fades under a full-screen layer. */
+::view-transition-group(screen) { animation-duration: var(--vt-in-ms); animation-timing-function: var(--ease-out); }
+::view-transition-old(screen) { mix-blend-mode: normal; animation: vt-out var(--vt-out-ms) var(--ease-exit) both; }
+::view-transition-new(screen) { mix-blend-mode: normal; animation: vt-in var(--vt-in-ms) var(--ease-out) both; }
+:root[data-transition='screen']::view-transition-old(root) { display: none; }
+:root[data-transition='screen']::view-transition-new(root) { animation: none; }
+:root[data-transition='layer']::view-transition-old(root) { mix-blend-mode: normal; animation: vt-out var(--vt-out-ms) var(--ease-exit) both; }
+:root[data-transition='layer']::view-transition-new(root) { mix-blend-mode: normal; animation: vt-in var(--vt-in-ms) var(--ease-out) both; }
 @keyframes vt-out { to { opacity: 0; } }
-@keyframes vt-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes vt-in { from { opacity: 0; } }
 
 /* ---------- Legacy shared names still used by panels (settings sections, limits, timing) ---------- */
 .settings-section { display: grid; gap: var(--space-3); }
@@ -603,7 +673,7 @@ dialog.sheet::backdrop { background: var(--surface-scrim); -webkit-backdrop-filt
 /* ---------- Responsive ---------- */
 @media (max-width: 1099px) and (min-width: 720px) {
   .sidebar { width: var(--rail-width); padding: 14px 8px 12px; gap: 6px; }
-  .brand { justify-content: center; padding: 4px 0 12px; }
+  .brand { justify-content: center; padding: 0 0 10px; }
   .brand-copy, .sidebar-rank-copy, .engine-status span { display: none; }
   .nav-item { flex-direction: column; justify-content: center; gap: 3px; min-height: 60px; padding: 6px 2px; font-size: 11.5px; text-align: center; }
   .nav-item > span:not(.badge) { white-space: normal; line-height: 1.15; overflow-wrap: anywhere; }
@@ -637,8 +707,14 @@ dialog.sheet::backdrop { background: var(--surface-scrim); -webkit-backdrop-filt
 /* ---------- Motion preferences ---------- */
 @media (prefers-reduced-motion: reduce) {
   .ambient i { animation: none; }
-  .reveal, .toast, dialog.sheet[open], dialog.sheet::backdrop { animation: none; }
-  .nav-session .pulse, .boot-dot, .skeleton { animation: none; }
+  /* Fewer, gentler: entrances become one short cross-fade — no travel, no blur, no stagger. */
+  .reveal, .toast, .prep-panel { animation: enter-fade 200ms ease-out both; animation-delay: 0ms; }
+  .toast[data-leaving='true'] { animation: none; opacity: 0; }
+  [data-entering] [data-enter] { animation: enter-fade 240ms ease-out both; animation-delay: 0ms; }
+  dialog.sheet, dialog.sheet[open], dialog.sheet::backdrop, dialog.sheet[open]::backdrop { transition-duration: 200ms; transition-timing-function: ease-out; }
+  dialog.sheet:not([open]) { transform: none; }
+  @starting-style { dialog.sheet[open] { transform: none; } }
+  .nav-session .pulse, .skeleton { animation: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
   .button, .icon-button, .press, .lift, .segmented > .lens, .nav-lens, .tab-bar .tab-lens { transition-duration: 1ms !important; }
 }
