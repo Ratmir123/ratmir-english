@@ -163,6 +163,8 @@ struct TrainingState: Decodable {
     let profileFacts: [ProfileFact]?
     /// 0.5.3 «Мои фразы» (PhrasesModels.swift): newest first, archived included. Absent or unreadable → nil.
     let phrases: [SavedPhrase]?
+    /// 0.5.5 «Подготовка к созвону» (PrepModels.swift): the latest preps, newest first, up to 10. Absent or unreadable → nil.
+    let preps: [CallPrep]?
     // The shell's own small views of the same JSON, used for the Today decision order.
     let placementSignal: TodayPlacementSignal?
     let callSignals: [TodayCallSignal]
@@ -173,6 +175,7 @@ struct TrainingState: Decodable {
         case profile, sessions, skills, xp, completed, audioUsage, progression, app
         case placement, calls, patterns, drills, profileFacts
         case phrases
+        case preps
     }
 
     init(from decoder: Decoder) throws {
@@ -193,6 +196,7 @@ struct TrainingState: Decodable {
         drills = ((try? c.decodeIfPresent(TolerantList<PersonalDrill>.self, forKey: .drills)) ?? nil)?.values
         profileFacts = ((try? c.decodeIfPresent(TolerantList<ProfileFact>.self, forKey: .profileFacts)) ?? nil)?.values
         phrases = ((try? c.decodeIfPresent(TolerantList<SavedPhrase>.self, forKey: .phrases)) ?? nil)?.values
+        preps = ((try? c.decodeIfPresent(TolerantList<CallPrep>.self, forKey: .preps)) ?? nil)?.values
         placementSignal = (try? c.decodeIfPresent(TodayPlacementSignal.self, forKey: .placement)) ?? nil
         callSignals = ((try? c.decodeIfPresent(TolerantList<TodayCallSignal>.self, forKey: .calls)) ?? nil)?.values ?? []
         drillSignals = ((try? c.decodeIfPresent(TolerantList<TodayDrillSignal>.self, forKey: .drills)) ?? nil)?.values ?? []
@@ -416,11 +420,14 @@ struct Lesson: Decodable {
     let phraseIds: [String]
     /// The plan's language focus; a phrase round keeps its Russian cues here («Вспомни: …»).
     let languageFocus: String
+    /// 0.5.5: the call prep this session rehearses (family `call-prep`, PASS-0.5.5 §2); nil for every other lesson.
+    let prepId: String?
 
     private enum CodingKeys: String, CodingKey {
         case title, goal, why, minutes, context, track, activity, kind, familyId, format, drillId, targetSkills, material
         case seed, persona, speechLevel, pressureTier, situationalNorms, patternIds, moves, mustInclude, mustAvoid
         case phraseIds, languageFocus
+        case prepId
     }
 }
 
@@ -451,6 +458,8 @@ extension Lesson {
         mustAvoid = Lesson.strings(c, .mustAvoid)
         phraseIds = Lesson.strings(c, .phraseIds)
         languageFocus = ((try? c.decodeIfPresent(String.self, forKey: .languageFocus)) ?? nil) ?? ""
+        let prep = ((try? c.decodeIfPresent(String.self, forKey: .prepId)) ?? nil)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        prepId = prep.isEmpty ? nil : prep
     }
 
     private static func strings(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> [String] {

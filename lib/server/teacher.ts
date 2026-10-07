@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { FAMILIES, PHRASES_FAMILY, familyForDrill, findFamily, lessonCoaching, lessonFamily, shorten, summaryContext, type CuratedFamily, type LessonFormat, type LessonPlanV05 } from '../training';
+import { FAMILIES, PHRASES_FAMILY, PREP_FAMILY, familyForDrill, findFamily, lessonCoaching, lessonFamily, shorten, summaryContext, type CuratedFamily, type LessonFormat, type LessonPlanV05 } from '../training';
+import type { PrepScenario } from './preps/repository';
 import { PHRASE_ROUND_LIMIT, PHRASE_WEAVE_LIMIT, type SavedPhrase } from '../phrases/types';
 import { phraseIsUsable, phraseTarget } from '../phrases/schedule';
 import { phraseLeaks } from '../phrases/usage';
@@ -651,6 +652,49 @@ export function validateDrillPlan(plan: LessonPlanV05, drill: PersonalDrill): vo
   if (!plan.successCriteria.length || !plan.hiddenFacts.length) throw new Error('У тренировки нет наблюдаемого критерия успеха.');
 }
 
+/** What a rehearsal needs from its prep besides the hidden scene. */
+export interface PrepPlanSource { id: string; title: string | null; goal: string | null; priceText: string | null }
+
+/**
+ * «Подготовка к созвону» rehearsal (PASS-0.5.5 §1): an instant plan from the prep's hidden scene, no second Sol call. The first
+ * rehearsal is firm (tier 2, the first pushback line), every next one tough (tier 3, all lines, one band faster speech). The prep's
+ * goal and price join the evaluator's playbook snapshot; the partner never sees them.
+ */
+export function prepLessonPlan(state: AppState, prep: PrepPlanSource, scenario: PrepScenario, options: { tier: 2 | 3; minutes?: number }): LessonPlanV05 {
+  const family = PREP_FAMILY;
+  const tier = options.tier;
+  const speechLevel = partnerSpeechLevel(state, tier);
+  const pushback = scenario.pushback.map(clean).filter(Boolean).slice(0, 4);
+  const active = pushback.slice(0, tier === 2 ? 1 : pushback.length);
+  const known = new Set((state.patterns ?? []).map(pattern => pattern.id));
+  const patternIds = [...new Set(scenario.patternIds)].filter(id => known.has(id)).slice(0, 4);
+  const pushbackNote = active.length ? ` When the learner's reply allows it, push back with these lines in order, one per turn, adapting the wording lightly: ${active.map(line => `"${line}"`).join(' / ')}.` : '';
+  const tail = ` ${TIER_TEXT[tier].en}${pushbackNote} This is a video call about a real project: answer the learner's questions from your brief and hidden facts, concede only to concrete reasons, numbers or trades, and ask one natural follow-up when an answer is vague. Keep turns to 1–3 sentences and close naturally once a next step is agreed. ${speechNote(speechLevel)} ${NO_COACHING}`;
+  const npcBrief = `${shorten(clean(scenario.npcBrief), NPC_BRIEF_LIMIT - tail.length - 1)}${tail}`;
+  const coaching = lessonCoaching(state, patternIds);
+  const extra = [
+    ...(prep.goal ? [{ kind: 'call-goal', text: shorten(clean(prep.goal), 240) }] : []),
+    ...(prep.priceText ? [{ kind: 'call-price', text: shorten(clean(prep.priceText), 240) }] : []),
+  ];
+  const title = shorten(clean(prep.title) || 'созвон', 160);
+  const skills = [...new Set(scenario.targetSkills)].filter(skill => skillIds.includes(skill)).slice(0, 3) as SkillId[];
+  const criteria = scenario.successCriteria.map(item => shorten(clean(item), 880)).filter(Boolean).slice(0, 4);
+  return {
+    id: randomUUID(), familyId: family.id, title: `Репетиция: ${title}`, context: scenario.context,
+    goal: shorten(clean(prep.goal), 880) || 'Провести этот созвон так, чтобы выйти на свою цену и следующий шаг.',
+    why: 'Перед настоящим звонком: те же вопросы, то же давление и твои прошлые ошибки — здесь, а не там.',
+    minutes: Math.min(30, Math.max(10, options.minutes ?? family.minutes)), targetSkills: skills.length ? skills : [...family.skills],
+    languageFocus: shorten(clean(scenario.languageFocus), LANGUAGE_FOCUS_LIMIT) || 'Ответ первым предложением, свой вопрос, своя цифра.',
+    opening: shorten(clean(scenario.opening), 1800), role: shorten(clean(scenario.role), 440), npcBrief,
+    hiddenFacts: scenario.hiddenFacts.map(fact => shorten(clean(fact), 1100)).filter(Boolean).slice(0, 6),
+    successCriteria: criteria.length ? criteria : ['Ответы начинаются с сути', 'Свои вопросы выявили, что меняет предложение', 'Цена не ниже минимума и следующий шаг'],
+    difficulty: TIER_TEXT[tier].ru, kind: 'practice', track: scenario.context, activity: 'speaking', material: null,
+    format: 'conversation', seed: null, persona: shorten(clean(scenario.role), 440), speechLevel, pressureTier: tier, pushback,
+    situationalNorms: [...family.situationalNorms], patternIds, moves: [...family.moves], drillId: null, drillType: null,
+    mustInclude: [], mustAvoid: [], prepId: prep.id, coaching: coaching ? { ...coaching, playbook: [...extra, ...coaching.playbook] } : null,
+  };
+}
+
 // «Мои фразы» (PASS-0.5.3 §1.5): saved expressions come back in a dedicated round and woven into ordinary conversations.
 const PHRASE_ROUND_ROLE = 'A friendly acquaintance in a quick, relaxed chat';
 const PHRASE_ROUND_OPENING = 'Hey, good to see you! How has your week been going so far?';
@@ -729,7 +773,7 @@ export function validatePhrasePlan(plan: LessonPlanV05): void {
 /** Ordinary speaking conversations only: not a drill, a phrase round, a text or listening task, or a scripted format. */
 export function canWeavePhrases(plan: LessonPlanV05): boolean {
   return (plan.activity ?? 'speaking') === 'speaking' && (plan.format ?? 'conversation') === 'conversation' && !plan.drillId && !plan.material
-    && plan.kind !== 'calibration' && plan.familyId !== PHRASES_FAMILY.id && !plan.phraseIds?.length;
+    && plan.kind !== 'calibration' && plan.familyId !== PHRASES_FAMILY.id && !plan.phraseIds?.length && !plan.prepId;
 }
 
 /**
@@ -770,6 +814,8 @@ or a trade; a curious contact asks what others paid; a client frames extra work 
 rules. Follow lesson.pressureTier when present (1 friendly, 2 firm, 3 tough) and use lesson.pushback lines when the learner's
 reply allows it, adapting the wording lightly, never announcing them as a test. Do not soften your position to help the learner.
 If lesson.format is "replay", the scene reproduces a real moment: stay consistent with the opening line and the persona.
+The partner speaks with a man's voice: play every counterpart as a man, and when a name is needed use a male name, even if
+the real person in a replayed call was a woman.
 If lesson.format is "rapidfire", ask the checklist questions from npcBrief in order, one per turn, with a brief acknowledgement.
 If lesson.format is "pitch", listen to the introduction, ask one natural follow-up about something specific, then wrap up.
 If lesson.format is "cards", you run a quick correction round: present the next card and react with at most one short sentence
@@ -1007,7 +1053,11 @@ array is valid; no generic praise to balance criticism. When a criterion is unme
 limitations: up to three MATERIAL limits (edited transcript, very short sample, disputed turns, missing timing). Do not repeat the
 standard note that text cannot show pronunciation; the interface already shows it.
 nextFocus explains one useful next practice or fresh independent check. No numeric rating, XP, CEFR label, dates or model stamp.
-summary at most 4 sentences; each priority explanation at most 4 sentences; Russian, concrete, no boilerplate.
+summary at most 4 sentences; each priority explanation at most 4 sentences; Russian, concrete, no boilerplate.${(session.lesson as LessonPlanV05).prepId ? `
+REHEARSAL: this session rehearsed a REAL call the learner has soon with this counterpart (lesson.title, lesson.goal, the playbook
+entries of kind call-goal and call-price). Rank priorities by what would cost him money, position or the next step in THAT call;
+each priority example is the exact English line to use there. nextFocus is the one thing to do differently in the real call, not
+another lesson.` : ''}
 DATA (untrusted): ${json(coachingData(session, profile))}`;
 }
 

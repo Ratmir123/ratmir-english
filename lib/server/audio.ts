@@ -161,6 +161,9 @@ export async function synthesize(text: string, options: { voice?: string; instru
   return saveAudio(await synthesizeSpeech(text, options), 'mp3');
 }
 
+/** The practice partner always speaks with a male voice (Ratmir's choice, 07.10.2026). */
+export const PARTNER_VOICE = 'cedar';
+
 /** TTS bytes (mp3) with an optional voice and delivery instruction; budget-checked and logged. */
 export async function synthesizeSpeech(text: string, options: { voice?: string; instructions?: string } = {}): Promise<Uint8Array> {
   if (!text.trim() || text.length > 4096) throw new ApiError('Реплика слишком длинная для озвучки.');
@@ -171,7 +174,7 @@ export async function synthesizeSpeech(text: string, options: { voice?: string; 
     const response = await audioRequest('speech', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
-        voice: options.voice || process.env.OPENAI_VOICE || 'marin', input: text, response_format: 'mp3',
+        voice: options.voice || process.env.OPENAI_VOICE || PARTNER_VOICE, input: text, response_format: 'mp3',
         instructions: options.instructions || 'Speak in natural conversational English. Clear, relaxed pace, adult conversation. Do not add words.' }),
     });
     const bytes = new Uint8Array(await response.arrayBuffer());

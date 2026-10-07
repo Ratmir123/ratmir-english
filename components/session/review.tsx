@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
-  ArrowRightIcon, ArrowsClockwiseIcon, CaretRightIcon, CheckCircleIcon, CheckIcon, CircleHalfIcon, CircleNotchIcon, PencilSimpleIcon,
+  ArrowRightIcon, ArrowsClockwiseIcon, CaretRightIcon, CheckCircleIcon, CheckIcon, CircleHalfIcon, CircleNotchIcon, PencilSimpleIcon, PhoneCallIcon,
   SpeakerHighIcon, SquareIcon, TargetIcon, WarningCircleIcon, XIcon,
 } from '@phosphor-icons/react';
 import type { Analysis, Session } from '@/lib/types';
+import type { LessonPlanV05 } from '@/lib/training';
+import { PREP_COPY } from '@/lib/preps/types';
 import { STRATEGY_MOVES } from '@/lib/strategy-moves';
 import { mediaUrl } from '@/lib/client/api';
 import { practiceResult } from '@/lib/progression';
@@ -232,12 +234,19 @@ export function ReviewView() {
   // MOTION-PASS-0.5.2 §8.5: confirm only when an unsent draft would be lost; otherwise finish / park at once.
   const requestComplete = (intent: 'complete' | 'defer') => { if (unsentDraft?.text.trim()) setFinishIntent(intent); else doComplete(intent === 'defer'); };
   const patternTitle = (id?: string | null) => id ? app.data.state?.patterns?.find(pattern => pattern.id === id)?.title : undefined;
+  // 0.5.5: a rehearsal of a call prep links back to the prep, where «Перед звонком помни» collects this review.
+  const prepId = (s.lesson as LessonPlanV05).prepId ?? null;
 
   return <div className={styles.reviewLayout}>
     <FinishDialog intent={finishIntent} textActivity={textActivity}
       onCancel={() => setFinishIntent(null)}
       onDiscardAndConfirm={() => { const intent = finishIntent; setFinishIntent(null); lesson.discardDraft(); doComplete(intent === 'defer'); }} />
     <div className={styles.reviewMain}>
+      {prepId && <div className={`surface flat ${styles.prepBanner}`} data-enter="" data-testid="review-prep">
+        <PhoneCallIcon size={20} aria-hidden="true" />
+        <span><strong>{PREP_COPY.rehearsalOf}</strong> · главное на звонок собрано в подготовке, сверху.</span>
+        <button type="button" className="button small secondary" onClick={() => app.go('calls', { prepId })}>{PREP_COPY.backToPrep}</button>
+      </div>}
       {s.status === 'completed' && <Outcome session={s} />}
       <section className={`surface ${styles.intro}`} data-enter="" aria-labelledby="review-title">
         {/* A completed lesson already has its outcome card with the mascot: no second headline or mascot (audit U-30). */}

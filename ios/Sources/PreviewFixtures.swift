@@ -20,6 +20,7 @@ struct PreviewAccessibility: ViewModifier {
     static let conversationScreens: Set<String> = ["conversation", "listening", "dictation-preview", "analysing", "analysis-error",
         "review", "review-retry", "pushback", "celebrate", "saved-deferred", "preview-timing", "ielts-reading", "ielts-writing",
         "phrase-review",
+        "prep-review",
         "hints"]
 
     static func tab(for screen: String) -> ShellTab? {
@@ -27,6 +28,7 @@ struct PreviewAccessibility: ViewModifier {
         case "practice-catalog", "practice-detail": return .practice
         case "phrases": return .practice
         case "calls", "call-review", "call-transcript", "call-speakers", "patterns", "facts": return .calls
+        case _ where PrepPreview.callsScreens.contains(screen): return .calls
         case "progress", "skills", "history", "achievements", "ranks", "ranks-bottom", "placement-result": return .progress
         case "profile", "settings", "reminder-editor", "reminder-denied", "profile-voice": return .profile
         default: return nil
@@ -40,7 +42,7 @@ struct PreviewAccessibility: ViewModifier {
         let state = stateFixture(screen, now: now, conversation: conversation)
         client.previewMode = true
         client.state = decode(state, as: TrainingState.self)
-        client.status = decode(["app": ["name": "Smooth Talk", "version": "0.5.4", "channel": "alpha"],
+        client.status = decode(["app": ["name": "Smooth Talk", "version": "0.5.5", "channel": "alpha"],
                                 "brain": ["model": "gpt-6.1-sol", "verified": true], "audio": ["configured": true]], as: ServerStatus.self)
         client.subscriptionUsage = decode(usageFixture(), as: SubscriptionUsage.self)
         client.catalog = decode(["catalog": catalogFixture()], as: FamiliesResponse.self)?.catalog ?? []
@@ -162,6 +164,7 @@ struct PreviewAccessibility: ViewModifier {
         if screen == "preview-timing" { addTiming(&value) }
         if screen == "ielts-reading" || screen == "ielts-writing" { makeTextActivity(&value, reading: screen == "ielts-reading") }
         if screen == "phrase-review" { PhrasesPreview.makeReview(&value) }
+        if screen == "prep-review" { PrepPreview.makeReview(&value) }
         return value
     }
 
@@ -237,7 +240,7 @@ struct PreviewAccessibility: ViewModifier {
             sessions.append(done)
         }
         var state: [String: Any] = [
-            "app": ["name": "Smooth Talk", "version": "0.5.4"],
+            "app": ["name": "Smooth Talk", "version": "0.5.5"],
             "profile": ["name": "Alex", "dailyMinutes": 15, "goals": "Уверенно вести созвоны с клиентами на английском.",
                         "interests": ["AI", "игры", "спорт"], "professionalContext": "CG-художник, работает с брендами.",
                         "relocation": "Переезд через месяц.", "feedback": "Прямо и по делу.", "audioRetentionDays": 30, "budgetUsd": 35],
@@ -254,6 +257,8 @@ struct PreviewAccessibility: ViewModifier {
                                                        level: screen == "rank-up" ? 3 : 2)
         state["placement"] = screen == "placement" ? placementNotStarted() : placementCompleted(now: now)
         state["phrases"] = PhrasesPreview.phrases()
+        // PASS-0.5.5 previews: «Подготовка к созвону» (PrepPreviewFixtures.swift).
+        if PrepPreview.screens.contains(screen) { state["preps"] = PrepPreview.preps() }
         mergeFeatureFields(into: &state, screen: screen)
         return state
     }

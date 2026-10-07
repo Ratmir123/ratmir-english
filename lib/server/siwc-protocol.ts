@@ -153,9 +153,14 @@ export function responseError(status: number, code?: unknown): SiwcError {
   if (status >= 500) return new SiwcError('network');
   return new SiwcError('protocol');
 }
-export function responsesBody(prompt: string, schema: ObjectValue | undefined, effort: SiwcEffort, instructions: string): ObjectValue {
+/** Screenshots travel as base64 data URLs (PASS-0.5.5 §2); at most this many characters in one request. */
+export const SIWC_IMAGE_CHARACTERS = 48 * 1024 * 1024;
+const IMAGE_URL = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/;
+export function responsesBody(prompt: string, schema: ObjectValue | undefined, effort: SiwcEffort, instructions: string, images: readonly string[] = []): ObjectValue {
   if (!prompt.trim() || prompt.length > 200_000 || instructions.length > 100_000 || !['low', 'medium', 'high'].includes(effort)) throw new SiwcError('protocol');
-  return { model: SIWC_MODEL, instructions, input: [{ role: 'user', content: prompt }], reasoning: { effort },
+  if (images.length > 12 || images.some(url => !IMAGE_URL.test(url)) || images.reduce((sum, url) => sum + url.length, 0) > SIWC_IMAGE_CHARACTERS) throw new SiwcError('protocol');
+  const content = images.length ? [{ type: 'input_text', text: prompt }, ...images.map(url => ({ type: 'input_image', image_url: url, detail: 'high' }))] : prompt;
+  return { model: SIWC_MODEL, instructions, input: [{ role: 'user', content }], reasoning: { effort },
     tools: [], store: false, stream: true, ...(schema ? { text: { format: { type: 'json_schema', name: 'english_training', strict: true, schema } } } : {}) };
 }
 function completedText(response: ObjectValue): string {

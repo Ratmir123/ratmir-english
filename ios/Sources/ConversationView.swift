@@ -471,6 +471,8 @@ struct ConversationView: View {
 
     private func reviewContent(_ value: Conversation) -> some View {
         VStack(alignment: .leading, spacing: 18) {
+            // PASS-0.5.5 §3: a rehearsal names its call and leads back to the prep (fresh «Перед звонком помни»).
+            PrepRehearsalLine(conversation: value)
             reviewHeader(value)
             if value.status == "completed", let result = client.state?.progression?.recentResults.first(where: { $0.sessionId == value.id }) {
                 PracticeOutcomeView(result: result)

@@ -211,14 +211,14 @@ class CodexBridge {
     return this.request('account/rateLimits/read', {}, 8_000, false);
   }
 
-  run(prompt: string, schema: JsonObject | undefined, effort: Effort): Promise<string> {
+  run(prompt: string, schema: JsonObject | undefined, effort: Effort, images: readonly string[] = []): Promise<string> {
     // Keep subscription requests bounded instead of spawning one Codex process per HTTP request.
-    const next = this.queue.then(() => this.runTurn(prompt, schema, effort));
+    const next = this.queue.then(() => this.runTurn(prompt, schema, effort, images));
     this.queue = next.catch(() => undefined);
     return next;
   }
 
-  private async runTurn(prompt: string, schema: JsonObject | undefined, effort: Effort): Promise<string> {
+  private async runTurn(prompt: string, schema: JsonObject | undefined, effort: Effort, images: readonly string[]): Promise<string> {
     const status = await this.status();
     if (!status.authenticated || !status.modelAvailable) throw new Error(status.error || 'GPT-6.1 Sol недоступна.');
     const start = await this.request('thread/start', { model: BRAIN_MODEL, modelProvider: 'openai', ephemeral: true, sandbox: 'read-only', approvalPolicy: 'never', cwd: process.cwd(), baseInstructions: TEXT_ONLY_INSTRUCTIONS, developerInstructions: TEXT_ONLY_INSTRUCTIONS,
@@ -234,7 +234,9 @@ class CodexBridge {
     });
     void answer.catch(() => undefined);
     try {
-      const result = await this.request('turn/start', { threadId, model: BRAIN_MODEL, effort, input: [{ type: 'text', text: prompt }], approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false }, ...(schema ? { outputSchema: schema } : {}) }) as JsonObject;
+      // Screenshots (call preps) go as data-URL image items next to the text.
+      const input = [{ type: 'text', text: prompt }, ...images.map(url => ({ type: 'image', url }))];
+      const result = await this.request('turn/start', { threadId, model: BRAIN_MODEL, effort, input, approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false }, ...(schema ? { outputSchema: schema } : {}) }) as JsonObject;
       const turn = result.turn as JsonObject | undefined;
       const active = this.turns.get(threadId);
       if (active && typeof turn?.id === 'string') active.id = turn.id;
@@ -295,10 +297,11 @@ export async function getSubscriptionUsage(force = false): Promise<SubscriptionU
   }
 }
 
-export async function codexJson<T>(prompt: string, schema: Record<string, unknown>, effort: Effort = 'medium', purpose: InferencePurpose = 'other'): Promise<T> {
+export async function codexJson<T>(prompt: string, schema: Record<string, unknown>, effort: Effort = 'medium', purpose: InferencePurpose = 'other',
+  images: readonly string[] = []): Promise<T> {
   const answer = brainAuthenticationMode() === 'siwc'
-    ? await siwcRun(prompt, schema, effort, TEXT_ONLY_INSTRUCTIONS, purpose)
-    : await bridge().run(prompt, schema, effort);
+    ? await siwcRun(prompt, schema, effort, TEXT_ONLY_INSTRUCTIONS, purpose, images)
+    : await bridge().run(prompt, schema, effort, images);
   try { return JSON.parse(answer) as T; }
   catch { throw new Error('GPT-6.1 Sol вернула некорректный JSON. Результат не применён.'); }
 }

@@ -150,15 +150,16 @@ export class SiwcClient {
       return data.models.some(raw => { const model = objectValue(raw); return model.slug === SIWC_MODEL && model.visibility === 'list'; });
     } catch (error) { if (error instanceof SiwcError) throw error; throw new SiwcError('network'); }
   }
-  async run(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string): Promise<string> {
-    return this.execute(prompt, schema, effort, instructions, false);
+  async run(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string, images: readonly string[] = []): Promise<string> {
+    return this.execute(prompt, schema, effort, instructions, false, images);
   }
-  private async execute(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string, explicitProbe: boolean): Promise<string> {
+  private async execute(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string, explicitProbe: boolean,
+    images: readonly string[] = []): Promise<string> {
     const timing = inferenceTiming({ purpose: this.purpose, effort, promptCharacters: prompt.length,
       instructionsCharacters: instructions.length, schemaCharacters: schema ? JSON.stringify(schema).length : 0 });
     let outcome: InferenceTiming['outcome'] = 'failed'; let failure: string | null = null;
     try {
-      const text = await this.executeMeasured(prompt, schema, effort, instructions, explicitProbe, timing);
+      const text = await this.executeMeasured(prompt, schema, effort, instructions, explicitProbe, timing, images);
       outcome = 'success'; return text;
     } catch (error) { failure = error instanceof SiwcError ? error.code : 'unknown'; throw error; }
     finally {
@@ -167,11 +168,11 @@ export class SiwcClient {
     }
   }
   private async executeMeasured(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string,
-    explicitProbe: boolean, timing: ReturnType<typeof inferenceTiming>): Promise<string> {
-    const body = responsesBody(prompt, schema, effort, instructions);
-    // Real-call reviews (purpose 'call-review', long transcripts at high effort) may think for several minutes;
-    // lesson turns keep the 3-minute deadline. Reserve the deadline plus model discovery/overhead.
-    const turnLimit = this.purpose === 'call-review' ? LONG_TURN_MS : TURN_MS;
+    explicitProbe: boolean, timing: ReturnType<typeof inferenceTiming>, images: readonly string[] = []): Promise<string> {
+    const body = responsesBody(prompt, schema, effort, instructions, images);
+    // Real-call reviews (purpose 'call-review', long transcripts at high effort) and call preps (screenshots) may think for several
+    // minutes; lesson turns keep the 3-minute deadline. Reserve the deadline plus model discovery/overhead.
+    const turnLimit = this.purpose === 'call-review' || this.purpose === 'prep' ? LONG_TURN_MS : TURN_MS;
     // access() never reserves more than 210 s of token validity; a longer review is bounded by the remaining
     // lifetime below and retried with a fresh token by its job queue if the credential expires mid-turn.
     const record = await this.access(Math.min(turnLimit + 30_000, 210_000));
@@ -222,10 +223,11 @@ const TURN_MS = 180_000;
 const LONG_TURN_MS = 420_000;
 function client(): SiwcClient { return new SiwcClient(); }
 export async function getSiwcBrainStatus(): Promise<BrainStatus> { return client().status(); }
-export async function siwcRun(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string, purpose: InferencePurpose = 'other'): Promise<string> {
+export async function siwcRun(prompt: string, schema: Record<string, unknown> | undefined, effort: SiwcEffort, instructions: string, purpose: InferencePurpose = 'other',
+  images: readonly string[] = []): Promise<string> {
   const started = Date.now();
   try {
-    const answer = await new SiwcClient({ purpose, onTiming: result => console.info('[sol-timing]', JSON.stringify(result)) }).run(prompt, schema, effort, instructions);
+    const answer = await new SiwcClient({ purpose, onTiming: result => console.info('[sol-timing]', JSON.stringify(result)) }).run(prompt, schema, effort, instructions, images);
     try { addBrainActivity('success', Date.now() - started); } catch { /* Statistics must not discard a completed response. */ }
     return answer;
   } catch (error) {

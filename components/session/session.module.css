@@ -280,3 +280,8 @@ details[open] > summary .caret { transform: rotate(90deg); }
   .mic, .comfortItem, .caret { transition: none; }
   .micRing { transition: opacity 160ms linear; }
 }
+
+/* 0.5.5: a rehearsal of a call prep links back to the prep (PASS-0.5.5 §3). */
+.prepBanner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px 12px 16px; border-radius: 20px; font-size: var(--text-15); line-height: 1.45; }
+.prepBanner > svg { flex-shrink: 0; color: var(--accent-violet-ink); }
+.prepBanner > span { flex: 1 1 260px; min-width: 0; }

@@ -3,6 +3,7 @@ import type { CallSummary, CommunicationPattern, CostCategory, PersonalDrill, Pr
 import type { LessonPlanExtras } from './training';
 import type { StrategyMoveScore } from './strategy-moves';
 import type { PhraseResult, SavedPhrase } from './phrases/types';
+import type { CallPrep } from './preps/types';
 
 /** Canonical skill names for BOTH clients (iPhone mirrors these labels exactly). */
 export const SKILLS = [
@@ -145,6 +146,8 @@ export interface AppState {
   profileFacts?: ProfileFact[];
   /** 0.5.3 «Мои фразы»: saved with «Запомнить», newest first, archived included (PASS-0.5.3 §1). */
   phrases?: SavedPhrase[];
+  /** 0.5.5 «Подготовка к созвону»: the latest preps, newest first (PASS-0.5.5 §2). */
+  preps?: CallPrep[];
 }
 export interface PracticeQuality {
   observedTargets: number; targetCount: number; independentSuccesses: number;

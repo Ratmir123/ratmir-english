@@ -66,18 +66,20 @@ jobs:
           xcrun simctl launch "$device" app.ratmirenglish.personal
           sleep 3
           xcrun simctl io "$device" screenshot iPhone11-login.png
-          for screen in today today-plan pending-recording placement placement-intro placement-listening placement-reading placement-break placement-speaking placement-roleplay placement-scoring placement-result practice-catalog practice-detail conversation listening dictation-preview analysing analysis-error review review-retry pushback celebrate completed rank-up saved-deferred preview-timing ielts-reading ielts-writing calls call-review call-transcript call-speakers patterns facts progress skills history achievements ranks ranks-bottom profile profile-voice reminder-editor reminder-denied today-limit hints phrases capture capture-saved phrase-review listen-recording listen-analysing listen-ready; do
+          for screen in today today-plan pending-recording placement placement-intro placement-listening placement-reading placement-break placement-speaking placement-roleplay placement-scoring placement-result practice-catalog practice-detail conversation listening dictation-preview analysing analysis-error review review-retry pushback celebrate completed rank-up saved-deferred preview-timing ielts-reading ielts-writing calls call-review call-transcript call-speakers patterns facts progress skills history achievements ranks ranks-bottom profile profile-voice reminder-editor reminder-denied today-limit hints phrases capture capture-saved phrase-review listen-recording listen-analysing listen-ready calls-prep prep-sheet prep-sheet-images prep-reading prep-detail prep-detail-fresh prep-detail-bottom today-prep prep-review; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
-            sleep 3
+            # Pushed detail screens (call transcript, preps, a rehearsal review) settle after the push: give them longer.
+            case "$screen" in call-transcript|prep-detail*|prep-review) sleep 7 ;; *) sleep 3 ;; esac
             xcrun simctl io "$device" screenshot "iPhone11-$screen.png"
           done
           xcrun simctl ui "$device" appearance dark
           sleep 3 # the appearance switch lands asynchronously; the first dark capture used to come out light
-          for screen in today practice-catalog conversation dictation-preview review pushback calls call-review placement-result progress achievements history profile phrases capture listen-ready; do
+          for screen in today practice-catalog conversation dictation-preview review pushback calls call-review placement-result progress achievements history profile phrases capture listen-ready calls-prep prep-sheet-images prep-reading prep-detail today-prep; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen"
-            sleep 3
+            # Pushed detail screens (call transcript, preps, a rehearsal review) settle after the push: give them longer.
+            case "$screen" in call-transcript|prep-detail*|prep-review) sleep 7 ;; *) sleep 3 ;; esac
             xcrun simctl io "$device" screenshot "iPhone11-$screen-dark.png"
           done
           xcrun simctl ui "$device" appearance light
@@ -131,13 +133,13 @@ jobs:
           python3 - <<'PY'
           import json
           summary = json.load(open('native-tests-summary.json'))
-          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 137, summary
-          assert type(summary['passedTests']) is int and summary['passedTests'] == 137, summary
+          assert summary['result'] == 'Passed' and summary['totalTestCount'] == 150, summary
+          assert type(summary['passedTests']) is int and summary['passedTests'] == 150, summary
           assert summary['failedTests'] == 0 and summary['skippedTests'] == 0, summary
           assert not summary['testFailures'] and summary.get('expectedFailures', 0) == 0, summary
-          print('Verified native tests: 137 passed, none failed or skipped')
+          print('Verified native tests: 150 passed, none failed or skipped')
           PY
-          for screen in today achievements ranks-bottom reminder-editor review preview-timing dictation-preview conversation practice-detail; do
+          for screen in today achievements ranks-bottom reminder-editor review preview-timing dictation-preview conversation practice-detail prep-detail; do
             xcrun simctl terminate "$device" app.ratmirenglish.personal || true
             xcrun simctl launch "$device" app.ratmirenglish.personal --preview="$screen" --large-type
             sleep 3
@@ -149,12 +151,12 @@ jobs:
           from pathlib import Path
           images = list(Path('.').glob('iPhone11-*.png'))
           movies = list(Path('.').glob('iPhone11-*-motion.mp4'))
-          assert len(images) == 83, [p.name for p in images]
+          assert len(images) == 98, [p.name for p in images]
           assert all(p.stat().st_size > 1024 for p in images), 'A preview screenshot is empty or incomplete'
           # Motion clips are review aids: a clip stopped by the recording watchdog is reported, not fatal.
           complete = [p for p in movies if p.stat().st_size > 1024]
           if len(complete) != 9: print('::warning::motion recordings complete:', len(complete), 'of 9')
-          print('Verified previews: 83 PNG screenshots,', len(complete), 'motion recordings')
+          print('Verified previews: 98 PNG screenshots,', len(complete), 'motion recordings')
           PY
       - uses: actions/upload-artifact@v4
         if: always()

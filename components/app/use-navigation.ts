@@ -62,7 +62,9 @@ export type CallsSection = 'calls' | 'patterns' | 'playbook';
 export type ProgressSection = 'overview' | 'skills' | 'history' | 'rewards' | 'report';
 /** Profile rows a link can open (PASS-0.5.3 §3: a limit notice opens «Тренер и лимиты» or «Голос»). */
 export type ProfileSection = 'voice' | 'reminders' | 'limits' | 'data';
-export type NavigationOptions = { callId?: string | null; calls?: CallsSection; progress?: ProgressSection; profileSection?: ProfileSection };
+export type NavigationOptions = { callId?: string | null; calls?: CallsSection; progress?: ProgressSection; profileSection?: ProfileSection;
+  /** 0.5.5: open this call prep in Созвоны → Звонки. */
+  prepId?: string | null };
 
 /**
  * In-memory navigation only: the Electron bridge trusts just `/` and `/?entry=` URLs (audit C-19),
@@ -72,7 +74,7 @@ export function useNavigation() {
   const [tab, setTab] = useState<TabId>('today');
   const [sessionOpen, setSessionOpen] = useState(false);
   const [returnTab, setReturnTab] = useState<TabId>('today');
-  const [callTarget, setCallTarget] = useState<{ id: string | null; section: CallsSection | null; nonce: number }>({ id: null, section: null, nonce: 0 });
+  const [callTarget, setCallTarget] = useState<{ id: string | null; section: CallsSection | null; prepId: string | null; nonce: number }>({ id: null, section: null, prepId: null, nonce: 0 });
   const [progressSection, setProgressSection] = useState<{ id: ProgressSection; nonce: number }>({ id: 'overview', nonce: 0 });
   const [profileTarget, setProfileTarget] = useState<{ id: ProfileSection | null; nonce: number }>({ id: null, nonce: 0 });
   const tabRef = useRef(tab);
@@ -83,7 +85,7 @@ export function useNavigation() {
   const go = useCallback((next: TabId, options: NavigationOptions = {}) => {
     const update = () => {
       setSessionOpen(false); setTab(next);
-      if (next === 'calls') setCallTarget(previous => ({ id: options.callId ?? null, section: options.calls ?? null, nonce: previous.nonce + 1 }));
+      if (next === 'calls') setCallTarget(previous => ({ id: options.callId ?? null, section: options.calls ?? null, prepId: options.prepId ?? null, nonce: previous.nonce + 1 }));
       if (next === 'progress' && options.progress) setProgressSection(previous => ({ id: options.progress!, nonce: previous.nonce + 1 }));
       if (next === 'profile' && options.profileSection) setProfileTarget(previous => ({ id: options.profileSection!, nonce: previous.nonce + 1 }));
       toTop();

@@ -76,6 +76,8 @@ export interface LessonPlanExtras {
   mustAvoid?: string[];
   /** 0.5.3: saved phrases this lesson practises (a phrase round) or weaves in (an ordinary session), PASS-0.5.3 §1.5. */
   phraseIds?: string[];
+  /** 0.5.5: the call prep this session rehearses (PASS-0.5.5 §2); its family is the hidden 'call-prep'. */
+  prepId?: string | null;
   /** Snapshot of the learner context for the evaluator and hints (never sent to the partner). */
   coaching?: LessonCoaching | null;
 }
@@ -312,6 +314,19 @@ export const PHRASES_FAMILY: CuratedFamily = family({ id: 'my-phrases', title: '
     'The learner builds an own sentence around the expression instead of repeating a memorised template.'],
   persona: 'A friendly acquaintance in a quick, relaxed chat who opens natural moments for the learner\'s saved expressions and never says them.' });
 
+/** «Подготовка к созвону» rehearsals (PASS-0.5.5): one real upcoming call, played by its counterpart. Hidden: never in the catalog. */
+export const PREP_FAMILY: CuratedFamily = family({ id: 'call-prep', title: 'Репетиция созвона', category: 'strategy', context: 'work',
+  format: 'conversation', minutes: 12, preferredMode: 'call', isNew: true, hidden: true,
+  description: 'Прогнать предстоящий созвон с этим собеседником: его вопросы, его давление и твои цели и минимумы.',
+  skills: ['positioning', 'negotiation', 'reciprocity'], icon: { sf: 'phone.badge.checkmark', phosphor: 'PhoneCall' },
+  situationalNorms: ['Answers lead with the point; the strongest recent case or a concrete number comes before labels and biography.',
+    'Own questions uncover what changes the offer (scope, usage, timeline, budget or decision maker) before quoting.',
+    'The price floor is held: no instant yes to the first number; an own number, a counter or a trade instead of a discount.',
+    "Other clients' fees, timing and terms stay confidential.", 'The recap keeps every agreed term including own add-ons, and a next step is agreed.'],
+  patternCategories: ['positioning', 'negotiation', 'confidentiality', 'questions', 'closing', 'structure'],
+  moves: ['answer-first', 'positioning', 'proof', 'discovery', 'anchor-hold', 'confidential', 'recap', 'close'],
+  persona: "The real counterpart of an upcoming call, built from the learner's chat with him: his company, his goal and his constraints." });
+
 /** v0.4 ids merged into v0.5 families. Old sessions and old clients keep working through these. */
 export const FAMILY_ALIASES: Record<string, string> = {
   'work-agency': 'strategy-agency-screening', 'work-agreement': 'strategy-price', 'work-options': 'work-project',
@@ -325,9 +340,9 @@ export function findFamily(id: string | undefined | null): CuratedFamily | undef
   return FAMILIES.find(item => item.id === canonical);
 }
 
-/** Any family a stored lesson can refer to, including the hidden drill and «Мои фразы» families. */
+/** Any family a stored lesson can refer to, including the hidden drill, «Мои фразы» and call-prep families. */
 export function lessonFamily(id: string | undefined | null): CuratedFamily | undefined {
-  return id === CALL_REPLAY_FAMILY.id ? CALL_REPLAY_FAMILY : id === PHRASES_FAMILY.id ? PHRASES_FAMILY : findFamily(id);
+  return id === CALL_REPLAY_FAMILY.id ? CALL_REPLAY_FAMILY : id === PHRASES_FAMILY.id ? PHRASES_FAMILY : id === PREP_FAMILY.id ? PREP_FAMILY : findFamily(id);
 }
 
 /** Drill types with a catalog scenario. A seeded drill replays its real moment instead (call-replay). */

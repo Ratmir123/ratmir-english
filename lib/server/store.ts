@@ -11,6 +11,8 @@ import { clearPlacement, placementProgressionInputs, presentPlacement } from './
 import { callProgressionInputs, clearCalls, listCallSummaries, listDrills, listPatterns, listProfileFacts } from './calls/state';
 import { clearPhraseHistory, forgetPhraseSession, listPhrasesForState } from './phrases/repository';
 import { clearListenClips } from './phrases/listen-repository';
+import { clearPreps } from './preps/repository';
+import { listPrepsForState } from './preps/service';
 import { APP_NAME, APP_VERSION } from '../app-info';
 
 const MAX_JOB_ATTEMPTS = 3;
@@ -204,6 +206,7 @@ export function deleteAllTraining(): void {
     clearCalls(db);
     clearPhraseHistory(db);
     clearListenClips(db);
+    clearPreps(db);
     db.prepare('INSERT INTO settings(key,data) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data')
       .run('learning-generation', JSON.stringify(nextGeneration));
   });
@@ -359,6 +362,7 @@ export function getAppState(): AppState {
       drills: listDrills(db, sessions),
       profileFacts: listProfileFacts(db),
       phrases: listPhrasesForState(db),
+      preps: listPrepsForState(db, sessions),
       completed: progression.completedPractice,
       calibrationCompleted: onboarding.introCompletedAt ? onboarding.completedStages
         : completed.filter((session) => session.lesson.kind === 'calibration').length,
