@@ -269,11 +269,16 @@ struct PrepSheet: View {
 
     init(created: @escaping (String) -> Void) {
         self.created = created
+        _draft = StateObject(wrappedValue: PrepSheet.makeDraft())
+    }
+
+    /// Made once per sheet (the autoclosure of StateObject).
+    private static func makeDraft() -> PrepDraft {
         let draft = PrepDraft()
 #if DEBUG
         PrepPreview.fill(draft, screen: PreviewFixtures.screen)
 #endif
-        _draft = StateObject(wrappedValue: draft)
+        return draft
     }
 
     var body: some View {
