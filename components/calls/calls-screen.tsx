@@ -12,6 +12,7 @@ import { ArrowLeftIcon, CursorClickIcon, FileTextIcon, PhoneCallIcon, TargetIcon
 import { api } from '@/lib/client/api';
 import type { CallStatus, CallSummary } from '@/lib/calls/types';
 import type { AppState, Mode } from '@/lib/types';
+import type { CallPrep } from '@/lib/preps/types';
 import { Chip, cx, kit, ProgressBar, Segmented, useInterval } from './kit';
 import { CALL_STATUS, formatDay, formatDuration, isCallProcessing, plural, SOURCE_LABEL } from './format';
 import { dismissUpload, getServerUploadsSnapshot, getUploadsSnapshot, subscribeUploads, type UploadJob } from './upload-store';
@@ -22,6 +23,7 @@ import { PatternsPanel } from './patterns-panel';
 import type { CallsSection } from '../app/use-navigation';
 import type { MascotEmotion } from '../shell/companion';
 import { ScreenMascot } from '../shell/screen-mascot';
+import { PrepDetailView, PrepEntryCard, PrepList, PrepSheet, fetchPreps } from './prep';
 import styles from './calls.module.css';
 
 const UPLOADING: UploadJob['phase'][] = ['creating', 'preparing', 'uploading', 'completing'];
@@ -76,13 +78,20 @@ function PendingUpload({ job }: { job: UploadJob }) {
   );
 }
 
-export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId, initialSection, sectionNonce }: {
+export function CallsScreen({ state, onRefresh, onStartDrill, onStartPrep, onOpenSession, initialCallId, initialPrepId, initialSection, sectionNonce }: {
   state: AppState; onRefresh: () => Promise<void>; onStartDrill: (drillId: string, mode: Mode) => void; initialCallId?: string | null;
+  /** 0.5.5 «Подготовка к созвону»: start a rehearsal, open a past rehearsal, open a prep (Today, a rehearsal review). */
+  onStartPrep: (prepId: string, mode: Mode) => void; onOpenSession: (sessionId: string) => void; initialPrepId?: string | null;
   /** Open on «Паттерны» or «Плейбук» (e.g. Profile → «Мой плейбук»); a call id always opens «Звонки». */
   initialSection?: CallsSection | null; sectionNonce?: number;
 }) {
+  // The detail pane shows one call or one prep.
   const [selected, setSelected] = useState<string | null>(initialCallId ?? null);
-  const [section, setSectionValue] = useState<CallsSection>(initialCallId ? 'calls' : initialSection ?? 'calls');
+  // initialPrepId 'new' (Today «Подготовка к созвону») opens the sheet instead of a prep.
+  const [selectedPrep, setSelectedPrep] = useState<string | null>(initialCallId || initialPrepId === 'new' ? null : initialPrepId ?? null);
+  const [preps, setPreps] = useState<CallPrep[]>(state.preps ?? []);
+  const [prepSheet, setPrepSheet] = useState(!initialCallId && initialPrepId === 'new');
+  const [section, setSectionValue] = useState<CallsSection>(initialCallId || initialPrepId ? 'calls' : initialSection ?? 'calls');
   // A section picked here settles in softly; the screen's arrival is the staircase instead.
   const [switched, setSwitched] = useState(false);
   const setSection = (value: CallsSection) => { setSectionValue(value); setSwitched(true); };
@@ -92,9 +101,16 @@ export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId, ini
   const statuses = useRef(new Map<string, CallStatus>());
   const refreshing = useRef(false);
 
-  useEffect(() => { if (initialCallId) { setSelected(initialCallId); setSectionValue('calls'); } }, [initialCallId]);
-  useEffect(() => { if (initialSection && !initialCallId) setSectionValue(initialSection); }, [initialSection, initialCallId, sectionNonce]);
+  useEffect(() => { if (initialCallId) { setSelected(initialCallId); setSelectedPrep(null); setSectionValue('calls'); } }, [initialCallId]);
+  useEffect(() => {
+    if (!initialPrepId || initialCallId) return;
+    setSectionValue('calls');
+    if (initialPrepId === 'new') { setPrepSheet(true); return; }
+    setSelectedPrep(initialPrepId); setSelected(null);
+  }, [initialPrepId, initialCallId, sectionNonce]);
+  useEffect(() => { if (initialSection && !initialCallId && !initialPrepId) setSectionValue(initialSection); }, [initialSection, initialCallId, initialPrepId, sectionNonce]);
   useEffect(() => { setCalls(state.calls ?? []); }, [state.calls]);
+  useEffect(() => { setPreps(state.preps ?? []); }, [state.preps]);
 
   const refreshApp = useCallback(async () => {
     if (refreshing.current) return;
@@ -129,8 +145,15 @@ export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId, ini
   }, [doneKeys, fetchCalls]);
 
   const select = useCallback((id: string | null) => {
-    setSelected(id);
+    setSelected(id); if (id) setSelectedPrep(null);
     requestAnimationFrame(() => root.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }));
+  }, []);
+  const selectPrep = useCallback((id: string | null) => {
+    setSelectedPrep(id); if (id) setSelected(null);
+    requestAnimationFrame(() => root.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }));
+  }, []);
+  const refreshPreps = useCallback(async () => {
+    try { setPreps(await fetchPreps()); } catch { /* keep the last list */ }
   }, []);
 
   const pendingJobs = uploads.filter(job => !job.callId && job.phase !== 'cancelled');
@@ -143,13 +166,14 @@ export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId, ini
   const hasList = pendingJobs.length > 0 || calls.length > 0;
   // The screen's companion (MOTION-PASS-0.5.2 §3): thinking while a call is processed or uploaded, surprised when one
   // needs «кто есть кто», listening otherwise. Without calls it moves into the empty state, larger and curious.
-  const working = calls.some(call => isCallProcessing(call.status)) || uploads.some(job => UPLOADING.includes(job.phase));
+  const working = calls.some(call => isCallProcessing(call.status)) || uploads.some(job => UPLOADING.includes(job.phase)) || preps.some(prep => prep.status === 'reading');
   const mood: MascotEmotion = working ? 'thinking' : needsAction ? 'surprised' : 'listening';
   // One companion per screen: without calls it sits, larger and curious, in the «Звонки» empty state instead.
-  const headCompanion = hasList || section !== 'calls';
+  const headCompanion = hasList || preps.length > 0 || section !== 'calls';
+  const detailOpen = !!selected || !!selectedPrep;
 
   return (
-    <section ref={root} className={cx(kit.scope, styles.screen)} data-view={section === 'calls' && selected ? 'detail' : 'list'} aria-label="Созвоны">
+    <section ref={root} className={cx(kit.scope, styles.screen)} data-view={section === 'calls' && detailOpen ? 'detail' : 'list'} aria-label="Созвоны">
       <div className={styles.pageHead} data-enter>
         <div className={styles.pageCopy}>
           <h1>Созвоны</h1>
@@ -172,7 +196,9 @@ export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId, ini
           <FactsPanel facts={facts} onChanged={() => void refreshApp()} />
         </div> : <div className={styles.layout}>
           <div className={styles.listPane}>
+            <div data-enter><PrepEntryCard onOpen={() => setPrepSheet(true)} /></div>
             <div data-enter><CallUploadCard onCreated={id => { void fetchCalls(); void refreshApp(); select(id); }} /></div>
+            <PrepList preps={preps} selected={selectedPrep} onSelect={selectPrep} />
             {hasList ? (
               <section className={styles.callsBlock} aria-labelledby="calls-list-title" data-enter>
                 <div className={styles.sectionTitle}>
@@ -211,9 +237,19 @@ export function CallsScreen({ state, onRefresh, onStartDrill, initialCallId, ini
               onChanged={() => { void fetchCalls(); void refreshApp(); }}
               onDeleted={() => { setSelected(null); void fetchCalls(); void refreshApp(); }}
               onStartDrill={onStartDrill} />
+          </div> : selectedPrep ? <div className={styles.detailPane} data-enter>
+            <button type="button" className={cx(kit.btn, kit.quiet, kit.small, styles.backButton)} style={{ justifySelf: 'start' }} onClick={() => selectPrep(null)}>
+              <ArrowLeftIcon size={16} weight="bold" />Все звонки
+            </button>
+            <PrepDetailView key={selectedPrep} prepId={selectedPrep} initial={preps.find(prep => prep.id === selectedPrep) ?? null}
+              onChanged={() => { void refreshPreps(); void refreshApp(); }}
+              onDeleted={() => { setSelectedPrep(null); void refreshPreps(); void refreshApp(); }}
+              onStart={onStartPrep} onOpenSession={onOpenSession} />
           </div> : null}
         </div>}
       </div>
+      <PrepSheet open={prepSheet} onClose={() => setPrepSheet(false)}
+        onCreated={prep => { setPrepSheet(false); setPreps(current => [prep, ...current.filter(item => item.id !== prep.id)]); selectPrep(prep.id); void refreshApp(); }} />
     </section>
   );
 }

@@ -6,6 +6,8 @@ enum CallsRoute: Hashable {
     case call(String)
     case patterns
     case facts
+    /// 0.5.5 «Подготовка к созвону» (PrepViews.swift).
+    case prep(String)
 }
 
 /// Deep links into the Созвоны tab from other screens (Today cards, notifications):
@@ -14,15 +16,23 @@ enum CallsRoute: Hashable {
 @MainActor final class CallsNavigator: ObservableObject {
     static let shared = CallsNavigator()
     @Published private(set) var pending: CallsRoute?
+    /// 0.5.5: Today «Подготовка к созвону» opens the prep sheet on «Созвоны».
+    @Published private(set) var prepSheetRequested = false
     func open(_ route: CallsRoute) { pending = route }
     func consume() -> CallsRoute? {
         let route = pending
         pending = nil
         return route
     }
+    func openPrepSheet() { prepSheetRequested = true }
+    func consumePrepSheet() -> Bool {
+        defer { prepSheetRequested = false }
+        return prepSheetRequested
+    }
 }
 
-/// Tab root «Созвоны»: upload card, insights (patterns, playbook) and the list of calls.
+/// Tab root «Созвоны»: «Скоро созвон?» and «Подготовки» (PASS-0.5.5 §3), the upload card, insights (patterns, playbook) and
+/// the list of calls.
 /// Owns its NavigationStack; polls every 3 s only while a call is processing and the list is visible.
 struct CallsScreen: View {
     @EnvironmentObject private var client: TrainingClient
@@ -36,16 +46,25 @@ private struct CallsScreenContent: View {
     @StateObject private var store: CallsStore
     @ObservedObject private var uploads: CallUploadCenter
     @ObservedObject private var navigator: CallsNavigator
+    @ObservedObject private var preps: PrepsStore
     @EnvironmentObject private var client: TrainingClient
     @State private var path: [CallsRoute] = []
     @State private var pendingDelete: CallSummary?
+    @State private var showPrepSheet = false
+    /// The prep the sheet handed over: it opens once the sheet is gone.
+    @State private var pendingPrep: String?
     @Environment(\.scenePhase) private var scenePhase
 
     init(client: TrainingClient) {
         _store = StateObject(wrappedValue: CallsStore(client: client))
         _uploads = ObservedObject(wrappedValue: CallUploadCenter.shared)
         _navigator = ObservedObject(wrappedValue: CallsNavigator.shared)
+        _preps = ObservedObject(wrappedValue: PrepsStore.shared)
     }
+
+    private var prepList: [CallPrep] { preps.preps(in: client.state, lastRefresh: client.lastRefresh) }
+    /// Preps Sol is still reading (made on the PC too): polled while «Созвоны» is open.
+    private var readingKey: String { prepList.filter { $0.isReading }.map(\.id).joined(separator: ",") }
 
     private var stateSignature: String {
         (client.state?.calls ?? []).map { $0.signature }.joined(separator: ",")
@@ -56,7 +75,7 @@ private struct CallsScreenContent: View {
     /// MOTION-PASS 0.5.2 §3: a call being processed → thinking; one waiting for «кто есть кто» → surprised;
     /// otherwise listening. With no calls the companion sits, curious and larger, in the empty state instead.
     private var introMood: VoiceOrbMood {
-        if store.isAnyProcessing { return .thinking }
+        if store.isAnyProcessing || prepList.contains(where: { $0.isReading }) { return .thinking }
         if store.calls.contains(where: { $0.kind == .needsSpeaker }) { return .surprised }
         return .listening
     }
@@ -68,13 +87,17 @@ private struct CallsScreenContent: View {
                     ScreenIntro(text: "Загрузи звонок — получишь разбор, тренировки из своих же моментов и обновлённые паттерны.",
                                 mood: introMood, showsCompanion: !store.calls.isEmpty)
                         .entrance(0)
-                    CallUploadCard(compact: false)
+                    PrepEntryCard(open: { showPrepSheet = true })
                         .entrance(1)
-                    banners
-                    CallsInsightsRow(patterns: store.patterns, facts: store.facts, open: { path.append($0) })
+                    CallUploadCard(compact: false)
                         .entrance(2)
-                    callsSection
+                    banners
+                    PrepListSection(preps: prepList, open: { path.append(.prep($0)) })
                         .entrance(3)
+                    CallsInsightsRow(patterns: store.patterns, facts: store.facts, open: { path.append($0) })
+                        .entrance(3)
+                    callsSection
+                        .entrance(4)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
@@ -86,11 +109,15 @@ private struct CallsScreenContent: View {
             .background { FeatureBackdrop() }
             .refreshable {
                 await store.reload()
+                await preps.reload(client: client)
                 await store.refreshClientState()
             }
             .task(id: pollIdentity) {
                 guard scenePhase == .active, store.isAnyProcessing else { return }
                 await store.pollProcessing()
+            }
+            .task(id: readingKey) {
+                for prep in prepList where prep.isReading { preps.poll(prep.id, client: client) }
             }
             .navigationTitle("Созвоны")
             .navigationDestination(for: CallsRoute.self) { route in
@@ -99,19 +126,35 @@ private struct CallsScreenContent: View {
         }
         .task {
             applyPendingRoute()
+            applyPrepSheetRequest()
             await store.reload()
             uploads.sweepOrphans()
 #if DEBUG
             if path.isEmpty, let route = FeaturePreviewFixtures.initialRoute(for: PreviewFixtures.screen) { path = [route] }
+            if PrepPreview.opensSheet(PreviewFixtures.screen) { showPrepSheet = true }
 #endif
         }
         .onChange(of: navigator.pending) { _, route in
             if route != nil { applyPendingRoute() }
         }
+        .onChange(of: navigator.prepSheetRequested) { _, requested in
+            if requested { applyPrepSheetRequest() }
+        }
         .onChange(of: uploads.completions) { _, _ in
             Task { await store.reload() }
         }
         .onChange(of: stateSignature) { _, _ in store.adoptState() }
+        .sheet(isPresented: $showPrepSheet, onDismiss: openPendingPrep) {
+            PrepSheet(created: { id in
+                pendingPrep = id
+                showPrepSheet = false
+            })
+            .environmentObject(client)
+            .environment(\.locale, RuFormat.locale)
+#if DEBUG
+            .modifier(PreviewAccessibility())
+#endif
+        }
         .confirmationDialog("Удалить звонок?", isPresented: deleteBinding, titleVisibility: .visible, presenting: pendingDelete) { call in
             Button("Удалить «\(call.title)»", role: .destructive) {
                 Task { await store.delete(callId: call.id) }
@@ -125,6 +168,20 @@ private struct CallsScreenContent: View {
     private func applyPendingRoute() {
         guard let route = navigator.consume() else { return }
         path = [route]
+    }
+
+    /// Today «Подготовка к созвону»: the sheet over the list.
+    private func applyPrepSheetRequest() {
+        guard navigator.consumePrepSheet() else { return }
+        path = []
+        showPrepSheet = true
+    }
+
+    /// «Подготовить» created a prep: it opens (reading) once the sheet is gone.
+    private func openPendingPrep() {
+        guard let id = pendingPrep else { return }
+        pendingPrep = nil
+        path = [.prep(id)]
     }
 
     private var deleteBinding: Binding<Bool> {
@@ -180,6 +237,8 @@ private struct CallsScreenContent: View {
             PatternsView(patterns: store.patterns, drills: store.drills)
         case .facts:
             FactsView(facts: store.facts)
+        case .prep(let id):
+            PrepDetailScreen(prepId: id)
         }
     }
 }

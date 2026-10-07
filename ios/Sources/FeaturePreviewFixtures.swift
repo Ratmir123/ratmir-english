@@ -14,6 +14,7 @@ import Foundation
     static func isPlacementScreen(_ screen: String?) -> Bool { (screen ?? "").hasPrefix("placement-") }
     static func isCallsScreen(_ screen: String?) -> Bool {
         ["calls", "call-review", "call-transcript", "call-speakers", "patterns", "facts"].contains(screen ?? "")
+            || PrepPreview.callsScreens.contains(screen ?? "")
     }
 
     /// Canned API responses by request path (for TrainingClient.previewResponses).
@@ -78,7 +79,7 @@ import Foundation
         case "call-speakers": return .call("call-harbor")
         case "patterns": return .patterns
         case "facts": return .facts
-        default: return nil
+        default: return PrepPreview.initialRoute(screen)
         }
     }
 

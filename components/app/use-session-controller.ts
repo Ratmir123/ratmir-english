@@ -16,6 +16,8 @@ export type StartOptions = {
   drillId?: string;
   /** 0.5.3: a round of «Мои фразы» (POST /api/sessions { phraseRound: true }; exclusive with drillId, familyId and topic). */
   phraseRound?: boolean;
+  /** 0.5.5: a rehearsal of a call prep (POST /api/sessions { prepId }; instant, exclusive with everything above). */
+  prepId?: string;
   from?: TabId;
 };
 /** `life` (ms) overrides how long the toast stays: an undo window («Факт убран · Вернуть») ends with its action. */
@@ -258,7 +260,8 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
     }
     const mode: Mode = options.mode ?? 'learning';
     // A phrase round is planned from the saved phrases alone (PASS-0.5.3 §1.5): no family, topic or drill goes with it.
-    const payload = options.phraseRound
+    const payload = options.prepId ? { mode, prepId: options.prepId }
+      : options.phraseRound
       ? { mode, phraseRound: true as const, minutes: options.minutes }
       : { mode, familyId: options.familyId, context: options.context, topic: options.topic?.trim() || undefined, minutes: options.minutes, drillId: options.drillId };
     const optionsKey = JSON.stringify(payload);
@@ -266,7 +269,7 @@ export function useSessionController(data: AppData, navigation: Navigation, feed
     lessonStart.current = attempt;
     attempt.pending = true;
     const tabAtStart = navRef.current.tabRef.current;
-    const label = options.phraseRound ? 'Собираю твои фразы' : options.drillId ? 'Открываю тренировку' : 'Готовлю занятие';
+    const label = options.prepId ? 'Открываю репетицию' : options.phraseRound ? 'Собираю твои фразы' : options.drillId ? 'Открываю тренировку' : 'Готовлю занятие';
     setStarting({ label, since: Date.now() });
     voiceRef.current.stop();
     try {

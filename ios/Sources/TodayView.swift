@@ -158,6 +158,9 @@ struct TodayScreen: View {
                     // PASS-0.5.3 §2: a limit notice (subscription or voice) under the header; a tap opens Profile there.
                     TodayLimitBanner(select: select)
                         .entrance(1)
+                    // PASS-0.5.5 §3: a call is coming (a prep made within 24 h or a call time ahead): «Репетиция» and «Открыть».
+                    TodayPrepCard(select: select)
+                        .entrance(1)
                     heroSection
                         .entrance(1)
                     // PASS-0.5.3 §1.6: «Мои фразы · N ждут повторения» → «Повторить» under the primary card (hidden when none wait).
@@ -167,7 +170,7 @@ struct TodayScreen: View {
                         .entrance(2)
                     TodayUploadProgress()
                         .entrance(2)
-                    TodayQuickActions(openFreeTopic: { showFreeTopic = true })
+                    TodayQuickActions(openFreeTopic: { showFreeTopic = true }, openPrep: openPrepSheet)
                         .entrance(3)
                     TodayLaterList(heroSessionID: heroSessionID, hidden: hiddenSessionIDs, remove: remove)
                         .entrance(4)
@@ -326,6 +329,12 @@ struct TodayScreen: View {
                 .navigationTitle("Твой уровень")
                 .navigationBarTitleDisplayMode(.inline)
         }
+    }
+
+    /// «Подготовка к созвону» (PASS-0.5.5): «Созвоны» opens with the prep sheet.
+    private func openPrepSheet() {
+        CallsNavigator.shared.openPrepSheet()
+        select(.calls)
     }
 
     /// Deep link into «Созвоны»: the tab opens the call or the patterns screen when it appears.
@@ -798,14 +807,17 @@ private struct StatusRowLabel: View {
 /// then runs in the progress card above.
 private struct TodayQuickActions: View {
     let openFreeTopic: () -> Void
+    /// 0.5.5 «Подготовка к созвону»: the sheet on «Созвоны».
+    let openPrep: () -> Void
     @EnvironmentObject private var client: TrainingClient
     @ObservedObject private var uploads: CallUploadCenter
     @State private var importing = false
     @State private var pickError: String?
     private var pitch: CatalogFamily? { client.catalogFamily("strategy-pitch-30") }
 
-    init(openFreeTopic: @escaping () -> Void) {
+    init(openFreeTopic: @escaping () -> Void, openPrep: @escaping () -> Void) {
         self.openFreeTopic = openFreeTopic
+        self.openPrep = openPrep
         _uploads = ObservedObject(wrappedValue: CallUploadCenter.shared)
     }
 
@@ -841,6 +853,12 @@ private struct TodayQuickActions: View {
                 .buttonStyle(RowButtonStyle())
                 .disabled(client.busy || client.startingIntent != nil || client.hasUnuploadedRecording)
             }
+            RowDivider(inset: 56)
+            Button(action: openPrep) {
+                ListRowLabel(icon: PrepSymbols.phone, title: "Подготовка к созвону", detail: "Скрины переписки → план и репетиция")
+            }
+            .buttonStyle(RowButtonStyle())
+            .accessibilityHint("Открывает подготовку к созвону на вкладке «Созвоны»")
             RowDivider(inset: 56)
             Button(action: openFreeTopic) {
                 ListRowLabel(icon: "sparkles", title: "Своя тема", detail: "Разговор о том, что интересно")

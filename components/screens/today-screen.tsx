@@ -18,6 +18,7 @@ import { greeting, MODE_HINT, MODE_LABEL, sessionStatusLabel, sessionTone, short
 import { failedCalls, processingCalls, todayPrimary, weeklyRhythm, type TodayPrimary } from '../app/today-plan';
 import { drillTile } from '../practice/for-you-model';
 import { TodayPhrases } from '../phrases/today-phrases';
+import { TodayPrep } from '../calls/today-prep';
 import { WeeklyRhythm } from './weekly-rhythm';
 import { Companion, type MascotEmotion } from '../shell/companion';
 import type { ToastAction } from '../shell/toasts';
@@ -259,6 +260,7 @@ function QuickActions() {
   const busy = !!app.lesson.busy || !!app.lesson.starting;
   const actions = [
     ...(pitch ? [{ id: 'pitch', icon: MegaphoneIcon, title: 'Питч за 30 секунд', note: 'Кто ты и почему именно ты', run: () => app.start({ familyId: pitch.id, mode: pitch.preferredMode, context: pitch.context, from: 'today' as const }) }] : []),
+    { id: 'prep', icon: PhoneCallIcon, title: 'Подготовка к созвону', note: 'Скрины переписки → план и репетиция', run: () => app.go('calls', { prepId: 'new' }) },
     { id: 'free', icon: SparkleIcon, title: 'Своя тема', note: 'Разговор о том, что интересно', run: () => app.openFamily(null, true) },
   ];
   return <section className={`surface ${styles.quick}`} aria-labelledby="today-quick" data-enter>
@@ -362,6 +364,7 @@ export function TodayScreen() {
     </header>
     <div className={styles.grid}>
       <div className={styles.main}>
+        <TodayPrep />
         <PrimaryCard key={primaryKey} primary={primary} />
         <TodayPhrases />
         <StatusStrip primary={primary} />

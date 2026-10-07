@@ -602,6 +602,7 @@ extension Notification.Name {
         savedDrafts.removeAll()
         draft = ""; recordedFile = nil; pendingMessageID = nil; hint = nil; originalTranscript = ""; liveTranscript = ""
         completionMoment = nil
+        PrepsStore.shared.reset()
         signedIn = false
     }
 
@@ -854,6 +855,7 @@ extension Notification.Name {
 
     static func familyKey(_ id: String) -> String { "family:" + id }
     static func drillKey(_ id: String) -> String { "drill:" + id }
+    static func prepKey(_ id: String) -> String { "prep:" + id }
     static let freeKey = "free"
     func isStarting(_ key: String) -> Bool { startingIntent == key }
 
@@ -872,6 +874,14 @@ extension Notification.Name {
     func startDrill(id: String, mode: String) async {
         await startSession(intentKey: TrainingClient.drillKey(id), requestKey: "drill|\(id)|\(mode)",
             stage: "Готовлю тренировку", body: ["mode": mode, "drillId": id])
+    }
+
+    /// «Подготовка к созвону» (PASS-0.5.5 §2): POST sessions { prepId, mode, intent: 'new', minutes, requestId } — the rehearsal
+    /// starts like a drill (an instant plan, no second Sol call) and opens in the usual conversation view.
+    func startPrepRehearsal(prepId: String, mode: String) async {
+        let body = PrepRequests.rehearsal(prepId: prepId, mode: mode)
+        await startSession(intentKey: TrainingClient.prepKey(prepId), requestKey: "prep|\(prepId)|\(body["mode"] as? String ?? mode)",
+            stage: "Готовлю репетицию", body: body)
     }
 
     /// «Своя тема»: a context, a mode and an optional topic.
@@ -1946,6 +1956,8 @@ extension Notification.Name {
             conversation = nil
             savedDrafts.removeAll()
             draft = ""; recordedFile = nil; pendingMessageID = nil; hint = nil; completionMoment = nil
+            // «Удалить всю практику» deletes the call preps too (PASS-0.5.5 §2).
+            PrepsStore.shared.reset()
             apply(updated)
             done = true
         }

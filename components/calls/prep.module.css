@@ -1,0 +1,88 @@
+/*
+ * «Подготовка к созвону» (PASS-0.5.5 §3). Sections reuse review.module.css (one surface each, rows split by hairlines, a lime well for
+ * a line to say); this file holds only the entry card, the sheet pieces and the plan's own layouts. No nested cards (DESIGN-PASS-0.5.1).
+ */
+
+/* ───────── entry card ───────── */
+.entry {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px 14px; padding: 16px 18px; min-width: 0;
+  container: prep-entry / inline-size;
+}
+.entryIcon {
+  display: grid; place-items: center; width: 44px; height: 44px; border-radius: 15px; flex-shrink: 0;
+  background: var(--k-violet-soft); color: var(--k-violet-ink);
+}
+.entryCopy { display: grid; gap: 3px; min-width: 0; }
+.entryCopy strong { font-size: 16px; font-weight: 750; line-height: 1.3; }
+.entryCopy span { font-size: 13.5px; line-height: 1.45; color: var(--k-text-2); }
+.entryAction { white-space: nowrap; }
+@container prep-entry (max-width: 440px) {
+  .entry { grid-template-columns: auto minmax(0, 1fr); }
+  .entryAction { grid-column: 1 / -1; width: 100%; }
+}
+
+/* ───────── sheet ───────── */
+.form { display: grid; gap: 14px; min-width: 0; }
+.formRow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.wide { grid-column: 1 / -1; }
+@media (max-width: 560px) { .formRow { grid-template-columns: minmax(0, 1fr); } }
+.drop { padding: 18px 16px; }
+.thumbs { margin: 4px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; }
+.thumb { position: relative; aspect-ratio: 3 / 4; border-radius: 14px; overflow: hidden; background: var(--k-sunken); box-shadow: inset 0 0 0 1px var(--k-hairline); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.thumbIndex {
+  position: absolute; left: 6px; bottom: 6px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; display: grid; place-items: center;
+  font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; background: var(--k-solid); color: var(--k-text); box-shadow: var(--k-e1);
+}
+.thumbRemove { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; min-height: 28px; background: var(--k-solid); box-shadow: var(--k-e1); }
+.sheetActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 14px; width: 100%; }
+.sheetHint { flex: 1 1 200px; font-size: 13px; color: var(--k-text-2); line-height: 1.4; }
+
+/* ───────── states ───────── */
+.state { display: grid; gap: 10px; padding: clamp(18px, 2.4vw, 24px); min-width: 0; }
+.state strong { display: inline-flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 800; }
+.state p { margin: 0; font-size: 14.5px; line-height: 1.5; color: var(--k-text-2); max-width: 64ch; }
+.stateActions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ───────── the plan ───────── */
+.detail { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
+.rehearse { display: grid; gap: 8px; justify-items: start; padding-top: 4px; border-top: 1px solid var(--hairline, var(--k-hairline)); }
+.rehearse small { font-size: 13px; line-height: 1.45; color: var(--k-text-2); max-width: 64ch; }
+.rehearseButton { min-height: 48px; padding-inline: 22px; font-size: 16px; }
+/* The one block to read right before the call: the same surface, ringed in lime (no tinted card around lime wells). */
+.remember { box-shadow: inset 0 0 0 2px var(--k-lime), var(--k-e1); }
+.reminderIcon { display: grid; place-items: center; width: 22px; height: 22px; flex-shrink: 0; margin-top: 1px; color: var(--k-violet-ink); }
+.english { font-weight: 650; }
+.goal { margin: 0; display: flex; gap: 8px; align-items: flex-start; font-size: 14.5px; line-height: 1.5; max-width: 68ch; }
+.goal > svg { flex-shrink: 0; margin-top: 2px; color: var(--k-lime-ink); }
+.lines { display: grid; gap: 10px; }
+.price { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.price div { display: grid; gap: 2px; min-width: 0; }
+.price dt { font-size: 12.5px; color: var(--k-text-2); }
+.price dd { margin: 0; font-family: var(--k-display); font-size: 19px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.bullets { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.bullets li { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; line-height: 1.5; }
+.bullets li > svg { flex-shrink: 0; margin-top: 3px; color: var(--k-text-2); }
+.rehearsals { margin: 0; padding: 0; list-style: none; display: grid; }
+.rehearsals li { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 14px; flex-wrap: wrap; }
+.rehearsals li + li { border-top: 1px solid var(--hairline, var(--k-hairline)); }
+.rehearsals li > span:first-of-type { flex: 1 1 auto; min-width: 0; }
+.rehearsals li > svg { flex-shrink: 0; color: var(--k-text-2); }
+.footnote { margin: 0 4px; font-size: 12.5px; line-height: 1.5; color: var(--k-text-2); max-width: 72ch; }
+.deleteRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 4px; font-size: 13.5px; color: var(--k-text-2); }
+
+/* ───────── Today row (global tokens: Today is outside the kit scope) ───────── */
+.today { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 6px 10px 6px 6px; border-radius: 22px; }
+.todayOpen {
+  display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; min-height: 52px; padding: 6px 10px; border-radius: 16px;
+  text-align: left; transition: background-color var(--hover-ms) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) { .todayOpen:hover { background: var(--surface-hover); } }
+.todayIcon { width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; flex-shrink: 0; background: var(--accent-violet-soft); color: var(--accent-violet-ink); }
+.todayCopy { display: grid; gap: 1px; min-width: 0; font-size: var(--text-15); line-height: 1.4; overflow-wrap: anywhere; }
+.todayCopy strong { font-weight: 700; }
+.todayCopy small { font-size: 13px; color: var(--text-secondary); }
+.today :global(.button) { flex-shrink: 0; }
+@media (pointer: coarse) { .todayOpen { min-height: 56px; } }
+@media (prefers-reduced-motion: reduce) { .todayOpen { transition: none; } }
